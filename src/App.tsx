@@ -892,7 +892,7 @@ export default function App() {
               <img 
                 src={activeEmployee.avatar} 
                 alt="Avatar" 
-                className="w-8 h-8 rounded-full border border-gray-700 object-cover" 
+                className="w-12 h-12 rounded-full border-2 border-gray-700 object-cover shadow-md" 
               />
               <button
                 onClick={logout}
@@ -933,7 +933,7 @@ export default function App() {
                     <img 
                       src={emp.avatar} 
                       alt={emp.name} 
-                      className="w-14 h-14 rounded-full object-cover border-2 border-gray-700 shadow" 
+                      className="w-20 h-20 rounded-full object-cover border-2 border-gray-700 shadow-lg" 
                     />
                     <div className="min-w-0 w-full">
                       <p className="text-xs font-bold text-white truncate text-center mb-1">{emp.name}</p>
@@ -959,7 +959,7 @@ export default function App() {
                   <img 
                     src={employees.find(e => e.id === selectedEmpId)?.avatar} 
                     alt="Active Profile"
-                    className="w-10 h-10 rounded-full object-cover border border-orange-500"
+                    className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-md"
                   />
                   <div className="text-left">
                     <p className="text-xs text-gray-400 font-mono text-left uppercase">Connexion en cours</p>
@@ -1492,7 +1492,7 @@ export default function App() {
                                   <img 
                                     src={employees.find(e => e.id === p.employeeId)?.avatar} 
                                     alt="Worker" 
-                                    className="w-8 h-8 rounded-full object-cover border border-orange-500"
+                                    className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-lg"
                                   />
                                   <div>
                                     <h5 className="text-sm font-extrabold text-white">{p.employeeName}</h5>
@@ -1577,7 +1577,7 @@ export default function App() {
                                 <td className="py-3 font-semibold text-white flex items-center gap-2">
                                   <img 
                                     src={employees.find(e => e.id === punch.employeeId)?.avatar} 
-                                    className="w-5 h-5 rounded-full object-cover" 
+                                    className="w-11 h-11 rounded-full object-cover shadow-md" 
                                     alt=""
                                   />
                                   {punch.employeeName}
@@ -1876,7 +1876,7 @@ export default function App() {
                               key={emp.id} 
                               src={emp.avatar} 
                               title={emp.name} 
-                              className="w-6 h-6 rounded-full object-cover border border-gray-900" 
+                              className="w-9 h-9 rounded-full object-cover border border-gray-900" 
                               alt={emp.name}
                             />
                           ))}
@@ -2691,7 +2691,7 @@ export default function App() {
                     return (
                       <div className="p-5 bg-gradient-to-r from-orange-600/10 to-indigo-600/10 border border-gray-800 rounded-2xl space-y-4">
                         <div className="flex items-center gap-3">
-                          <img src={activeEmployee.avatar} alt="Me" className="w-10 h-10 rounded-full object-cover border-2 border-orange-500" />
+                          <img src={activeEmployee.avatar} alt="Me" className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-md" />
                           <div>
                             <h4 className="text-sm font-black text-white">Espace Performance — {activeEmployee.name}</h4>
                             <p className="text-[11px] text-gray-400">Rôle : <span className="font-mono text-orange-400 uppercase font-bold">{activeEmployee.workerType}</span></p>
@@ -2899,7 +2899,7 @@ export default function App() {
                                 className="w-full text-left p-3.5 flex items-center justify-between hover:bg-gray-850 transition cursor-pointer font-sans"
                               >
                                 <div className="flex items-center gap-3">
-                                  <img src={emp.avatar} alt="worker" className="w-8 h-8 rounded-full border border-gray-800 object-cover" />
+                                  <img src={emp.avatar} alt="worker" className="w-12 h-12 rounded-full border-2 border-gray-800 object-cover shadow-md" />
                                   <div>
                                     <h5 className="text-xs font-bold text-white">{emp.name}</h5>
                                     <p className="text-[10px] text-gray-500">{emp.workerType} — NIP : <span className="font-mono text-white select-all font-bold">{emp.nip}</span></p>
@@ -3268,7 +3268,7 @@ export default function App() {
                           <div className="p-5 bg-gradient-to-r from-orange-600/10 to-indigo-600/10 border border-gray-800 rounded-2xl">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                               <div className="flex items-center gap-3">
-                                <img src={emp.avatar} alt="Me" className="w-12 h-12 rounded-full object-cover border-2 border-orange-500 shadow-md" />
+                                <img src={emp.avatar} alt="Me" className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-lg" />
                                 <div>
                                   <h4 className="text-base font-black text-white">Mon Portail de Paie — {emp.name}</h4>
                                   <div className="flex flex-wrap gap-1.5 mt-1">
@@ -3520,7 +3520,7 @@ export default function App() {
                                   return (
                                     <tr key={emp.id} className="hover:bg-gray-900 border-b border-gray-900 transition-all font-mono">
                                       <td className="py-3 flex items-center gap-2 font-sans text-left">
-                                        <img src={emp.avatar} alt="" className="w-7 h-7 rounded-full object-cover" />
+                                        <img src={emp.avatar} alt="" className="w-11 h-11 rounded-full object-cover" />
                                         <div>
                                           <p className="font-bold text-white leading-none text-left">{emp.name}</p>
                                           <p className="text-[9.5px] text-gray-500 mt-0.5 text-left">NAS: {emp.sin || 'Non inscrit'} | CCQ: {emp.asNumber || 'S/O'}</p>
@@ -4588,7 +4588,7 @@ export default function App() {
                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                                   <div className="space-y-2 flex-1">
                                     <div className="flex items-center gap-3">
-                                      <img src={emp.avatar} alt="Avatar" className="w-9 h-9 rounded-full object-cover border border-gray-800" />
+                                      <img src={emp.avatar} alt="Avatar" className="w-14 h-14 rounded-full object-cover border-2 border-gray-800 shadow-md" />
                                       <div>
                                         <div className="flex items-center gap-2 flex-wrap text-left">
                                           <h5 className="font-bold text-white text-sm">{emp.name}</h5>
@@ -4851,7 +4851,7 @@ export default function App() {
                                             key={pidx}
                                             type="button"
                                             onClick={() => setEditEmployeeForm({ ...editEmployeeForm, avatar: pav.url })}
-                                            className={`relative rounded-full overflow-hidden w-9 h-9 border-2 transition cursor-pointer ${
+                                            className={`relative rounded-full overflow-hidden w-14 h-14 border-2 transition cursor-pointer ${
                                               editEmployeeForm.avatar === pav.url 
                                                 ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
                                                 : 'border-transparent hover:border-gray-700'
@@ -5147,7 +5147,7 @@ export default function App() {
                                   <img
                                     src={newEmployeeForm.avatar}
                                     alt="Aperçu de la photo sélectionnée"
-                                    className="h-10 w-10 rounded-full border border-orange-500/50 object-cover"
+                                    className="h-16 w-16 rounded-full border-2 border-orange-500/50 object-cover shadow-md"
                                   />
                                   <span className="text-[9px] font-bold uppercase text-gray-400">Aperçu sélectionné</span>
                                 </div>

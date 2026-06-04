@@ -77,7 +77,7 @@ export default function Navbar() {
               id="user-avatar-top"
               src={activeEmployee.avatar} 
               alt={activeEmployee.name} 
-              className="h-8 w-8 rounded-full object-cover border border-white/20"
+              className="h-12 w-12 rounded-full object-cover border-2 border-white/20 shadow-md"
               referrerPolicy="no-referrer"
             />
 
