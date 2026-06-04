@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import Anthropic from '@anthropic-ai/sdk';
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic';
 export type ChatImage = { data: string; mimeType: string; name?: string };
@@ -21,21 +22,25 @@ export function normalizeProvider(provider?: string): AiProvider {
 }
 
 export function getProviderKey(provider: AiProvider): string | undefined {
-  if (provider === 'gemini') return process.env.GEMINI_API_KEY;
-  if (provider === 'openai') return process.env.OPENAI_API_KEY;
-  return process.env.ANTHROPIC_API_KEY;
+  const key = provider === 'gemini'
+    ? process.env.GEMINI_API_KEY
+    : provider === 'openai'
+      ? process.env.OPENAI_API_KEY
+      : process.env.ANTHROPIC_API_KEY;
+  return key?.trim();
 }
 
 export function isMissingKey(provider: AiProvider): boolean {
   const key = getProviderKey(provider);
   const placeholders = ['MY_GEMINI_API_KEY', 'MY_OPENAI_API_KEY', 'MY_ANTHROPIC_API_KEY'];
-  return !key || key.trim() === '' || placeholders.includes(key.trim());
+  if (!key || placeholders.includes(key)) return true;
+  return provider === 'anthropic' && !key.startsWith('sk-ant-');
 }
 
 export function getProviderModel(provider: AiProvider): string {
   if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   if (provider === 'openai') return process.env.OPENAI_MODEL || 'gpt-4o-mini';
-  return process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-latest';
+  return process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5';
 }
 
 function getProviderEnvKeyName(provider: AiProvider): string {
@@ -115,31 +120,36 @@ async function generateWithOpenAI(message: string, image?: ChatImage) {
 }
 
 async function generateWithAnthropic(message: string, image?: ChatImage) {
-  const content: any[] = [
-    { type: 'text', text: `Système: ${SYSTEM_INSTRUCTION}\n\nClient message: ${message || 'Analyse cette photo de chantier et donne tes recommandations.'}` }
+  const client = new Anthropic({
+    apiKey: getProviderKey('anthropic'),
+  });
+
+  const content: Anthropic.Messages.MessageParam['content'] = [
+    { type: 'text', text: message || 'Analyse cette photo de chantier et donne tes recommandations.' }
   ];
 
   if (image?.data && image?.mimeType) {
-    content.push({ type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } });
+    content.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: image.mimeType as any,
+        data: image.data,
+      },
+    });
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': getProviderKey('anthropic') || '',
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: getProviderModel('anthropic'),
-      max_tokens: 900,
-      messages: [{ role: 'user', content }],
-    }),
+  const response = await client.messages.create({
+    model: getProviderModel('anthropic'),
+    max_tokens: 1024,
+    system: SYSTEM_INSTRUCTION,
+    messages: [{ role: 'user', content }],
   });
 
-  if (!response.ok) throw new Error(`Anthropic API error ${response.status}: ${await response.text()}`);
-  const data = await response.json();
-  return data.content?.map((part: any) => part.text || '').join('\n').trim() || '';
+  return response.content
+    .map((part) => part.type === 'text' ? part.text : '')
+    .join('\n')
+    .trim();
 }
 
 export async function generateAiReply(provider: AiProvider, message: string, image?: ChatImage) {
