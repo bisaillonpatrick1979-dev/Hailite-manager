@@ -266,6 +266,8 @@ export default function App() {
   const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string }>>([]);
 
   // Admin CRUD wizard states
+  const [pendingEmployeeAvatar, setPendingEmployeeAvatar] = useState<string>('');
+  const newEmployeeAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const [newEmployeeForm, setNewEmployeeForm] = useState<{
     name: string;
     nip: string;
@@ -4993,13 +4995,16 @@ export default function App() {
                           <div className="p-3.5 bg-gray-900/40 border border-gray-850 rounded-xl space-y-3 text-left">
                             <span className="text-[10px] text-orange-400 font-extrabold uppercase font-mono block">📸 Choisir la photo / l'avatar de l'employé</span>
                             
-                            <div className="flex flex-wrap gap-2.5 items-center">
+                            <div className="flex flex-wrap gap-3 items-center">
                               {EMPLOYEE_PRESET_AVATARS.map((pav, pidx) => (
                                 <button
                                   key={pidx}
                                   type="button"
-                                  onClick={() => setNewEmployeeForm({ ...newEmployeeForm, avatar: pav.url })}
-                                  className={`relative rounded-full overflow-hidden w-11 h-11 border-2 transition ${
+                                  onClick={() => {
+                                    setNewEmployeeForm({ ...newEmployeeForm, avatar: pav.url });
+                                    setPendingEmployeeAvatar('');
+                                  }}
+                                  className={`relative rounded-full overflow-hidden w-[70px] h-[70px] border-2 transition ${
                                     newEmployeeForm.avatar === pav.url 
                                       ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
                                       : 'border-transparent hover:border-gray-700'
@@ -5061,7 +5066,10 @@ export default function App() {
                                 placeholder="https://unsplash.com/... ou URL personnalisée"
                                 className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850 text-left"
                                 value={newEmployeeForm.avatar}
-                                onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, avatar: e.target.value })}
+                                onChange={(e) => {
+                                  setNewEmployeeForm({ ...newEmployeeForm, avatar: e.target.value });
+                                  setPendingEmployeeAvatar('');
+                                }}
                               />
                             </div>
                           </div>
