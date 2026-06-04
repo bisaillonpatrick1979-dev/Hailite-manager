@@ -55,6 +55,16 @@ export function getFallbackReply(provider: AiProvider, image?: ChatImage) {
   };
 }
 
+export function getProviderErrorReply(provider: AiProvider, error: unknown) {
+  const message = error instanceof Error ? error.message : 'Erreur inconnue du provider IA';
+  return {
+    provider,
+    reply: `⚠️ L'agent IA a bien reçu la demande, mais le provider ${provider} a retourné une erreur. Vérifiez la clé API dans Vercel, le modèle choisi et les limites du compte. Détail: ${message}`,
+    simulated: true,
+    error: message,
+  };
+}
+
 async function generateWithGemini(message: string, image?: ChatImage) {
   const ai = new GoogleGenAI({
     apiKey: getProviderKey('gemini') || '',

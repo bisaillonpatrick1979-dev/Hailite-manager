@@ -180,6 +180,97 @@ function isLogoImageSource(value?: string): boolean {
   return Boolean(value && /^(data:image\/|https?:\/\/|blob:)/i.test(value.trim()));
 }
 
+const AI_IMAGE_MAX_DIMENSION = 1600;
+const AI_IMAGE_JPEG_QUALITY = 0.78;
+const AI_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+
+type AiImageAttachment = {
+  data: string;
+  mimeType: string;
+  name: string;
+  previewUrl: string;
+  sizeBytes: number;
+};
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Impossible de lire le fichier image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Impossible de préparer la photo pour l’IA.'));
+    image.src = src;
+  });
+}
+
+function dataUrlToBytes(dataUrl: string): number {
+  const base64 = dataUrl.split(',')[1] || '';
+  return Math.ceil((base64.length * 3) / 4);
+}
+
+async function prepareAiImageAttachment(file: File): Promise<AiImageAttachment> {
+  const originalDataUrl = await readFileAsDataUrl(file);
+  const originalBytes = dataUrlToBytes(originalDataUrl);
+
+  if (file.type === 'image/gif' || file.type === 'image/svg+xml') {
+    if (originalBytes > AI_IMAGE_MAX_BYTES) {
+      throw new Error('Image trop lourde pour l’IA. Choisissez une image PNG/JPEG/WebP ou une image de moins de 3 MB.');
+    }
+    return {
+      data: originalDataUrl.split(',')[1] || '',
+      mimeType: file.type,
+      name: file.name,
+      previewUrl: originalDataUrl,
+      sizeBytes: originalBytes,
+    };
+  }
+
+  const image = await loadImageElement(originalDataUrl);
+  const scale = Math.min(1, AI_IMAGE_MAX_DIMENSION / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Impossible de compresser la photo pour l’IA.');
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  let quality = AI_IMAGE_JPEG_QUALITY;
+  let compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+  while (dataUrlToBytes(compressedDataUrl) > AI_IMAGE_MAX_BYTES && quality > 0.42) {
+    quality -= 0.08;
+    compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+  }
+
+  if (dataUrlToBytes(compressedDataUrl) > AI_IMAGE_MAX_BYTES) {
+    throw new Error('Photo trop lourde pour l’IA après compression. Reprenez une photo plus proche ou plus petite.');
+  }
+
+  return {
+    data: compressedDataUrl.split(',')[1] || '',
+    mimeType: 'image/jpeg',
+    name: file.name.replace(/\.[^.]+$/, '') + '-ia.jpg',
+    previewUrl: compressedDataUrl,
+    sizeBytes: dataUrlToBytes(compressedDataUrl),
+  };
+}
+
+async function readJsonResponse(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 300) };
+  }
+}
+
 function suggestEmoji(name: string): string {
   const n = name.toLowerCase();
   if (n.includes('bardeau') || n.includes('shingle') || n.includes('asphalte') || n.includes('toiture')) return '🏠';
@@ -341,7 +432,7 @@ export default function App() {
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
-  const [aiImageAttachment, setAiImageAttachment] = useState<{ data: string; mimeType: string; name: string; previewUrl: string } | null>(null);
+  const [aiImageAttachment, setAiImageAttachment] = useState<AiImageAttachment | null>(null);
   const [aiProviderTestResults, setAiProviderTestResults] = useState<Array<{ provider: AiProvider; ok: boolean; simulated?: boolean; reply?: string; error?: string; model?: string }>>([]);
   const [isTestingAiProviders, setIsTestingAiProviders] = useState<boolean>(false);
   const recognitionRef = useRef<any>(null);
@@ -636,25 +727,19 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const handleAiPhotoSelected = (file?: File) => {
+  const handleAiPhotoSelected = async (file?: File) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       alert(currentLanguage === 'FR' ? 'Veuillez choisir une image.' : 'Please select an image.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const base64Data = result.split(',')[1] || '';
-      setAiImageAttachment({
-        data: base64Data,
-        mimeType: file.type,
-        name: file.name,
-        previewUrl: result,
-      });
-    };
-    reader.readAsDataURL(file);
+    try {
+      const attachment = await prepareAiImageAttachment(file);
+      setAiImageAttachment(attachment);
+    } catch (error: any) {
+      alert(error.message || (currentLanguage === 'FR' ? 'Impossible de préparer cette photo pour l’IA.' : 'Unable to prepare this photo for AI.'));
+    }
   };
 
   const handleTestAiProviders = async (provider: 'all' | AiProvider = 'all') => {
@@ -737,7 +822,10 @@ export default function App() {
           } : undefined,
         })
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
+      if (!res.ok) {
+        throw new Error(data.error || `Erreur API IA (${res.status})`);
+      }
       const assistantReply = data.reply || "Désolé, l'agent IA n'a pas retourné de réponse.";
 
       setAiHistory(prev => [...prev, {
@@ -748,7 +836,9 @@ export default function App() {
       speakAiResponse(assistantReply);
     } catch (err: any) {
       console.error(err);
-      const errorReply = "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer.";
+      const errorReply = err?.message
+        ? `Désolé, l'agent IA a rencontré un problème: ${err.message}`
+        : "Désolé, l'agent IA a rencontré une erreur réseau. Vérifiez la connexion et réessayez.";
       setAiHistory(prev => [...prev, {
         role: 'assistant',
         text: errorReply

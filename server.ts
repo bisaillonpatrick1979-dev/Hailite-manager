@@ -3,7 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { generateAiReply, listAiProviderStatus, normalizeProvider, testAiProviders } from './src/aiProviders';
+import { generateAiReply, getProviderErrorReply, listAiProviderStatus, normalizeProvider, testAiProviders } from './src/aiProviders';
 import type { ChatImage } from './src/aiProviders';
 
 dotenv.config();
@@ -35,7 +35,7 @@ async function startServer() {
       return res.json(result);
     } catch (error: any) {
       console.error('Error on /api/chat:', error);
-      return res.status(500).json({ error: error.message || 'Error occurred while calling AI provider' });
+      return res.json(getProviderErrorReply(normalizeProvider(req.body?.provider), error));
     }
   });
 
