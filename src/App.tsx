@@ -12,7 +12,7 @@ import {
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, Eye, EyeOff, CheckSquare, Dumbbell,
-  Play, Pause, Award, HelpCircle, Phone, Mail, Coins
+  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Mic, MicOff, Camera, Volume2, VolumeX
 } from 'lucide-react';
 
 const IMAGE_KEYWORDS: { keywords: string[]; url: string; alt: string }[] = [
@@ -321,10 +321,15 @@ export default function App() {
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
   const [aiMessage, setAiMessage] = useState<string>('');
-  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean }>>([
+  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string }>>([
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
+  const [aiImageAttachment, setAiImageAttachment] = useState<{ data: string; mimeType: string; name: string; previewUrl: string } | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
@@ -557,34 +562,124 @@ export default function App() {
     }
   };
 
-  // Send message to Gemini server API
+  const speakAiResponse = (text: string) => {
+    if (!voiceEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    window.speechSynthesis.cancel();
+    const cleanText = text.replace(/[*_`#>-]/g, '').slice(0, 900);
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = currentLanguage === 'FR' ? 'fr-CA' : 'en-US';
+    utterance.rate = 1.08;
+    utterance.pitch = 1;
+    utterance.volume = 0.95;
+
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(voice => voice.lang === utterance.lang && voice.localService)
+      || voices.find(voice => voice.lang.startsWith(currentLanguage === 'FR' ? 'fr' : 'en'));
+    if (preferredVoice) utterance.voice = preferredVoice;
+
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleAiPhotoSelected = (file?: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert(currentLanguage === 'FR' ? 'Veuillez choisir une image.' : 'Please select an image.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64Data = result.split(',')[1] || '';
+      setAiImageAttachment({
+        data: base64Data,
+        mimeType: file.type,
+        name: file.name,
+        previewUrl: result,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleToggleVoiceInput = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert(currentLanguage === 'FR' ? 'La reconnaissance vocale n’est pas disponible dans ce navigateur.' : 'Speech recognition is not available in this browser.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.lang = currentLanguage === 'FR' ? 'fr-CA' : 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((result: any) => result[0]?.transcript || '')
+        .join('')
+        .trim();
+      if (transcript) setAiMessage(transcript);
+    };
+
+    recognition.start();
+  };
+
+  // Send text, voice transcript and/or photo to Gemini server API
   const handleSendAiMessage = async () => {
-    if (!aiMessage.trim()) return;
+    const userText = aiMessage.trim();
+    const imageToSend = aiImageAttachment;
+    if (!userText && !imageToSend) return;
     
-    const userText = aiMessage;
-    setAiHistory(prev => [...prev, { role: 'user', text: userText }]);
+    setAiHistory(prev => [...prev, {
+      role: 'user',
+      text: userText || (currentLanguage === 'FR' ? 'Analyse cette photo de chantier.' : 'Analyze this jobsite photo.'),
+      imagePreviewUrl: imageToSend?.previewUrl,
+    }]);
     setAiMessage('');
+    setAiImageAttachment(null);
     setIsAiLoading(true);
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText })
+        body: JSON.stringify({
+          message: userText,
+          image: imageToSend ? {
+            data: imageToSend.data,
+            mimeType: imageToSend.mimeType,
+            name: imageToSend.name,
+          } : undefined,
+        })
       });
       const data = await res.json();
+      const assistantReply = data.reply || "Désolé, l'agent IA n'a pas retourné de réponse.";
       
       setAiHistory(prev => [...prev, { 
         role: 'assistant', 
-        text: data.reply,
+        text: assistantReply,
         simulated: data.simulated 
       }]);
+      speakAiResponse(assistantReply);
     } catch (err: any) {
       console.error(err);
+      const errorReply = "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer.";
       setAiHistory(prev => [...prev, { 
         role: 'assistant', 
-        text: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer." 
+        text: errorReply
       }]);
+      speakAiResponse(errorReply);
     } finally {
       setIsAiLoading(false);
     }
@@ -5949,6 +6044,13 @@ export default function App() {
                       ? 'bg-orange-600 text-white rounded-br-none' 
                       : 'bg-gray-850 text-gray-200 rounded-bl-none'
                   }`}>
+                    {chat.imagePreviewUrl && (
+                      <img
+                        src={chat.imagePreviewUrl}
+                        alt={currentLanguage === 'FR' ? 'Photo envoyée à l’IA' : 'Photo sent to AI'}
+                        className="mb-2 max-h-32 w-full rounded-lg object-cover border border-white/20"
+                      />
+                    )}
                     {chat.text}
                     {chat.simulated && (
                       <span className="block mt-2 text-[9px] text-orange-400 font-mono tracking-widest uppercase">
@@ -5968,18 +6070,73 @@ export default function App() {
             </div>
 
             {/* Input message form */}
+            {aiImageAttachment && (
+              <div className="px-3 pt-3 bg-gray-900 border-t border-gray-800">
+                <div className="flex items-center gap-2 p-2 bg-gray-950 border border-cyan-900/60 rounded-xl">
+                  <img
+                    src={aiImageAttachment.previewUrl}
+                    alt={currentLanguage === 'FR' ? 'Photo prête pour analyse IA' : 'Photo ready for AI analysis'}
+                    className="w-12 h-12 rounded-lg object-cover border border-gray-700"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold text-cyan-300 uppercase truncate">
+                      {currentLanguage === 'FR' ? 'Photo attachée à l’IA' : 'Photo attached to AI'}
+                    </p>
+                    <p className="text-[9px] text-gray-500 truncate">{aiImageAttachment.name}</p>
+                  </div>
+                  <button
+                    onClick={() => setAiImageAttachment(null)}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
+                    aria-label={currentLanguage === 'FR' ? 'Retirer la photo' : 'Remove photo'}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="p-3 border-t border-gray-800 bg-gray-900 flex items-center gap-2">
               <input
+                ref={aiPhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={e => handleAiPhotoSelected(e.target.files?.[0])}
+                className="hidden"
+              />
+              <button
+                onClick={() => aiPhotoInputRef.current?.click()}
+                disabled={isAiLoading}
+                className="p-2 bg-gray-950 hover:bg-gray-800 rounded-lg text-cyan-300 border border-gray-800 cursor-pointer transition disabled:opacity-40"
+                title={currentLanguage === 'FR' ? 'Prendre ou joindre une photo' : 'Take or attach a photo'}
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleToggleVoiceInput}
+                disabled={isAiLoading}
+                className={`p-2 rounded-lg border cursor-pointer transition disabled:opacity-40 ${isListening ? 'bg-red-600 text-white border-red-500 animate-pulse' : 'bg-gray-950 hover:bg-gray-800 text-green-300 border-gray-800'}`}
+                title={currentLanguage === 'FR' ? 'Dicter le message' : 'Dictate message'}
+              >
+                {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              </button>
+              <input
                 type="text"
-                placeholder={t.aiPlaceholder}
+                placeholder={isListening ? (currentLanguage === 'FR' ? 'J’écoute...' : 'Listening...') : t.aiPlaceholder}
                 value={aiMessage}
                 onChange={e => setAiMessage(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSendAiMessage()}
                 className="flex-1 p-2 bg-gray-950 rounded border border-gray-800 text-xs text-white text-sans text-left"
               />
               <button
+                onClick={() => setVoiceEnabled(prev => !prev)}
+                className={`p-2 rounded-lg border cursor-pointer transition ${voiceEnabled ? 'bg-blue-950/70 text-blue-300 border-blue-800' : 'bg-gray-950 text-gray-500 border-gray-800'}`}
+                title={currentLanguage === 'FR' ? 'Voix basse latence' : 'Low-latency voice'}
+              >
+                {voiceEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </button>
+              <button
                 onClick={handleSendAiMessage}
-                disabled={isAiLoading || !aiMessage.trim()}
+                disabled={isAiLoading || (!aiMessage.trim() && !aiImageAttachment)}
                 className="p-2 bg-orange-600 hover:bg-orange-500 rounded-lg text-white font-bold cursor-pointer transition disabled:opacity-40"
               >
                 <Send className="w-4 h-4" />

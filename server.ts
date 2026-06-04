@@ -12,17 +12,22 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '12mb' }));
 
   // API Route for Gemini Agent chat
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message } = req.body;
+      const { message, image } = req.body as {
+        message?: string;
+        image?: { data: string; mimeType: string; name?: string };
+      };
       const apiKey = process.env.GEMINI_API_KEY;
 
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
         return res.json({
-          reply: "🤖 L'assistant IA fonctionne en mode simulation locale car la clé GEMINI_API_KEY n'est pas encore configurée dans vos Variables d'Environnement / Secrets. Pour l'activer, ajoutez la clé de l'API Gemini dans le panneau latérale de configuration.",
+          reply: image
+            ? "🤖 Photo reçue en mode simulation locale. Configurez GEMINI_API_KEY pour activer l'analyse visuelle Gemini avec les questions vocales ou texte."
+            : "🤖 L'assistant IA fonctionne en mode simulation locale car la clé GEMINI_API_KEY n'est pas encore configurée dans vos Variables d'Environnement / Secrets. Pour l'activer, ajoutez la clé de l'API Gemini dans le panneau latérale de configuration.",
           simulated: true
         });
       }
@@ -44,12 +49,26 @@ async function startServer() {
         Tu connais la CCQ (Commission de la construction du Québec) et les réglementations CNESST.
         Donne des conseils professionnels, clairs et utilise des termes québécois quand approprié (ex: "Chantier", "Pièce", "Bardeaux", "Soufflage").
         Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
+        Si une photo est fournie, analyse ce que tu vois comme un assistant de chantier: matériaux, défauts visibles, sécurité, estimation ou prochaine action. Mentionne les limites si l'image ne permet pas de conclure.
       `;
+
+      const userParts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [
+        { text: `Système: ${systemInstruction}\n\nClient message: ${message || 'Analyse cette photo de chantier et donne tes recommandations.'}` }
+      ];
+
+      if (image?.data && image?.mimeType) {
+        userParts.push({
+          inlineData: {
+            data: image.data,
+            mimeType: image.mimeType,
+          },
+        });
+      }
 
       const response = await ai.models.generateContent({
         model: 'gemini-3.5-flash',
         contents: [
-          { role: 'user', parts: [{ text: `Système: ${systemInstruction}\n\nClient message: ${message}` }] }
+          { role: 'user', parts: userParts }
         ],
       });
 
