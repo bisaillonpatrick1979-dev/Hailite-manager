@@ -256,6 +256,7 @@ export default function App() {
   const [timerDisplay, setTimerDisplay] = useState<string>('00:00:00');
   const [earningsSimulation, setEarningsSimulation] = useState<number>(0);
   const [realTimeHourlyEarnings, setRealTimeHourlyEarnings] = useState<number>(0);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<number | null>(null);
 
   // Accounting management local inputs
   const [accountingViewMode, setAccountingViewMode] = useState<'expenses' | 'payroll'>('expenses');
@@ -902,11 +903,63 @@ export default function App() {
 
   const workdayLegendItems = [0, 1, 3, 5, 7, 9, 11, 12].map(hours => getCalendarDayCategory(hours));
 
+  const calendarMonthKey = '2026-06';
+
+  const getCalendarDateKey = (day: number) => `${calendarMonthKey}-${String(day).padStart(2, '0')}`;
+
+  const getSessionsForCalendarDay = (day: number) => {
+    const dateKey = getCalendarDateKey(day);
+    return punchSessions.filter(p => p.employeeId === activeEmployee?.id && p.startTime.startsWith(dateKey));
+  };
+
   const getWorkedHoursForCalendarDay = (day: number) => {
-    const dateKey = `2026-06-${String(day).padStart(2, '0')}`;
-    return punchSessions
-      .filter(p => p.employeeId === activeEmployee?.id && p.startTime.startsWith(dateKey))
-      .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+    return getSessionsForCalendarDay(day).reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+  };
+
+  const isCalendarFutureDay = (day: number) => {
+    const dayDate = new Date(`${getCalendarDateKey(day)}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return dayDate.getTime() > today.getTime();
+  };
+
+  const isCalendarToday = (day: number) => {
+    const today = new Date();
+    return getCalendarDateKey(day) === today.toISOString().split('T')[0];
+  };
+
+  const formatCalendarDayDate = (day: number) => new Intl.DateTimeFormat('fr-CA', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  }).format(new Date(`${getCalendarDateKey(day)}T12:00:00`));
+
+  const formatSessionTime = (value?: string | null) => {
+    if (!value) return 'En cours';
+    return new Intl.DateTimeFormat('fr-CA', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value));
+  };
+
+  const getSessionWorkedHours = (session: any) => {
+    if (session.totalWorkedHours) return session.totalWorkedHours;
+    if (!session.endTime) return 0;
+    const elapsedMs = new Date(session.endTime).getTime() - new Date(session.startTime).getTime() - ((session.totalPauseMinutes || 0) * 60 * 1000);
+    return Math.max(0, elapsedMs / 3600000);
+  };
+
+  const getSessionBillingStatus = (sessions: any[]) => {
+    const relatedInvoices = invoices.filter(inv => inv.sessionIds?.some(id => sessions.some(session => session.id === id)));
+    const submittedInvoices = relatedInvoices.filter(inv => inv.status !== 'draft');
+
+    if (submittedInvoices.length > 0) {
+      return `Inclus dans facture envoyée/soumise : ${submittedInvoices.map(inv => inv.invoiceNumber).join(', ')}`;
+    }
+
+    if (relatedInvoices.length > 0) {
+      return `Inclus dans brouillon : ${relatedInvoices.map(inv => inv.invoiceNumber).join(', ')} — non envoyé.`;
+    }
+
+    return "S'accumule encore dans la facture hebdomadaire en cours de l'employé.";
   };
 
   const openPrefilledDelivery = (channel: 'email' | 'sms', to: string | undefined, subject: string, body: string) => {
@@ -1481,20 +1534,35 @@ ${companyInfo.name}`
                       <div className="grid grid-cols-7 gap-1.5">
                         {Array.from({ length: 30 }).map((_, idx) => {
                           const dateNum = idx + 1;
-                          const workedHours = getWorkedHoursForCalendarDay(dateNum);
+                          const daySessions = getSessionsForCalendarDay(dateNum);
+                          const workedHours = daySessions.reduce((sum, p) => sum + getSessionWorkedHours(p), 0);
                           const dayCategory = getCalendarDayCategory(workedHours);
-                          const isToday = (dateNum === 3);
+                          const isToday = isCalendarToday(dateNum);
+                          const isFutureBlank = isCalendarFutureDay(dateNum) && daySessions.length === 0;
+                          const isClickableDay = !isFutureBlank;
+
+                          if (isFutureBlank) {
+                            return (
+                              <div
+                                key={idx}
+                                aria-label={`Juin ${dateNum} — journée future`}
+                                className="aspect-square rounded-lg border border-gray-850/60 bg-gray-100/5"
+                              />
+                            );
+                          }
 
                           return (
-                            <div
+                            <button
                               key={idx}
+                              type="button"
+                              onClick={() => isClickableDay && setSelectedCalendarDay(dateNum)}
                               title={`Juin ${dateNum} — ${dayCategory.label} — ${workedHours.toFixed(2)}h`}
                               style={{ backgroundColor: dayCategory.color, color: dayCategory.textColor }}
-                              className={`relative aspect-square rounded-lg flex items-center justify-center font-black border border-black/10 shadow-sm ${isToday ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-gray-950' : ''}`}
+                              className={`relative aspect-square rounded-lg flex items-center justify-center font-black border border-black/10 shadow-sm transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer ${isToday ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-gray-950' : ''}`}
                             >
                               <span className="text-sm font-mono">{dateNum}</span>
-                              <span className="absolute right-1 top-0.5 text-[11px] leading-none" aria-hidden="true">{dayCategory.emoji}</span>
-                            </div>
+                              <span className={`absolute right-1 top-0.5 text-[11px] leading-none ${dayCategory.className}`} aria-hidden="true">{dayCategory.emoji}</span>
+                            </button>
                           );
                         })}
                       </div>
@@ -6550,6 +6618,143 @@ ${companyInfo.name}`
           </div>
         </nav>
       )}
+
+
+      {/* -------------------- MODAL : CALENDAR DAY DETAILS -------------------- */}
+      {selectedCalendarDay && activeEmployee && (() => {
+        const daySessions = getSessionsForCalendarDay(selectedCalendarDay);
+        const totalHours = daySessions.reduce((sum, session) => sum + getSessionWorkedHours(session), 0);
+        const totalRevenue = daySessions.reduce((sum, session) => {
+          const hours = getSessionWorkedHours(session);
+          const sessionRevenue = session.revenue || (session.payMode === 'horaire' ? hours * session.rate : session.rate || 0);
+          return sum + sessionRevenue;
+        }, 0);
+        const category = getCalendarDayCategory(totalHours);
+        const allValidated = daySessions.length > 0 && daySessions.every(session => session.withinGeofence && !session.attemptedOutsideGeofence);
+        const validationStatus = daySessions.length === 0
+          ? 'Aucune session à valider pour cette journée.'
+          : allValidated
+          ? 'Journée validée — toutes les sessions respectent la validation GPS.'
+          : 'Validation à surveiller — au moins une session contient une alerte GPS.';
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-0 backdrop-blur-sm sm:p-4"
+            onClick={() => setSelectedCalendarDay(null)}
+          >
+            <div
+              className="flex h-full w-full flex-col overflow-hidden bg-[#16191F] shadow-2xl sm:h-auto sm:max-h-[90vh] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-gray-800"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div
+                className="flex items-start justify-between gap-4 border-b border-black/10 p-5 text-slate-950"
+                style={{ backgroundColor: category.color, color: category.textColor }}
+              >
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Détails de journée</p>
+                  <h4 className="mt-1 text-xl font-black capitalize">{formatCalendarDayDate(selectedCalendarDay)}</h4>
+                  <p className="mt-1 text-sm font-extrabold">
+                    <span className={category.className}>{category.emoji}</span> {category.label}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedCalendarDay(null)}
+                  className="rounded-full bg-black/10 p-2 transition hover:bg-black/20"
+                  aria-label="Fermer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+                {daySessions.length === 0 ? (
+                  <div className="rounded-2xl border border-gray-800 bg-gray-950 p-5 text-center">
+                    <p className="text-3xl">🏖️</p>
+                    <p className="mt-2 text-sm font-bold text-white">Aucune session enregistrée pour cette journée.</p>
+                    <p className="mt-1 text-xs text-gray-400">Cette journée est classée comme congé ou sans punch.</p>
+                  </div>
+                ) : (
+                  daySessions.map((session, sessionIdx) => {
+                    const sessionHours = getSessionWorkedHours(session);
+                    const sessionRevenue = session.revenue || (session.payMode === 'horaire' ? sessionHours * session.rate : session.rate || 0);
+                    const payModeLabel = session.payMode === 'horaire'
+                      ? "À l'heure"
+                      : session.payMode === 'surface'
+                      ? 'Au pied carré'
+                      : 'Au forfait';
+
+                    return (
+                      <div key={session.id} className="rounded-2xl border border-gray-800 bg-gray-950/80 p-4 shadow-lg">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-gray-850 pb-3">
+                          <h5 className="text-sm font-black uppercase text-white">Session {sessionIdx + 1}</h5>
+                          <span className="rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-xs font-black text-orange-300">
+                            {sessionRevenue.toFixed(2)}$
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 text-xs sm:grid-cols-2">
+                          <div>
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Chantier / projet</span>
+                            <p className="mt-1 font-bold text-white">{session.projectName || 'Projet non spécifié'}</p>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Type de travail</span>
+                            <p className="mt-1 font-bold text-white">{payModeLabel} — {session.rate}$/h</p>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Punch in</span>
+                            <p className="mt-1 font-mono font-bold text-cyan-300">{formatSessionTime(session.startTime)}</p>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Punch out</span>
+                            <p className="mt-1 font-mono font-bold text-cyan-300">{formatSessionTime(session.endTime)}</p>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Durée</span>
+                            <p className="mt-1 font-mono font-bold text-white">{sessionHours.toFixed(2)}h</p>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Pauses</span>
+                            <p className="mt-1 font-mono font-bold text-white">{session.totalPauseMinutes ? `${session.totalPauseMinutes} min` : 'Aucune pause'}</p>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <span className="block text-[10px] font-black uppercase text-gray-500">Validation</span>
+                            <p className={`mt-1 font-bold ${session.withinGeofence && !session.attemptedOutsideGeofence ? 'text-green-300' : 'text-amber-300'}`}>
+                              {session.withinGeofence && !session.attemptedOutsideGeofence ? 'GPS validé' : session.outsideDetails || 'Validation GPS à surveiller'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+
+                <div className="grid grid-cols-1 gap-3 rounded-2xl border border-gray-800 bg-gray-900 p-4 text-xs sm:grid-cols-3">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-gray-500">Sessions</span>
+                    <p className="mt-1 text-lg font-black text-white">{daySessions.length}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-gray-500">Heures totales</span>
+                    <p className="mt-1 text-lg font-black text-cyan-300">{totalHours.toFixed(2)}h</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-gray-500">Montant total</span>
+                    <p className="mt-1 text-lg font-black text-green-300">{totalRevenue.toFixed(2)}$</p>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <span className="text-[10px] font-black uppercase text-gray-500">Statut de validation</span>
+                    <p className="mt-1 font-bold text-gray-200">{validationStatus}</p>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <span className="text-[10px] font-black uppercase text-gray-500">Statut de facturation</span>
+                    <p className="mt-1 font-bold text-orange-200">{getSessionBillingStatus(daySessions)}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
 
       {/* -------------------- MODAL : PUNCH IN START -------------------- */}
