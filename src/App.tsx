@@ -266,6 +266,8 @@ export default function App() {
   const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string }>>([]);
 
   // Admin CRUD wizard states
+  const [pendingEmployeeAvatar, setPendingEmployeeAvatar] = useState<string>('');
+  const newEmployeeAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const [newEmployeeForm, setNewEmployeeForm] = useState<{
     name: string;
     nip: string;
@@ -4993,13 +4995,16 @@ export default function App() {
                           <div className="p-3.5 bg-gray-900/40 border border-gray-850 rounded-xl space-y-3 text-left">
                             <span className="text-[10px] text-orange-400 font-extrabold uppercase font-mono block">📸 Choisir la photo / l'avatar de l'employé</span>
                             
-                            <div className="flex flex-wrap gap-2.5 items-center">
+                            <div className="flex flex-wrap gap-3 items-center">
                               {EMPLOYEE_PRESET_AVATARS.map((pav, pidx) => (
                                 <button
                                   key={pidx}
                                   type="button"
-                                  onClick={() => setNewEmployeeForm({ ...newEmployeeForm, avatar: pav.url })}
-                                  className={`relative rounded-full overflow-hidden w-11 h-11 border-2 transition ${
+                                  onClick={() => {
+                                    setNewEmployeeForm({ ...newEmployeeForm, avatar: pav.url });
+                                    setPendingEmployeeAvatar('');
+                                  }}
+                                  className={`relative rounded-full overflow-hidden w-[70px] h-[70px] border-2 transition ${
                                     newEmployeeForm.avatar === pav.url 
                                       ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
                                       : 'border-transparent hover:border-gray-700'
@@ -5016,14 +5021,99 @@ export default function App() {
                               ))}
                             </div>
 
+                            <div className="flex flex-wrap items-center gap-3">
+                              <input
+                                ref={newEmployeeAvatarInputRef}
+                                id="new-employee-avatar-camera"
+                                type="file"
+                                accept="image/*"
+                                capture="user"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    if (typeof reader.result === 'string') {
+                                      setPendingEmployeeAvatar(reader.result);
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
+                                  e.currentTarget.value = '';
+                                }}
+                              />
+                              <label
+                                htmlFor="new-employee-avatar-camera"
+                                className="inline-flex cursor-pointer items-center justify-center rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-orange-300 transition hover:border-orange-400 hover:bg-orange-500/20"
+                              >
+                                📷 Prendre la photo de l'employé
+                              </label>
+                              {newEmployeeForm.avatar.startsWith('data:image/') && !pendingEmployeeAvatar && (
+                                <div className="flex items-center gap-3 rounded-full border border-orange-500/25 bg-gray-950/70 py-1 pl-1 pr-4">
+                                  <img
+                                    src={newEmployeeForm.avatar}
+                                    alt="Aperçu de la photo acceptée"
+                                    className="h-20 w-20 rounded-full border border-orange-500/50 object-cover"
+                                  />
+                                  <span className="text-[9px] font-bold uppercase text-gray-400">Photo acceptée</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {pendingEmployeeAvatar && (
+                              <div className="flex flex-col items-center gap-3 rounded-xl border border-orange-500/25 bg-gray-950/70 p-4 text-center sm:flex-row sm:text-left">
+                                <img
+                                  src={pendingEmployeeAvatar}
+                                  alt="Aperçu temporaire de la photo de l'employé"
+                                  className="h-24 w-24 rounded-full border-2 border-orange-500/60 object-cover shadow-lg shadow-orange-500/10"
+                                />
+                                <div className="flex-1 space-y-3">
+                                  <p className="text-xs font-bold text-white">Voulez-vous utiliser cette photo comme avatar ?</p>
+                                  <div className="flex flex-wrap justify-center gap-2 sm:justify-start">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNewEmployeeForm({ ...newEmployeeForm, avatar: pendingEmployeeAvatar });
+                                        setPendingEmployeeAvatar('');
+                                      }}
+                                      className="rounded-lg bg-orange-500 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white transition hover:bg-orange-400"
+                                    >
+                                      Accepter cette photo
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPendingEmployeeAvatar('');
+                                        newEmployeeAvatarInputRef.current?.click();
+                                      }}
+                                      className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-gray-200 transition hover:bg-gray-700"
+                                    >
+                                      Reprendre une photo
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPendingEmployeeAvatar('')}
+                                      className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-red-300 transition hover:bg-red-500/20"
+                                    >
+                                      Annuler
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="space-y-1">
-                              <label className="text-[8.5px] text-gray-500 font-bold uppercase block font-mono">Ou coller l'URL d'une photo personnalisée</label>
+                              <label className="text-[8.5px] text-gray-500 font-bold uppercase block font-mono">Option avancée : coller l'URL d'une photo</label>
                               <input 
                                 type="text"
                                 placeholder="https://unsplash.com/... ou URL personnalisée"
                                 className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850 text-left"
                                 value={newEmployeeForm.avatar}
-                                onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, avatar: e.target.value })}
+                                onChange={(e) => {
+                                  setNewEmployeeForm({ ...newEmployeeForm, avatar: e.target.value });
+                                  setPendingEmployeeAvatar('');
+                                }}
                               />
                             </div>
                           </div>
