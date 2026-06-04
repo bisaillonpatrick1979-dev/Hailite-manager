@@ -171,6 +171,15 @@ function suggestImageUrl(name: string): { url: string; alt: string } | null {
   return match ? { url: match.url, alt: match.alt } : null;
 }
 
+
+function isSupportedLogoFile(file: File): boolean {
+  return file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg)$/i.test(file.name);
+}
+
+function isLogoImageSource(value?: string): boolean {
+  return Boolean(value && /^(data:image\/|https?:\/\/|blob:)/i.test(value.trim()));
+}
+
 function suggestEmoji(name: string): string {
   const n = name.toLowerCase();
   if (n.includes('bardeau') || n.includes('shingle') || n.includes('asphalte') || n.includes('toiture')) return '🏠';
@@ -579,6 +588,33 @@ export default function App() {
     if (preferredVoice) utterance.voice = preferredVoice;
 
     window.speechSynthesis.speak(utterance);
+  };
+
+  const handleCompanyLogoSelected = (file?: File) => {
+    if (!file) return;
+
+    if (!isSupportedLogoFile(file)) {
+      alert(currentLanguage === 'FR'
+        ? 'Veuillez choisir un fichier image valide pour le logo (JPEG, PNG, WebP, GIF ou SVG).'
+        : 'Please choose a valid logo image file (JPEG, PNG, WebP, GIF, or SVG).');
+      return;
+    }
+
+    const maxLogoBytes = 3 * 1024 * 1024;
+    if (file.size > maxLogoBytes) {
+      alert(currentLanguage === 'FR'
+        ? 'Le logo est trop lourd. Choisissez une image de 3 Mo ou moins.'
+        : 'The logo is too large. Please choose an image of 3 MB or less.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        updateCompanyInfo({ logo: reader.result });
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleAiPhotoSelected = (file?: File) => {
@@ -3771,13 +3807,44 @@ export default function App() {
                           </div>
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Logo / Bannière (Émoji ou texte)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left" 
-                              defaultValue={companyInfo.logo || "📐 Hailite Xteriors Pro"}
-                              onChange={(e) => updateCompanyInfo({ logo: e.target.value })}
-                            />
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Logo compagnie (fichier image)</label>
+                            <div className="mt-1.5 rounded-xl border border-gray-850 bg-gray-900 p-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-700 bg-gray-950">
+                                  {isLogoImageSource(companyInfo.logo) ? (
+                                    <img
+                                      src={companyInfo.logo}
+                                      alt="Logo actuel de la compagnie"
+                                      className="h-full w-full object-contain p-1"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <Building2 className="h-8 w-8 text-gray-500" />
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <input
+                                    id="company-logo-upload"
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml,.jpg,.jpeg,.png,.webp,.gif,.svg"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      handleCompanyLogoSelected(e.target.files?.[0]);
+                                      e.currentTarget.value = '';
+                                    }}
+                                  />
+                                  <label
+                                    htmlFor="company-logo-upload"
+                                    className="inline-flex cursor-pointer items-center justify-center rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-orange-300 transition hover:border-orange-400 hover:bg-orange-500/20"
+                                  >
+                                    Choisir un logo existant
+                                  </label>
+                                  <p className="mt-2 text-[10px] text-gray-400 leading-relaxed">
+                                    Téléversez un fichier image déjà prêt : JPEG, PNG, WebP, GIF ou SVG. Taille maximale : 3 Mo.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
                           </div>
 
                           <div>

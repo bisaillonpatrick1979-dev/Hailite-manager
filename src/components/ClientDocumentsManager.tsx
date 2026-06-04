@@ -5,12 +5,19 @@ import {
   GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine,
   GCPDocumentPaymentHistoryEntry
 } from '../types';
+
 import { 
   Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar, 
   DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck, 
   FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin, 
   CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
 } from 'lucide-react';
+
+const COMPANY_LOGO_FALLBACK = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=260&q=80";
+
+function getLogoImageSrc(value?: string): string {
+  return value && /^(data:image\/|https?:\/\/|blob:)/i.test(value.trim()) ? value : COMPANY_LOGO_FALLBACK;
+}
 
 export default function ClientDocumentsManager() {
   const { 
@@ -595,7 +602,7 @@ export default function ClientDocumentsManager() {
                 <div className="relative transform -rotate-12 opacity-[0.09] flex flex-col items-center justify-center">
                   <div className="w-72 h-72 border-8 border-slate-900 rounded-full flex items-center justify-center p-6 mix-blend-multiply">
                     <img 
-                      src={companyInfo.logo || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=260&q=80"}
+                      src={getLogoImageSrc(companyInfo.logo)}
                       alt="Watermark Logo"
                       className="w-48 h-48 rounded-full object-cover grayscale"
                       referrerPolicy="no-referrer"
