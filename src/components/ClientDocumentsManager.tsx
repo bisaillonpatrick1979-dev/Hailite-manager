@@ -598,11 +598,11 @@ export default function ClientDocumentsManager() {
               
               {/* Large centered watermark: uploaded logo above the document status text. */}
               <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none select-none" aria-hidden="true">
-                <div className="w-[46rem] h-[46rem] max-w-[96%] max-h-[96%] border-[12px] border-slate-900 rounded-full opacity-[0.11] mix-blend-multiply transform -rotate-12 flex flex-col items-center justify-center gap-10 p-20 text-center">
+                <div className="w-[46rem] h-[46rem] max-w-[96%] max-h-[96%] border-[12px] border-slate-900 rounded-full opacity-[0.11] mix-blend-multiply transform -rotate-12 flex flex-col items-center justify-center gap-4 p-8 text-center">
                   <img
                     src={getLogoImageSrc(companyInfo.logo)}
                     alt=""
-                    className="w-64 h-64 max-w-[44%] max-h-[44%] object-contain grayscale"
+                    className="w-[32rem] h-[32rem] max-w-[70%] max-h-[70%] shrink-0 object-contain grayscale"
                     referrerPolicy="no-referrer"
                   />
                   <span className="block w-[88%] text-center text-[4.75rem] font-mono font-black uppercase tracking-[0.22em] leading-[0.95] text-slate-900 filter drop-shadow">
