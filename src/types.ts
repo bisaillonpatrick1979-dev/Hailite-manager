@@ -78,6 +78,36 @@ export interface PunchSession {
   totalWorkedHours?: number;
 }
 
+
+export interface InvoiceMaterialDetailLine {
+  id: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  subtotal: number;
+  source?: 'catalogue' | 'manual' | 'subcontractor';
+  catalogueId?: string;
+  addedBy?: 'admin' | 'subcontractor';
+}
+
+export interface InvoiceLabourDetailLine {
+  id: string;
+  description: string;
+  mode: 'hourly' | 'fixed';
+  hours?: number;
+  rate?: number;
+  amount: number;
+  addedBy?: 'admin' | 'subcontractor';
+}
+
+export interface InvoiceAuditEntry {
+  id: string;
+  date: string;
+  actor: string;
+  action: string;
+}
+
 export interface Invoice {
   id: string;
   employeeId: string;
@@ -93,6 +123,14 @@ export interface Invoice {
   status: 'draft' | 'pending' | 'paid';
   notes?: string;
   taxIncluded: boolean;
+  projectTitle?: string;
+  projectAddress?: string;
+  materialLines?: InvoiceMaterialDetailLine[];
+  labourLines?: InvoiceLabourDetailLine[];
+  subcontractorMaterialAdditions?: InvoiceMaterialDetailLine[];
+  subcontractorLabourAdditions?: InvoiceLabourDetailLine[];
+  subcontractorNotes?: string;
+  auditLog?: InvoiceAuditEntry[];
 }
 
 export interface CatalogueMaterial {

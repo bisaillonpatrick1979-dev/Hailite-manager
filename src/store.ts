@@ -1392,7 +1392,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (unInvoicedPunches.length === 0) return;
 
     const totalHours = unInvoicedPunches.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
-    const amount = unInvoicedPunches.reduce((sum, p) => sum + p.revenue, 0);
+    const materialLines = unInvoicedPunches.flatMap((p, punchIdx) => (p.surfaceMaterials || []).map((mat, matIdx) => ({
+      id: `mat-${p.id}-${matIdx}`,
+      description: mat.name,
+      quantity: Number(mat.quantity || 0),
+      unit: 'unité',
+      unitPrice: Number(mat.unitPrice || 0),
+      subtotal: Number(((mat.quantity || 0) * (mat.unitPrice || 0)).toFixed(2)),
+      source: 'manual' as const,
+      addedBy: 'admin' as const
+    })));
+    const labourLines = unInvoicedPunches.map((p, idx) => ({
+      id: `lab-${p.id}-${idx}`,
+      description: `${p.projectName} — ${p.payMode === 'horaire' ? 'Travail à l\'heure' : p.payMode === 'surface' ? 'Travail au pied carré' : 'Forfait'}`,
+      mode: p.payMode === 'forfait' ? 'fixed' as const : 'hourly' as const,
+      hours: p.payMode === 'forfait' ? undefined : Number((p.totalWorkedHours || 0).toFixed(2)),
+      rate: p.payMode === 'forfait' ? undefined : Number(p.rate || 0),
+      amount: Number((p.revenue || 0).toFixed(2)),
+      addedBy: 'admin' as const
+    }));
+    const materialSubtotal = materialLines.reduce((sum, line) => sum + line.subtotal, 0);
+    const labourSubtotal = labourLines.reduce((sum, line) => sum + line.amount, 0);
+    const amount = materialSubtotal + labourSubtotal;
     const comp = get().companyInfo;
     const gstRate = comp.taxRate1 !== undefined ? comp.taxRate1 : 0.05;
     const qstRate = comp.taxRate2 !== undefined ? comp.taxRate2 : 0.09975;
@@ -1415,6 +1436,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       totalWithTaxes,
       status: 'draft',
       taxIncluded: false,
+      projectTitle: Array.from(new Set(unInvoicedPunches.map(p => p.projectName))).join(' / '),
+      projectAddress: unInvoicedPunches[0]?.projectName || 'Adresse projet à confirmer',
+      materialLines,
+      labourLines,
+      subcontractorMaterialAdditions: [],
+      subcontractorLabourAdditions: [],
+      subcontractorNotes: '',
+      auditLog: [{ id: `audit-${Date.now()}`, date: new Date().toISOString(), actor: 'Système', action: 'Facture détaillée auto-générée à partir des sessions de punch.' }],
       notes: `Facture brouillon auto-générée le ${new Date().toLocaleDateString('fr-CA')}.`
     };
 

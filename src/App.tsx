@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { translations } from './translations';
-import { Employee, CompanyInfo, EmployeeRole } from './types';
+import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import OnboardingScreen from './components/OnboardingScreen';
 import MotivationTab from './components/MotivationTab';
@@ -319,6 +319,9 @@ export default function App() {
   const [newInventoryForm, setNewInventoryForm] = useState({ name: '', quantity: 10, unit: 'pqt', emoji: '📦', minThreshold: 5 });
   const [newCatalogueForm, setNewCatalogueForm] = useState({ name: '', emoji: '🪵', pricePerSqFt: 5.0, imageUrl: '', imageAlt: '' });
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
+  const [invoiceMaterialDrafts, setInvoiceMaterialDrafts] = useState<Record<string, { catalogueId: string; description: string; quantity: number; unit: string; unitPrice: number }>>({});
+  const [invoiceLabourDrafts, setInvoiceLabourDrafts] = useState<Record<string, { description: string; mode: 'hourly' | 'fixed'; hours: number; rate: number; amount: number }>>({});
+  const [invoiceAdditionDrafts, setInvoiceAdditionDrafts] = useState<Record<string, { description: string; quantity: number; unit: string; unitPrice: number; note: string }>>({});
 
   // Custom states for Inventory, Catalogue, Supplier Orders & App Tour
   const [inventorySubTab, setInventorySubTab] = useState<'stock' | 'catalogue'>('stock');
@@ -960,6 +963,108 @@ export default function App() {
     }
 
     return "S'accumule encore dans la facture hebdomadaire en cours de l'employé.";
+  };
+
+  const getInvoiceDetailTotals = (inv: Invoice) => {
+    const materialSubtotal = (inv.materialLines || []).reduce((sum, line) => sum + line.subtotal, 0);
+    const labourSubtotal = (inv.labourLines || []).reduce((sum, line) => sum + line.amount, 0);
+    const additionMaterials = (inv.subcontractorMaterialAdditions || []).reduce((sum, line) => sum + line.subtotal, 0);
+    const additionLabour = (inv.subcontractorLabourAdditions || []).reduce((sum, line) => sum + line.amount, 0);
+    const additionsSubtotal = additionMaterials + additionLabour;
+    const subtotal = materialSubtotal + labourSubtotal + additionsSubtotal;
+    return { materialSubtotal, labourSubtotal, additionsSubtotal, subtotal };
+  };
+
+  const withInvoiceTotals = (inv: Invoice, patch: Partial<Invoice>, action: string): Invoice => {
+    const merged = { ...inv, ...patch } as Invoice;
+    const totals = getInvoiceDetailTotals(merged);
+    const baseAmount = totals.subtotal > 0 ? totals.subtotal : merged.amount;
+    const gstRate = companyInfo.taxRate1 !== undefined ? companyInfo.taxRate1 : 0.05;
+    const qstRate = companyInfo.taxRate2 !== undefined ? companyInfo.taxRate2 : 0.09975;
+    const gstAmount = Number((baseAmount * gstRate).toFixed(2));
+    const qstAmount = Number((baseAmount * qstRate).toFixed(2));
+
+    return {
+      ...merged,
+      amount: Number(baseAmount.toFixed(2)),
+      gstAmount,
+      qstAmount,
+      totalWithTaxes: Number((baseAmount + gstAmount + qstAmount).toFixed(2)),
+      auditLog: [
+        ...(merged.auditLog || []),
+        { id: `audit-${Date.now()}`, date: new Date().toISOString(), actor: activeEmployee?.name || 'Utilisateur', action }
+      ]
+    };
+  };
+
+  const updateDetailedInvoice = (inv: Invoice, patch: Partial<Invoice>, action: string) => {
+    updateInvoice(withInvoiceTotals(inv, patch, action));
+  };
+
+  const getMaterialDraft = (invoiceId: string) => invoiceMaterialDrafts[invoiceId] || { catalogueId: '', description: '', quantity: 1, unit: 'unité', unitPrice: 0 };
+  const getLabourDraft = (invoiceId: string) => invoiceLabourDrafts[invoiceId] || { description: 'Installation', mode: 'fixed' as const, hours: 0, rate: 0, amount: 0 };
+  const getAdditionDraft = (invoiceId: string) => invoiceAdditionDrafts[invoiceId] || { description: '', quantity: 1, unit: 'unité', unitPrice: 0, note: '' };
+
+  const addInvoiceMaterialLine = (inv: Invoice) => {
+    const draft = getMaterialDraft(inv.id);
+    const selected = catalogue.find(mat => mat.id === draft.catalogueId);
+    const description = (selected?.name || draft.description).trim();
+    if (!description || draft.quantity <= 0) return;
+    const unitPrice = Number((selected ? selected.pricePerSqFt : draft.unitPrice) || 0);
+    const line = {
+      id: `mat-${Date.now()}`,
+      description,
+      quantity: Number(draft.quantity || 0),
+      unit: draft.unit || 'unité',
+      unitPrice,
+      subtotal: Number((Number(draft.quantity || 0) * unitPrice).toFixed(2)),
+      source: selected ? 'catalogue' as const : 'manual' as const,
+      catalogueId: selected?.id,
+      addedBy: 'admin' as const
+    };
+    updateDetailedInvoice(inv, { materialLines: [...(inv.materialLines || []), line] }, `Ajout matériau: ${description}`);
+    setInvoiceMaterialDrafts({ ...invoiceMaterialDrafts, [inv.id]: { catalogueId: '', description: '', quantity: 1, unit: 'unité', unitPrice: 0 } });
+  };
+
+  const addInvoiceLabourLine = (inv: Invoice) => {
+    const draft = getLabourDraft(inv.id);
+    if (!draft.description.trim()) return;
+    const amount = draft.mode === 'hourly' ? Number(((draft.hours || 0) * (draft.rate || 0)).toFixed(2)) : Number(draft.amount || 0);
+    const line = {
+      id: `lab-${Date.now()}`,
+      description: draft.description.trim(),
+      mode: draft.mode,
+      hours: draft.mode === 'hourly' ? Number(draft.hours || 0) : undefined,
+      rate: draft.mode === 'hourly' ? Number(draft.rate || 0) : undefined,
+      amount,
+      addedBy: 'admin' as const
+    };
+    updateDetailedInvoice(inv, { labourLines: [...(inv.labourLines || []), line] }, `Ajout main-d'œuvre: ${line.description}`);
+    setInvoiceLabourDrafts({ ...invoiceLabourDrafts, [inv.id]: { description: 'Installation', mode: 'fixed', hours: 0, rate: 0, amount: 0 } });
+  };
+
+  const addSubcontractorAddition = (inv: Invoice) => {
+    const draft = getAdditionDraft(inv.id);
+    if (!draft.description.trim() || draft.quantity <= 0) return;
+    const line = {
+      id: `add-mat-${Date.now()}`,
+      description: draft.description.trim(),
+      quantity: Number(draft.quantity || 0),
+      unit: draft.unit || 'unité',
+      unitPrice: Number(draft.unitPrice || 0),
+      subtotal: Number((Number(draft.quantity || 0) * Number(draft.unitPrice || 0)).toFixed(2)),
+      source: 'subcontractor' as const,
+      addedBy: 'subcontractor' as const
+    };
+    updateDetailedInvoice(inv, {
+      subcontractorMaterialAdditions: [...(inv.subcontractorMaterialAdditions || []), line],
+      subcontractorNotes: [inv.subcontractorNotes, draft.note].filter(Boolean).join('\\n')
+    }, `Ajout sous-traitant: ${line.description}`);
+    setInvoiceAdditionDrafts({ ...invoiceAdditionDrafts, [inv.id]: { description: '', quantity: 1, unit: 'unité', unitPrice: 0, note: '' } });
+  };
+
+  const removeInvoiceLine = (inv: Invoice, collection: 'materialLines' | 'labourLines', lineId: string) => {
+    updateDetailedInvoice(inv, { [collection]: ((inv[collection] as any[]) || []).filter(line => line.id !== lineId) } as Partial<Invoice>, `Suppression ligne ${lineId}`);
   };
 
   const openPrefilledDelivery = (channel: 'email' | 'sms', to: string | undefined, subject: string, body: string) => {
@@ -1866,7 +1971,7 @@ ${companyInfo.name}`
                     invoices
                       .filter(inv => activeEmployee.role === 'admin' || inv.employeeId === activeEmployee.id)
                       .map(inv => (
-                        <div key={inv.id} className="p-4 bg-gray-900 border border-gray-850 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div key={inv.id} className="p-4 bg-gray-900 border border-gray-850 rounded-xl flex flex-col gap-4">
                           <div className="space-y-1">
                             <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-gray-800 text-gray-400">
                               {inv.status}
@@ -1881,6 +1986,143 @@ ${companyInfo.name}`
                               "{inv.notes}"
                             </p>
                           </div>
+
+                          {(() => {
+                            const totals = getInvoiceDetailTotals(inv);
+                            const materialDraft = getMaterialDraft(inv.id);
+                            const labourDraft = getLabourDraft(inv.id);
+                            const additionDraft = getAdditionDraft(inv.id);
+                            const canAdminEdit = activeEmployee.role === 'admin' && inv.status === 'draft';
+                            const isSubcontractorView = activeEmployee.role !== 'admin';
+
+                            return (
+                              <div className="rounded-2xl border border-gray-800 bg-gray-950/70 p-4 space-y-5">
+                                <div className="border-b border-gray-850 pb-3">
+                                  <h5 className="text-sm font-black text-white uppercase tracking-wide">{inv.projectTitle || `PROJET — ${inv.employeeName}`}</h5>
+                                  <p className="text-xs text-gray-400">Adresse : {inv.projectAddress || 'Adresse projet à confirmer'}</p>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <h6 className="text-[11px] font-black uppercase text-orange-400">Matériaux posés</h6>
+                                  <div className="overflow-x-auto rounded-xl border border-gray-850">
+                                    <table className="w-full text-left text-xs">
+                                      <thead className="bg-gray-900 text-gray-400 uppercase font-mono">
+                                        <tr>
+                                          <th className="p-2">Matériau</th>
+                                          <th className="p-2 text-right">Quantité</th>
+                                          <th className="p-2">Unité</th>
+                                          <th className="p-2 text-right">Prix unit.</th>
+                                          <th className="p-2 text-right">Sous-total</th>
+                                          {canAdminEdit && <th className="p-2"></th>}
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-850">
+                                        {(inv.materialLines || []).map(line => (
+                                          <tr key={line.id}>
+                                            <td className="p-2 text-white font-bold">{line.description}</td>
+                                            <td className="p-2 text-right font-mono">
+                                              {canAdminEdit ? (
+                                                <input className="w-20 bg-gray-900 border border-gray-800 rounded p-1 text-right" type="number" value={line.quantity} onChange={(e) => {
+                                                  const quantity = Number(e.target.value);
+                                                  updateDetailedInvoice(inv, { materialLines: (inv.materialLines || []).map(l => l.id === line.id ? { ...l, quantity, subtotal: Number((quantity * l.unitPrice).toFixed(2)) } : l) }, `Quantité matériau modifiée: ${line.description}`);
+                                                }} />
+                                              ) : line.quantity}
+                                            </td>
+                                            <td className="p-2 text-gray-300">{line.unit}</td>
+                                            <td className="p-2 text-right font-mono">
+                                              {canAdminEdit ? (
+                                                <input className="w-24 bg-gray-900 border border-gray-800 rounded p-1 text-right" type="number" step="0.01" value={line.unitPrice} onChange={(e) => {
+                                                  const unitPrice = Number(e.target.value);
+                                                  updateDetailedInvoice(inv, { materialLines: (inv.materialLines || []).map(l => l.id === line.id ? { ...l, unitPrice, subtotal: Number((l.quantity * unitPrice).toFixed(2)) } : l) }, `Prix matériau modifié: ${line.description}`);
+                                                }} />
+                                              ) : `${line.unitPrice.toFixed(2)}$`}
+                                            </td>
+                                            <td className="p-2 text-right text-green-300 font-black font-mono">{line.subtotal.toFixed(2)}$</td>
+                                            {canAdminEdit && <td className="p-2 text-right"><button onClick={() => removeInvoiceLine(inv, 'materialLines', line.id)} className="text-red-400 font-black">×</button></td>}
+                                          </tr>
+                                        ))}
+                                        {(inv.materialLines || []).length === 0 && (
+                                          <tr><td colSpan={canAdminEdit ? 6 : 5} className="p-3 text-center text-gray-500">Aucun matériau détaillé.</td></tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+
+                                  {canAdminEdit && (
+                                    <div className="grid grid-cols-1 md:grid-cols-6 gap-2 rounded-xl border border-gray-850 bg-gray-900 p-3">
+                                      <select className="md:col-span-2 bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" value={materialDraft.catalogueId} onChange={(e) => {
+                                        const selected = catalogue.find(mat => mat.id === e.target.value);
+                                        setInvoiceMaterialDrafts({ ...invoiceMaterialDrafts, [inv.id]: { ...materialDraft, catalogueId: e.target.value, description: selected?.name || materialDraft.description, unitPrice: selected?.pricePerSqFt || materialDraft.unitPrice } });
+                                      }}>
+                                        <option value="">Catalogue ou manuel</option>
+                                        {catalogue.map(mat => <option key={mat.id} value={mat.id}>{mat.name} — {mat.pricePerSqFt}$/u</option>)}
+                                      </select>
+                                      <input className="md:col-span-2 bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" placeholder="Description manuelle" value={materialDraft.description} onChange={(e) => setInvoiceMaterialDrafts({ ...invoiceMaterialDrafts, [inv.id]: { ...materialDraft, description: e.target.value } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" placeholder="Qté" value={materialDraft.quantity} onChange={(e) => setInvoiceMaterialDrafts({ ...invoiceMaterialDrafts, [inv.id]: { ...materialDraft, quantity: Number(e.target.value) } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" placeholder="Unité" value={materialDraft.unit} onChange={(e) => setInvoiceMaterialDrafts({ ...invoiceMaterialDrafts, [inv.id]: { ...materialDraft, unit: e.target.value } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" step="0.01" placeholder="Prix" value={materialDraft.unitPrice} onChange={(e) => setInvoiceMaterialDrafts({ ...invoiceMaterialDrafts, [inv.id]: { ...materialDraft, unitPrice: Number(e.target.value) } })} />
+                                      <button onClick={() => addInvoiceMaterialLine(inv)} className="md:col-span-5 bg-orange-600 hover:bg-orange-500 text-white font-black rounded p-2 text-xs">+ Ajouter matériau</button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="space-y-2">
+                                  <h6 className="text-[11px] font-black uppercase text-cyan-400">Main-d'œuvre</h6>
+                                  <div className="overflow-x-auto rounded-xl border border-gray-850">
+                                    <table className="w-full text-left text-xs">
+                                      <thead className="bg-gray-900 text-gray-400 uppercase font-mono"><tr><th className="p-2">Description</th><th className="p-2">Mode</th><th className="p-2">Détail</th><th className="p-2 text-right">Montant</th>{canAdminEdit && <th className="p-2"></th>}</tr></thead>
+                                      <tbody className="divide-y divide-gray-850">
+                                        {(inv.labourLines || []).map(line => (
+                                          <tr key={line.id}>
+                                            <td className="p-2 text-white font-bold">{line.description}</td>
+                                            <td className="p-2 text-gray-300">{line.mode === 'hourly' ? "À l'heure" : 'Forfait'}</td>
+                                            <td className="p-2 font-mono text-gray-300">{line.mode === 'hourly' ? `${line.hours || 0}h @ ${line.rate || 0}$/h` : 'Forfait'}</td>
+                                            <td className="p-2 text-right text-green-300 font-black font-mono">{line.amount.toFixed(2)}$</td>
+                                            {canAdminEdit && <td className="p-2 text-right"><button onClick={() => removeInvoiceLine(inv, 'labourLines', line.id)} className="text-red-400 font-black">×</button></td>}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  {canAdminEdit && (
+                                    <div className="grid grid-cols-1 md:grid-cols-6 gap-2 rounded-xl border border-gray-850 bg-gray-900 p-3">
+                                      <input className="md:col-span-2 bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" placeholder="Description" value={labourDraft.description} onChange={(e) => setInvoiceLabourDrafts({ ...invoiceLabourDrafts, [inv.id]: { ...labourDraft, description: e.target.value } })} />
+                                      <select className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" value={labourDraft.mode} onChange={(e) => setInvoiceLabourDrafts({ ...invoiceLabourDrafts, [inv.id]: { ...labourDraft, mode: e.target.value as any } })}><option value="fixed">Forfait</option><option value="hourly">À l'heure</option></select>
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" placeholder="Heures" value={labourDraft.hours} onChange={(e) => setInvoiceLabourDrafts({ ...invoiceLabourDrafts, [inv.id]: { ...labourDraft, hours: Number(e.target.value) } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" placeholder="Taux" value={labourDraft.rate} onChange={(e) => setInvoiceLabourDrafts({ ...invoiceLabourDrafts, [inv.id]: { ...labourDraft, rate: Number(e.target.value) } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" placeholder="Forfait" value={labourDraft.amount} onChange={(e) => setInvoiceLabourDrafts({ ...invoiceLabourDrafts, [inv.id]: { ...labourDraft, amount: Number(e.target.value) } })} />
+                                      <button onClick={() => addInvoiceLabourLine(inv)} className="md:col-span-6 bg-cyan-600 hover:bg-cyan-500 text-white font-black rounded p-2 text-xs">+ Ajouter main-d'œuvre</button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="space-y-2">
+                                  <h6 className="text-[11px] font-black uppercase text-purple-400">Section ajouts sous-traitant</h6>
+                                  {(inv.subcontractorMaterialAdditions || []).map(line => (
+                                    <div key={line.id} className="flex justify-between rounded-lg bg-gray-900 border border-gray-850 p-2 text-xs"><span className="text-white font-bold">{line.description} — {line.quantity} {line.unit}</span><span className="font-mono text-green-300">{line.subtotal.toFixed(2)}$</span></div>
+                                  ))}
+                                  {isSubcontractorView && inv.status === 'draft' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-2 rounded-xl border border-purple-500/20 bg-purple-950/10 p-3">
+                                      <input className="md:col-span-2 bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" placeholder="Accessoire / produit additionnel" value={additionDraft.description} onChange={(e) => setInvoiceAdditionDrafts({ ...invoiceAdditionDrafts, [inv.id]: { ...additionDraft, description: e.target.value } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" placeholder="Qté" value={additionDraft.quantity} onChange={(e) => setInvoiceAdditionDrafts({ ...invoiceAdditionDrafts, [inv.id]: { ...additionDraft, quantity: Number(e.target.value) } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" placeholder="Unité" value={additionDraft.unit} onChange={(e) => setInvoiceAdditionDrafts({ ...invoiceAdditionDrafts, [inv.id]: { ...additionDraft, unit: e.target.value } })} />
+                                      <input className="bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white text-right" type="number" step="0.01" placeholder="Prix" value={additionDraft.unitPrice} onChange={(e) => setInvoiceAdditionDrafts({ ...invoiceAdditionDrafts, [inv.id]: { ...additionDraft, unitPrice: Number(e.target.value) } })} />
+                                      <textarea className="md:col-span-4 bg-gray-950 border border-gray-800 rounded p-2 text-xs text-white" placeholder="Notes justificatives" value={additionDraft.note} onChange={(e) => setInvoiceAdditionDrafts({ ...invoiceAdditionDrafts, [inv.id]: { ...additionDraft, note: e.target.value } })} />
+                                      <button onClick={() => addSubcontractorAddition(inv)} className="bg-purple-600 hover:bg-purple-500 text-white font-black rounded p-2 text-xs">+ Ajouter</button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl bg-gray-900 border border-gray-850 p-3 text-xs">
+                                  <div><span className="text-gray-500 uppercase font-black">Sous-total matériaux</span><p className="text-white font-mono font-black">{totals.materialSubtotal.toFixed(2)}$</p></div>
+                                  <div><span className="text-gray-500 uppercase font-black">Sous-total main-d'œuvre</span><p className="text-white font-mono font-black">{totals.labourSubtotal.toFixed(2)}$</p></div>
+                                  <div><span className="text-gray-500 uppercase font-black">Sous-total ajouts</span><p className="text-white font-mono font-black">{totals.additionsSubtotal.toFixed(2)}$</p></div>
+                                  <div><span className="text-gray-500 uppercase font-black">Sous-total</span><p className="text-orange-300 font-mono font-black">{totals.subtotal.toFixed(2)}$</p></div>
+                                </div>
+                                {(inv.auditLog || []).length > 0 && <p className="text-[10px] text-gray-500 font-mono">Audit : {(inv.auditLog || []).slice(-2).map(a => `${new Date(a.date).toLocaleString('fr-CA')} — ${a.actor}: ${a.action}`).join(' | ')}</p>}
+                              </div>
+                            );
+                          })()}
 
                           <div className="text-right space-y-2">
                             <div>
