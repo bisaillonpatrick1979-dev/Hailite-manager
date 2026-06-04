@@ -10,7 +10,7 @@ import {
   Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar, 
   DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck, 
   FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin, 
-  CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
+  CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat, Mail, MessageCircle
 } from 'lucide-react';
 
 const COMPANY_LOGO_FALLBACK = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=260&q=80";
@@ -257,6 +257,54 @@ export default function ClientDocumentsManager() {
   // PDF Preview printing simulations
   const handlePrint = () => {
     window.print();
+  };
+
+  const getDocumentKindLabel = (doc: GCPDocument) => {
+    if (doc.type === 'invoice') return 'facture';
+    if (doc.type === 'quote') return 'devis';
+    return 'contrat';
+  };
+
+  const buildDocumentShareText = (doc: GCPDocument, compact = false) => {
+    const kind = getDocumentKindLabel(doc);
+    const amount = doc.type === 'invoice' ? doc.balanceDue : doc.total;
+
+    if (compact) {
+      return `Bonjour ${doc.clientName}, votre ${kind} ${doc.number} de ${companyInfo.name} est prêt. Montant: ${amount.toFixed(2)}$ CAD. Merci d'avoir fait affaire avec nous.`;
+    }
+
+    return `Bonjour ${doc.clientName},
+
+Merci beaucoup d'avoir fait affaire avec ${companyInfo.name}.
+
+Vous trouverez ci-joint le PDF de votre ${kind} ${doc.number}.
+Montant total: ${doc.total.toFixed(2)}$ CAD
+Solde exigible: ${doc.balanceDue.toFixed(2)}$ CAD
+Échéance: ${doc.dueDate || 'sur réception'}
+
+Si vous avez des questions, répondez simplement à ce message.
+
+Merci,
+${companyInfo.name}
+${companyInfo.phone || ''}
+${companyInfo.email || ''}`;
+  };
+
+  const handleSendDocument = (doc: GCPDocument, channel: 'email' | 'sms') => {
+    setSelectedDocForView(doc);
+    window.setTimeout(() => window.print(), 80);
+
+    const kind = getDocumentKindLabel(doc);
+    const subject = `${kind.charAt(0).toUpperCase() + kind.slice(1)} ${doc.number} - ${companyInfo.name}`;
+    const body = buildDocumentShareText(doc, channel === 'sms');
+
+    window.setTimeout(() => {
+      if (channel === 'email') {
+        window.location.href = `mailto:${encodeURIComponent(doc.clientEmail || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      } else {
+        window.location.href = `sms:${encodeURIComponent(doc.clientPhone || '')}?&body=${encodeURIComponent(body)}`;
+      }
+    }, 250);
   };
 
   // Filters calculation
@@ -530,6 +578,24 @@ export default function ClientDocumentsManager() {
                     </button>
                   )}
 
+                  <button
+                    onClick={() => handleSendDocument(doc, 'email')}
+                    className="px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
+                    title="Préparer le PDF et envoyer la facturation par e-mail"
+                  >
+                    <Mail className="w-3 h-3" />
+                    <span>Envoyer e-mail</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleSendDocument(doc, 'sms')}
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
+                    title="Préparer le PDF et envoyer la facturation par SMS"
+                  >
+                    <MessageCircle className="w-3 h-3" />
+                    <span>Envoyer SMS</span>
+                  </button>
+
                   {/* Pay Ledger action */}
                   {doc.type === 'invoice' && doc.status !== 'paid' && (
                     <button
@@ -574,6 +640,20 @@ export default function ClientDocumentsManager() {
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSendDocument(selectedDocForView, 'email')}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-black rounded-lg cursor-pointer transition flex items-center gap-2"
+                >
+                  <Mail className="w-4 h-4" />
+                  <span>Envoyer par e-mail</span>
+                </button>
+                <button
+                  onClick={() => handleSendDocument(selectedDocForView, 'sms')}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-lg cursor-pointer transition flex items-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>Envoyer par SMS</span>
+                </button>
                 <button
                   onClick={handlePrint}
                   className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg cursor-pointer transition flex items-center gap-2"

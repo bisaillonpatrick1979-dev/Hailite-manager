@@ -12,7 +12,7 @@ import {
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, Eye, EyeOff, CheckSquare, Dumbbell,
-  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Mic, MicOff, Camera, Volume2, VolumeX
+  Play, Pause, Award, HelpCircle, Phone, Mail, MessageCircle, Coins, Mic, MicOff, Camera, Volume2, VolumeX
 } from 'lucide-react';
 
 const IMAGE_KEYWORDS: { keywords: string[]; url: string; alt: string }[] = [
@@ -876,6 +876,73 @@ export default function App() {
     };
   };
 
+  const openPrefilledDelivery = (channel: 'email' | 'sms', to: string | undefined, subject: string, body: string) => {
+    if (channel === 'email') {
+      window.location.href = `mailto:${encodeURIComponent(to || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      return;
+    }
+    window.location.href = `sms:${encodeURIComponent(to || '')}?&body=${encodeURIComponent(body)}`;
+  };
+
+  const sendSubcontractorInvoice = (inv: any, channel: 'email' | 'sms') => {
+    const emp = employees.find(e => e.id === inv.employeeId);
+    const recipient = channel === 'email' ? emp?.email : emp?.phone;
+    const subject = `Facturation ${inv.invoiceNumber} - ${companyInfo.name}`;
+    const body = channel === 'email'
+      ? `Bonjour ${inv.employeeName},
+
+Merci pour le travail effectué avec ${companyInfo.name}.
+
+Vous trouverez ci-joint le PDF de la facturation ${inv.invoiceNumber}.
+Montant total TTC: ${inv.totalWithTaxes.toFixed(2)}$ CAD
+Heures: ${inv.totalHours}
+Date: ${inv.date}
+
+Merci,
+${companyInfo.name}`
+      : `Bonjour ${inv.employeeName}, facturation ${inv.invoiceNumber} prête. Total TTC: ${inv.totalWithTaxes.toFixed(2)}$ CAD. Merci - ${companyInfo.name}`;
+    openPrefilledDelivery(channel, recipient, subject, body);
+  };
+
+  const sendSupplierOrder = (ord: any, channel: 'email' | 'sms') => {
+    const subject = `Bon de commande - ${companyInfo.name} - ${ord.supplierName}`;
+    const lines = ord.items.map((item: any) => `- ${item.name}: ${item.quantity} x ${item.price}$`).join('\\n');
+    const body = channel === 'email'
+      ? `Bonjour ${ord.supplierName},
+
+Veuillez trouver ci-joint le PDF du bon de commande émis par ${companyInfo.name}.
+
+Articles:
+${lines}
+
+Total: ${ord.totalAmount.toFixed(2)}$ CAD
+Date: ${ord.date}
+
+Merci,
+${companyInfo.name}
+${companyInfo.phone || ''}`
+      : `Bonjour ${ord.supplierName}, bon de commande ${companyInfo.name} prêt. Total: ${ord.totalAmount.toFixed(2)}$ CAD. Merci.`;
+    openPrefilledDelivery(channel, undefined, subject, body);
+  };
+
+  const sendPayrollStatement = (pay: any, emp: Employee | undefined, channel: 'email' | 'sms') => {
+    const recipient = channel === 'email' ? emp?.email : emp?.phone;
+    const subject = `Relevé de paiement ${pay.period} - ${companyInfo.name}`;
+    const body = channel === 'email'
+      ? `Bonjour ${pay.employeeName},
+
+Votre relevé de paiement PDF est prêt et joint au message.
+Période: ${pay.period}
+Date: ${pay.date}
+Heures: ${pay.hours}
+Montant versé: ${pay.amount.toFixed(2)}$ CAD
+
+Merci,
+${companyInfo.name}`
+      : `Bonjour ${pay.employeeName}, relevé de paiement ${pay.period}: ${pay.amount.toFixed(2)}$ CAD pour ${pay.hours}h. Merci - ${companyInfo.name}`;
+    openPrefilledDelivery(channel, recipient, subject, body);
+  };
+
   return (
     <div 
       id="main-scaffold-container"
@@ -1712,6 +1779,22 @@ export default function App() {
                                   className="px-2 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[9px] font-bold uppercase rounded border border-green-500/30 cursor-pointer"
                                 >
                                   Payer Interac
+                                </button>
+                                <button
+                                  onClick={() => sendSubcontractorInvoice(inv, 'email')}
+                                  className="px-2 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-[9px] font-bold uppercase rounded border border-cyan-500/30 cursor-pointer inline-flex items-center gap-1"
+                                  title="Envoyer la facturation par e-mail avec message rempli automatiquement"
+                                >
+                                  <Mail className="w-3 h-3" />
+                                  E-mail
+                                </button>
+                                <button
+                                  onClick={() => sendSubcontractorInvoice(inv, 'sms')}
+                                  className="px-2 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-[9px] font-bold uppercase rounded border border-indigo-500/30 cursor-pointer inline-flex items-center gap-1"
+                                  title="Envoyer la facturation par SMS avec message rempli automatiquement"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                  SMS
                                 </button>
                               </div>
                             )}
@@ -2563,6 +2646,25 @@ export default function App() {
                       <div className="text-right">
                         <p className="text-base font-black text-orange-500">{ord.totalAmount.toFixed(2)}$</p>
                         <p className="text-[10px] text-gray-500 font-mono">Montant total du bon</p>
+
+                        <div className="mt-2 flex flex-wrap justify-end gap-2">
+                          <button
+                            onClick={() => sendSupplierOrder(ord, 'email')}
+                            className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-[9px] font-bold uppercase rounded border border-cyan-500/30 cursor-pointer inline-flex items-center gap-1"
+                            title="Envoyer le bon de commande par e-mail avec message rempli automatiquement"
+                          >
+                            <Mail className="w-3 h-3" />
+                            E-mail
+                          </button>
+                          <button
+                            onClick={() => sendSupplierOrder(ord, 'sms')}
+                            className="px-2.5 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-[9px] font-bold uppercase rounded border border-indigo-500/30 cursor-pointer inline-flex items-center gap-1"
+                            title="Envoyer le bon de commande par SMS avec message rempli automatiquement"
+                          >
+                            <MessageCircle className="w-3 h-3" />
+                            SMS
+                          </button>
+                        </div>
 
                         {/* Complete action if ordered */}
                         {ord.status === 'ordered' && (
@@ -5892,6 +5994,20 @@ export default function App() {
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <span className="font-mono text-purple-400 font-bold">-{p.amount.toFixed(2)}$</span>
+                                      <button
+                                        onClick={() => sendPayrollStatement(p, matchedEmployee, 'email')}
+                                        className="text-cyan-300 hover:text-cyan-200 cursor-pointer p-0.5 hover:bg-cyan-950/40 rounded"
+                                        title="Envoyer le relevé par e-mail"
+                                      >
+                                        <Mail className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => sendPayrollStatement(p, matchedEmployee, 'sms')}
+                                        className="text-indigo-300 hover:text-indigo-200 cursor-pointer p-0.5 hover:bg-indigo-950/40 rounded"
+                                        title="Envoyer le relevé par SMS"
+                                      >
+                                        <MessageCircle className="w-3.5 h-3.5" />
+                                      </button>
                                       <button 
                                         onClick={() => {
                                           if (confirm("Supprimer ce versement de paie?")) deletePayrollPayment(p.id);
