@@ -5016,8 +5016,46 @@ export default function App() {
                               ))}
                             </div>
 
+                            <div className="flex flex-wrap items-center gap-3">
+                              <input
+                                id="new-employee-avatar-camera"
+                                type="file"
+                                accept="image/*"
+                                capture="user"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+
+                                  const reader = new FileReader();
+                                  reader.onload = () => {
+                                    if (typeof reader.result === 'string') {
+                                      setNewEmployeeForm({ ...newEmployeeForm, avatar: reader.result });
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
+                                }}
+                              />
+                              <label
+                                htmlFor="new-employee-avatar-camera"
+                                className="inline-flex cursor-pointer items-center justify-center rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-orange-300 transition hover:border-orange-400 hover:bg-orange-500/20"
+                              >
+                                📷 Prendre la photo de l'employé
+                              </label>
+                              {newEmployeeForm.avatar.startsWith('data:image/') && (
+                                <div className="flex items-center gap-2 rounded-full border border-orange-500/25 bg-gray-950/70 py-1 pl-1 pr-3">
+                                  <img
+                                    src={newEmployeeForm.avatar}
+                                    alt="Aperçu de la photo sélectionnée"
+                                    className="h-10 w-10 rounded-full border border-orange-500/50 object-cover"
+                                  />
+                                  <span className="text-[9px] font-bold uppercase text-gray-400">Aperçu sélectionné</span>
+                                </div>
+                              )}
+                            </div>
+
                             <div className="space-y-1">
-                              <label className="text-[8.5px] text-gray-500 font-bold uppercase block font-mono">Ou coller l'URL d'une photo personnalisée</label>
+                              <label className="text-[8.5px] text-gray-500 font-bold uppercase block font-mono">Option avancée : coller l'URL d'une photo</label>
                               <input 
                                 type="text"
                                 placeholder="https://unsplash.com/... ou URL personnalisée"
