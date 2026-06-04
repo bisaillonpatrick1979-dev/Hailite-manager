@@ -7,10 +7,10 @@ import { useGeofencing } from './hooks/useGeofencing';
 import OnboardingScreen from './components/OnboardingScreen';
 import MotivationTab from './components/MotivationTab';
 import ClientDocumentsManager from './components/ClientDocumentsManager';
-import { 
-  Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
-  ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
-  BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
+import {
+  Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check,
+  ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag,
+  BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles,
   X, Briefcase, Percent, ShieldAlert, Laptop, Eye, EyeOff, CheckSquare, Dumbbell,
   Play, Pause, Award, HelpCircle, Phone, Mail, MessageCircle, Coins, Mic, MicOff, Camera, Volume2, VolumeX
 } from 'lucide-react';
@@ -255,6 +255,7 @@ export default function App() {
   const [homeRateCustom, setHomeRateCustom] = useState<number>(0);
   const [timerDisplay, setTimerDisplay] = useState<string>('00:00:00');
   const [earningsSimulation, setEarningsSimulation] = useState<number>(0);
+  const [realTimeHourlyEarnings, setRealTimeHourlyEarnings] = useState<number>(0);
 
   // Accounting management local inputs
   const [accountingViewMode, setAccountingViewMode] = useState<'expenses' | 'payroll'>('expenses');
@@ -270,7 +271,7 @@ export default function App() {
   // Modals state
   const [showPunchInModal, setShowPunchInModal] = useState<boolean>(false);
   const [showPunchOutModal, setShowPunchOutModal] = useState<boolean>(false);
-  
+
   // Punch-Out Surface materials reporting state
   const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string }>>([]);
 
@@ -355,7 +356,7 @@ export default function App() {
       if (liveSession && !liveSession.pausedAt) {
         // Run timer
         if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        
+
         timerIntervalRef.current = setInterval(() => {
           const start = new Date(liveSession.startTime).getTime();
           const now = new Date().getTime();
@@ -363,7 +364,7 @@ export default function App() {
           let elapsedMs = now - start;
           const pauseMinutes = liveSession.totalPauseMinutes || 0;
           elapsedMs = elapsedMs - (pauseMinutes * 60 * 1000);
-          
+
           if (elapsedMs < 0) elapsedMs = 0;
 
           const totalSeconds = Math.floor(elapsedMs / 1000);
@@ -371,7 +372,7 @@ export default function App() {
           const mins = Math.floor((totalSeconds % 3600) / 60);
           const secs = totalSeconds % 60;
           const display = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-          
+
           setTimerDisplay(display);
 
           // Simulate earnings in real-time
@@ -385,6 +386,7 @@ export default function App() {
             currentEarnings = Number(liveSession.rate); // base starting rate, addition occurs on materials submit
           }
           setEarningsSimulation(Number(currentEarnings.toFixed(2)));
+          setRealTimeHourlyEarnings(Number((hoursDecimal * (activeEmployee.hourlyRate || 0)).toFixed(2)));
         }, 1000);
       } else {
         if (timerIntervalRef.current) {
@@ -392,10 +394,20 @@ export default function App() {
           timerIntervalRef.current = null;
         }
         if (liveSession && liveSession.pausedAt) {
-          setTimerDisplay("PAUSED");
+          const start = new Date(liveSession.startTime).getTime();
+          const pausedAt = new Date(liveSession.pausedAt).getTime();
+          const pauseMinutes = liveSession.totalPauseMinutes || 0;
+          const elapsedMs = Math.max(0, pausedAt - start - (pauseMinutes * 60 * 1000));
+          const totalSeconds = Math.floor(elapsedMs / 1000);
+          const hrs = Math.floor(totalSeconds / 3600);
+          const mins = Math.floor((totalSeconds % 3600) / 60);
+          const secs = totalSeconds % 60;
+          setTimerDisplay(`${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+          setRealTimeHourlyEarnings(Number(((elapsedMs / 3600000) * (activeEmployee.hourlyRate || 0)).toFixed(2)));
         } else {
           setTimerDisplay("00:00:00");
           setEarningsSimulation(0);
+          setRealTimeHourlyEarnings(0);
         }
       }
     } else {
@@ -404,6 +416,7 @@ export default function App() {
         timerIntervalRef.current = null;
       }
       setActivePunchSession(null);
+      setRealTimeHourlyEarnings(0);
     }
 
     return () => {
@@ -478,13 +491,13 @@ export default function App() {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioContext();
-      
+
       const oscillator = ctx.createOscillator();
       const gainNode = ctx.createGain();
-      
+
       oscillator.connect(gainNode);
       gainNode.connect(ctx.destination);
-      
+
       const volume = (companyInfo.voiceReminderVolume || 80) / 100;
       gainNode.gain.setValueAtTime(volume * 0.15, ctx.currentTime);
 
@@ -519,7 +532,7 @@ export default function App() {
 
     // Check geofencing on current design before allowing punch-in
     const validation = evaluateProjectGeofence(homePunchProject);
-    
+
     // Attempted infraction log if geofencing is on and unauthorized
     if (!validation.canPunch && !geofencingBypass) {
       // Create a simulated punch attempt that gets logged in HR alerts to warn administrators!
@@ -544,18 +557,18 @@ export default function App() {
       rate: homeRateCustom,
       withinGeofence: true
     });
-    
+
     playSoundCue('in');
     setShowPunchInModal(false);
   };
 
   const handlePunchOutConfirm = () => {
     if (!activeEmployee || !activePunchSession) return;
-    
+
     // Stop session and output reported materials
     stopPunchSession(activePunchSession.id, reportedMaterials);
     playSoundCue('out');
-    
+
     // Reset reported materials list
     setReportedMaterials([]);
     setShowPunchOutModal(false);
@@ -676,7 +689,7 @@ export default function App() {
     const userText = aiMessage.trim();
     const imageToSend = aiImageAttachment;
     if (!userText && !imageToSend) return;
-    
+
     setAiHistory(prev => [...prev, {
       role: 'user',
       text: userText || (currentLanguage === 'FR' ? 'Analyse cette photo de chantier.' : 'Analyze this jobsite photo.'),
@@ -701,18 +714,18 @@ export default function App() {
       });
       const data = await res.json();
       const assistantReply = data.reply || "Désolé, l'agent IA n'a pas retourné de réponse.";
-      
-      setAiHistory(prev => [...prev, { 
-        role: 'assistant', 
+
+      setAiHistory(prev => [...prev, {
+        role: 'assistant',
         text: assistantReply,
-        simulated: data.simulated 
+        simulated: data.simulated
       }]);
       speakAiResponse(assistantReply);
     } catch (err: any) {
       console.error(err);
       const errorReply = "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer.";
-      setAiHistory(prev => [...prev, { 
-        role: 'assistant', 
+      setAiHistory(prev => [...prev, {
+        role: 'assistant',
         text: errorReply
       }]);
       speakAiResponse(errorReply);
@@ -807,20 +820,20 @@ export default function App() {
     }
 
     // Vacation rate percentage
-    const vacRate = emp.vacationRateOverride !== undefined 
-      ? emp.vacationRateOverride 
+    const vacRate = emp.vacationRateOverride !== undefined
+      ? emp.vacationRateOverride
       : (company.payrollVacationRate !== undefined ? company.payrollVacationRate : 6);
     const vacationAmount = gross * (vacRate / 100);
 
     // Source deductions
     const cpp = gross * 0.0595; // RRQ / CPP: 5.95%
     const ei = gross * 0.0166;  // EI / AE: 1.66%
-    
+
     // Income taxes
     const annualGross = gross * periods;
     const fedTaxAnn = calculateProgressiveTax(annualGross, true);
     const provTaxAnn = calculateProgressiveTax(annualGross, false);
-    
+
     const fedTax = fedTaxAnn / periods;
     const provTax = provTaxAnn / periods;
 
@@ -874,6 +887,26 @@ export default function App() {
       ae,
       net: Math.max(0, net)
     };
+  };
+
+  const getCalendarDayCategory = (hours: number) => {
+    if (hours <= 0) return { color: '#D1D5DB', emoji: '🏖️', label: 'Congé (0h)', className: 'legend-sun-breathe', textColor: '#111827' };
+    if (hours <= 2) return { color: '#BFDBFE', emoji: '🐢', label: 'Très petite journée (1-2h)', className: 'legend-turtle-walk', textColor: '#111827' };
+    if (hours <= 4) return { color: '#BBF7D0', emoji: '☕', label: 'Petite journée (3-4h)', className: 'legend-coffee-steam', textColor: '#111827' };
+    if (hours <= 6) return { color: '#FEF08A', emoji: '⚙️', label: 'Journée moyenne (5-6h)', className: 'legend-gear-rotate', textColor: '#111827' };
+    if (hours <= 8) return { color: '#FED7AA', emoji: '💪', label: 'Journée normale (7-8h)', className: 'legend-strong-pulse', textColor: '#111827' };
+    if (hours <= 10) return { color: '#FB923C', emoji: '🔥', label: 'Bonne journée (9-10h)', className: 'legend-fire-dance', textColor: '#111827' };
+    if (hours <= 11) return { color: '#F87171', emoji: '🚀', label: 'Grosse journée (11h)', className: 'legend-rocket-float', textColor: '#111827' };
+    return { color: '#991B1B', emoji: '💥', label: 'Journée explosive (12h+)', className: 'legend-explosion-pulse', textColor: '#FFFFFF' };
+  };
+
+  const workdayLegendItems = [0, 1, 3, 5, 7, 9, 11, 12].map(hours => getCalendarDayCategory(hours));
+
+  const getWorkedHoursForCalendarDay = (day: number) => {
+    const dateKey = `2026-06-${String(day).padStart(2, '0')}`;
+    return punchSessions
+      .filter(p => p.employeeId === activeEmployee?.id && p.startTime.startsWith(dateKey))
+      .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
   };
 
   const openPrefilledDelivery = (channel: 'email' | 'sms', to: string | undefined, subject: string, body: string) => {
@@ -944,7 +977,7 @@ ${companyInfo.name}`
   };
 
   return (
-    <div 
+    <div
       id="main-scaffold-container"
       className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 pt-16 flex flex-col relative select-none"
     >
@@ -992,10 +1025,10 @@ ${companyInfo.name}`
               <span className="hidden md:inline text-xs font-semibold text-gray-300">
                 {activeEmployee.name} ({activeEmployee.role === 'admin' ? t.roleAdmin : t.roleEmployee})
               </span>
-              <img 
-                src={activeEmployee.avatar} 
-                alt="Avatar" 
-                className="w-12 h-12 rounded-full border-2 border-gray-700 object-cover shadow-md" 
+              <img
+                src={activeEmployee.avatar}
+                alt="Avatar"
+                className="w-12 h-12 rounded-full border-2 border-gray-700 object-cover shadow-md"
               />
               <button
                 onClick={logout}
@@ -1033,10 +1066,10 @@ ${companyInfo.name}`
                     onClick={() => handleSelectProfile(emp.id)}
                     className="p-4 rounded-xl bg-gray-800/50 hover:bg-orange-500/10 border border-gray-800 hover:border-orange-500/40 text-center flex flex-col items-center justify-center gap-3 transition cursor-pointer"
                   >
-                    <img 
-                      src={emp.avatar} 
-                      alt={emp.name} 
-                      className="w-20 h-20 rounded-full object-cover border-2 border-gray-700 shadow-lg" 
+                    <img
+                      src={emp.avatar}
+                      alt={emp.name}
+                      className="w-20 h-20 rounded-full object-cover border-2 border-gray-700 shadow-lg"
                     />
                     <div className="min-w-0 w-full">
                       <p className="text-xs font-bold text-white truncate text-center mb-1">{emp.name}</p>
@@ -1059,8 +1092,8 @@ ${companyInfo.name}`
                 </button>
 
                 <div className="flex items-center gap-3 mb-4">
-                  <img 
-                    src={employees.find(e => e.id === selectedEmpId)?.avatar} 
+                  <img
+                    src={employees.find(e => e.id === selectedEmpId)?.avatar}
                     alt="Active Profile"
                     className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-md"
                   />
@@ -1137,7 +1170,7 @@ ${companyInfo.name}`
       ) : (
         /* ----------------- WORKSPACE (LOGGED IN) ----------------- */
         <div id="workspace-scaffold-layout" className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 flex flex-col lg:flex-row gap-6">
-          
+
           {/* Main Display Pane */}
           <div id="workspace-main-panel" className="flex-1 min-w-0 flex flex-col gap-6">
 
@@ -1150,9 +1183,9 @@ ${companyInfo.name}`
                     📍 {translations[currentLanguage].navAdminSettings} Proximité : {geofencingBypass ? "Simulé sur place" : "GPS Réel"}
                   </span>
                 </div>
-                
+
                 <div className="flex items-center gap-3">
-                  <button 
+                  <button
                     onClick={() => setGeofencingBypass(!geofencingBypass)}
                     className={`text-[10px] uppercase font-mono px-2 py-1 rounded border cursor-pointer transition ${
                       geofencingBypass ? 'bg-orange-600 text-white border-orange-500' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border-gray-700'
@@ -1160,7 +1193,7 @@ ${companyInfo.name}`
                   >
                     {geofencingBypass ? "Bypass Actif (Démo)" : "Activer Bypass (Démo)"}
                   </button>
-                  <button 
+                  <button
                     onClick={checkLocation}
                     disabled={isChecking}
                     className="p-1 px-2.5 bg-gray-800 text-[10px] font-bold hover:bg-gray-700 text-white rounded border border-gray-700 flex items-center gap-1 cursor-pointer"
@@ -1175,7 +1208,7 @@ ${companyInfo.name}`
             {/* -------------------- VIEW CONTAINER : ACCUEIL -------------------- */}
             {activeTab === 'home' && (
               <div id="view-home-content" className="flex flex-col gap-6">
-                
+
                 {/* 1. Header welcome */}
                 <div className="flex flex-wrap items-center justify-between gap-4 bg-[#16191F] border border-gray-800 rounded-2xl p-6">
                   <div>
@@ -1183,12 +1216,12 @@ ${companyInfo.name}`
                       Bonjour, {activeEmployee.name} !
                     </h3>
                     <p className="text-xs text-gray-400 mt-1 uppercase tracking-wide">
-                      {activeEmployee.role === 'admin' 
-                        ? "Gestion administrative complète activée — Hailite Xteriors" 
+                      {activeEmployee.role === 'admin'
+                        ? "Gestion administrative complète activée — Hailite Xteriors"
                         : `${activeEmployee.workerType} — Niveau Équipe ${activeEmployee.level}`}
                     </p>
                   </div>
-                  
+
                   {/* XP progress bar and Gamified Weekly Goals compact widget */}
                   {activeEmployee.role !== 'admin' && (() => {
                     const empWeeklyGoal = weeklyGoals?.find(wg => wg.employeeId === activeEmployee.id);
@@ -1220,8 +1253,8 @@ ${companyInfo.name}`
                             <span className="text-orange-400 font-mono font-bold">{current}$ / {target}$</span>
                           </div>
                           <div className="h-2 bg-gray-950 rounded-full overflow-hidden border border-gray-800">
-                            <div 
-                              className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-700" 
+                            <div
+                              className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-700"
                               style={{ width: `${percentGoal}%` }}
                             ></div>
                           </div>
@@ -1235,8 +1268,8 @@ ${companyInfo.name}`
                             <span className="text-cyan-400 font-mono font-bold">Lvl {activeEmployee.level}</span>
                           </div>
                           <div className="h-2 bg-gray-950 rounded-full overflow-hidden border border-gray-800">
-                            <div 
-                              className="bg-gradient-to-r from-cyan-500 to-indigo-500 h-full transition-all duration-700" 
+                            <div
+                              className="bg-gradient-to-r from-cyan-500 to-indigo-500 h-full transition-all duration-700"
                               style={{ width: `${(activeEmployee.xp % 1000) / 10}%` }}
                             ></div>
                           </div>
@@ -1262,7 +1295,7 @@ ${companyInfo.name}`
                 {/* 2. EMPLOYEE DASHBOARD (WITH CENTRAL ROUND PUNCH BUTTON) */}
                 {activeEmployee.role !== 'admin' ? (
                   <div className="flex flex-col items-center py-8 bg-[#16191F] border border-gray-800 rounded-2xl p-6 relative overflow-hidden">
-                    
+
                     {/* Punch State Info Banner */}
                     <div className="text-center mb-8 space-y-1">
                       {activePunchSession ? (
@@ -1287,74 +1320,92 @@ ${companyInfo.name}`
                       )}
                     </div>
 
-                    {/* CENTRAL PUNCH BUTTON with Theme Styles */}
-                    <div className="relative w-[230px] h-[230px] flex items-center justify-center mb-8">
-                      {/* Concentric ambient backing */}
-                      <div className="absolute inset-0 rounded-full border border-gray-800 animate-pulse"></div>
-                      <div className="absolute inset-4 rounded-full border border-gray-800"></div>
-
-                      <button
-                        onClick={() => {
-                          if (activePunchSession) {
-                            setShowPunchOutModal(true);
-                          } else {
-                            setShowPunchInModal(true);
-                          }
-                        }}
-                        className={`relative w-[200px] h-[200px] rounded-full flex flex-col items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer shadow-2xl border-2 ${
-                          currentTheme === 'quantum' 
-                            ? 'bg-gradient-to-br from-[#113a47] via-[#0b2933] to-[#071d24] border-cyan-500 shadow-cyan-950/40 text-cyan-200' 
-                            : currentTheme === 'xp' 
-                            ? 'bg-gradient-to-br from-[#3e1e5c] via-[#2a133e] to-[#1a0a29] border-purple-500 shadow-purple-950/40 text-purple-200'
-                            : currentTheme === 'deco'
-                            ? 'bg-gradient-to-br from-[#4e3a1f] via-[#352514] to-[#20150a] border-amber-500 shadow-amber-950/40 text-amber-100'
-                            : currentTheme === 'inferno'
-                            ? 'bg-gradient-to-br from-[#6b201a] via-[#45120e] to-[#240806] border-orange-600 shadow-orange-950/40 text-orange-200'
-                            : currentTheme === 'arctic'
-                            ? 'bg-gradient-to-br from-[#1d4c5c] via-[#10303c] to-[#091f27] border-sky-300 shadow-sky-950/45 text-sky-100'
-                            : 'bg-gradient-to-br from-[#2f3136] via-[#1e2022] to-[#121314] border-zinc-650 shadow-black text-neutral-200'
-                        }`}
-                      >
-                        {/* Rivets / ornaments for Carbon or Deco */}
-                        {currentTheme === 'carbon' && (
-                          <>
-                            <div className="absolute top-2 left-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
-                            <div className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
-                            <div className="absolute bottom-2 left-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
-                            <div className="absolute bottom-2 right-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
-                          </>
-                        )}
-                        {currentTheme === 'deco' && (
-                          <div className="absolute inset-1.5 rounded-full border border-amber-600/30"></div>
-                        )}
-
-                        {/* Theme Specifc Icons */}
-                        <div className="mb-2">
-                          {currentTheme === 'quantum' && <User className="w-8 h-8 text-cyan-400 animate-pulse" />}
-                          {currentTheme === 'xp' && <Award className="w-8 h-8 text-purple-400" />}
-                          {currentTheme === 'deco' && <Coins className="w-8 h-8 text-amber-500" />}
-                          {currentTheme === 'inferno' && <Activity className="w-8 h-8 text-orange-500 animate-bounce" />}
-                          {currentTheme === 'arctic' && <Layers className="w-8 h-8 text-sky-300" />}
-                          {currentTheme === 'carbon' && <Laptop className="w-8 h-8 text-zinc-400" />}
-                        </div>
-
-                        {/* Text Label */}
-                        <span className="text-2xl font-black uppercase tracking-tight text-white">
-                          {activePunchSession ? t.punchOut : t.punchIn}
-                        </span>
-
-                        {/* Real-time Dynamic Timer */}
-                        <span className="text-sm font-mono text-gray-300 mt-1 uppercase tracking-widest font-black">
-                          {activePunchSession ? timerDisplay : "00:00:00"}
-                        </span>
-
-                        {/* Real-time earnings simulator underneath */}
+                    {/* CENTRAL PUNCH BUTTON with real-time earnings and timer */}
+                    <div className="w-full mb-8 grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_230px_minmax(220px,1fr)] items-center justify-center gap-5">
+                      <div className={`gold-earnings-card relative overflow-hidden rounded-3xl border border-yellow-400/35 bg-gray-950/80 p-6 text-center shadow-2xl shadow-yellow-950/30 min-h-[180px] flex flex-col justify-center ${activePunchSession ? 'is-active' : 'opacity-70'}`}>
                         {activePunchSession && (
-                          <span className="text-xs uppercase font-black text-green-400 mt-1 px-2.5 py-1 rounded bg-green-950/40 border border-green-500/20">
-                            + {earningsSimulation}$
-                          </span>
+                          <div className="gold-coin-field" aria-hidden="true">
+                            {Array.from({ length: 10 }).map((_, coinIdx) => (
+                              <span key={coinIdx} className={`gold-coin coin-${coinIdx + 1}`}></span>
+                            ))}
+                          </div>
                         )}
-                      </button>
+                        <p className="relative z-10 text-sm uppercase font-black tracking-[0.18em] text-yellow-200">💰 Gains en cours</p>
+                        <p className="relative z-10 gold-shimmer-text mt-3 text-[2.75rem] md:text-[3.15rem] font-black leading-none font-mono">
+                          {activePunchSession ? realTimeHourlyEarnings.toFixed(2) : '0.00'}$
+                        </p>
+                        <p className="relative z-10 mt-2 text-xs font-bold text-yellow-100/80">
+                          Taux horaire profil : {activeEmployee.hourlyRate.toFixed(2)}$/h
+                        </p>
+                      </div>
+
+                      <div className="relative w-[230px] h-[230px] flex items-center justify-center justify-self-center">
+                        {/* Concentric ambient backing */}
+                        <div className="absolute inset-0 rounded-full border border-gray-800 animate-pulse"></div>
+                        <div className="absolute inset-4 rounded-full border border-gray-800"></div>
+
+                        <button
+                          id="center-pointage-button"
+                          onClick={() => {
+                            if (activePunchSession) {
+                              setShowPunchOutModal(true);
+                            } else {
+                              setShowPunchInModal(true);
+                            }
+                          }}
+                          className={`relative w-[200px] h-[200px] rounded-full flex flex-col items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer shadow-2xl border-2 ${
+                            currentTheme === 'quantum'
+                              ? 'bg-gradient-to-br from-[#113a47] via-[#0b2933] to-[#071d24] border-cyan-500 shadow-cyan-950/40 text-cyan-200'
+                              : currentTheme === 'xp'
+                              ? 'bg-gradient-to-br from-[#3e1e5c] via-[#2a133e] to-[#1a0a29] border-purple-500 shadow-purple-950/40 text-purple-200'
+                              : currentTheme === 'deco'
+                              ? 'bg-gradient-to-br from-[#4e3a1f] via-[#352514] to-[#20150a] border-amber-500 shadow-amber-950/40 text-amber-100'
+                              : currentTheme === 'inferno'
+                              ? 'bg-gradient-to-br from-[#6b201a] via-[#45120e] to-[#240806] border-orange-600 shadow-orange-950/40 text-orange-200'
+                              : currentTheme === 'arctic'
+                              ? 'bg-gradient-to-br from-[#1d4c5c] via-[#10303c] to-[#091f27] border-sky-300 shadow-sky-950/45 text-sky-100'
+                              : 'bg-gradient-to-br from-[#2f3136] via-[#1e2022] to-[#121314] border-zinc-650 shadow-black text-neutral-200'
+                          }`}
+                        >
+                          {currentTheme === 'carbon' && (
+                            <>
+                              <div className="absolute top-2 left-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
+                              <div className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
+                              <div className="absolute bottom-2 left-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
+                              <div className="absolute bottom-2 right-2 w-1.5 h-1.5 rounded-full bg-zinc-600 border border-black shadow"></div>
+                            </>
+                          )}
+                          {currentTheme === 'deco' && (
+                            <div className="absolute inset-1.5 rounded-full border border-amber-600/30"></div>
+                          )}
+
+                          <div className="mb-2">
+                            {currentTheme === 'quantum' && <User className="w-8 h-8 text-cyan-400 animate-pulse" />}
+                            {currentTheme === 'xp' && <Award className="w-8 h-8 text-purple-400" />}
+                            {currentTheme === 'deco' && <Coins className="w-8 h-8 text-amber-500" />}
+                            {currentTheme === 'inferno' && <Activity className="w-8 h-8 text-orange-500 animate-bounce" />}
+                            {currentTheme === 'arctic' && <Layers className="w-8 h-8 text-sky-300" />}
+                            {currentTheme === 'carbon' && <Laptop className="w-8 h-8 text-zinc-400" />}
+                          </div>
+
+                          <span className="text-2xl font-black uppercase tracking-tight text-white">
+                            {activePunchSession ? t.punchOut : t.punchIn}
+                          </span>
+                          <span className="text-xs font-black uppercase tracking-[0.2em] text-gray-400 mt-2">
+                            {activePunchSession ? 'Finir la session' : 'Démarrer'}
+                          </span>
+                        </button>
+                      </div>
+
+                      <div className="rounded-3xl border border-cyan-400/25 bg-gray-950/80 p-6 text-center shadow-xl min-h-[180px] flex flex-col justify-center">
+                        <p className="text-sm uppercase font-black tracking-[0.18em] text-cyan-300">⏱️ Chronomètre</p>
+                        <p className="mt-3 text-[2.5rem] md:text-[2.9rem] font-black leading-none font-mono text-white tabular-nums">
+                          {activePunchSession ? timerDisplay : '00:00:00'}
+                        </p>
+                        <p className="mt-2 text-xs font-bold text-gray-400">
+                          {activePunchSession ? 'Mis à jour chaque seconde' : 'Arrêté au punch out'}
+                        </p>
+                      </div>
                     </div>
 
                     {/* Mini Quick Stats Cards for Employee */}
@@ -1367,7 +1418,7 @@ ${companyInfo.name}`
                             .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0).toFixed(2)}h
                         </p>
                       </div>
-                      
+
                       <div className="bg-gray-800/40 border border-gray-800 rounded-xl p-3 text-center">
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.earningsToday}</p>
                         <p className="text-lg font-bold text-green-400 mt-1">
@@ -1390,8 +1441,8 @@ ${companyInfo.name}`
                               }
                             }}
                             className={`w-full mt-1.5 py-1 text-[10px] font-bold rounded uppercase cursor-pointer ${
-                              activePunchSession.pausedAt 
-                                ? 'bg-orange-600 text-white animate-pulse' 
+                              activePunchSession.pausedAt
+                                ? 'bg-orange-600 text-white animate-pulse'
                                 : 'bg-gray-750 text-gray-300 hover:bg-gray-700'
                             }`}
                           >
@@ -1430,40 +1481,47 @@ ${companyInfo.name}`
                       <div className="grid grid-cols-7 gap-1.5">
                         {Array.from({ length: 30 }).map((_, idx) => {
                           const dateNum = idx + 1;
-                          // simple highlight: Mathieu worked June 1 and 2
-                          const hasFullDay = (dateNum === 1);
-                          const hasPartDay = (dateNum === 2);
+                          const workedHours = getWorkedHoursForCalendarDay(dateNum);
+                          const dayCategory = getCalendarDayCategory(workedHours);
                           const isToday = (dateNum === 3);
 
                           return (
                             <div
                               key={idx}
-                              title={`Juin ${dateNum}`}
-                              className={`aspect-square text-[10px] rounded flex items-center justify-center font-bold ${
-                                hasFullDay 
-                                  ? 'bg-green-500/20 text-green-400 border border-green-500/35' 
-                                  : hasPartDay 
-                                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/35'
-                                  : isToday
-                                  ? 'bg-white text-black ring-2 ring-orange-500 shadow-md font-black'
-                                  : 'bg-gray-850 text-gray-600'
-                              }`}
+                              title={`Juin ${dateNum} — ${dayCategory.label} — ${workedHours.toFixed(2)}h`}
+                              style={{ backgroundColor: dayCategory.color, color: dayCategory.textColor }}
+                              className={`relative aspect-square rounded-lg flex items-center justify-center font-black border border-black/10 shadow-sm ${isToday ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-gray-950' : ''}`}
                             >
-                              {dateNum}
+                              <span className="text-sm font-mono">{dateNum}</span>
+                              <span className="absolute right-1 top-0.5 text-[11px] leading-none" aria-hidden="true">{dayCategory.emoji}</span>
                             </div>
                           );
                         })}
+                      </div>
+
+                      <div className="mt-5 flex flex-wrap gap-2.5 rounded-2xl border border-gray-800 bg-gray-950/60 p-3">
+                        {workdayLegendItems.map((item) => (
+                          <div key={item.label} className="flex items-center gap-2 rounded-xl border border-gray-800 bg-gray-900/70 px-3 py-2">
+                            <span
+                              className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-black/10 text-base shadow-sm"
+                              style={{ backgroundColor: item.color, color: item.textColor }}
+                            >
+                              <span className={item.className}>{item.emoji}</span>
+                            </span>
+                            <span className="text-xs font-bold text-gray-200 whitespace-nowrap">{item.label}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
 
                   </div>
                 ) : (
-                  
+
                   /* ADMIN TEAM DASHBOARD INSIDE HOMETAB */
                   <div className="flex flex-col gap-6">
                     {/* Key numbers cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-                      
+
                       <div className="bg-[#16191F] border border-gray-800 rounded-2xl p-5 flex items-center gap-5 shadow-lg">
                         <div className="p-4 bg-orange-600/10 text-orange-500 rounded-xl">
                           <Activity className="w-7 h-7" />
@@ -1522,16 +1580,16 @@ ${companyInfo.name}`
                             // Calculate dynamic properties
                             const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
                             const activeCount = activePunches.length;
-                            
+
                             const todayStr = new Date().toISOString().split('T')[0];
                             const todaysSessions = punchSessions.filter(p => {
                               const sessionDate = p.startTime.split('T')[0];
                               return sessionDate === todayStr && team.memberIds.includes(p.employeeId);
                             });
-                            
+
                             const totalHrs = todaysSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
                             const totalRev = todaysSessions.reduce((sum, p) => sum + (p.revenue || 0), 0);
-                            
+
                             const activeChantiers = Array.from(new Set(activePunches.map(p => p.projectName)));
                             const chantierName = activeChantiers.length > 0 ? activeChantiers.join(', ') : 'Aucun';
 
@@ -1573,7 +1631,7 @@ ${companyInfo.name}`
 
                     {/* Active Workers & Historical Punches list */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      
+
                       {/* Left: Active Punches on sites */}
                       <div className="bg-[#16191F] border border-gray-800 rounded-xl p-5 flex flex-col gap-4">
                         <div className="flex justify-between items-center border-b border-gray-800 pb-3">
@@ -1592,9 +1650,9 @@ ${companyInfo.name}`
                             punchSessions.filter(p => p.endTime === null).map(p => (
                               <div key={p.id} className="flex items-center justify-between pt-3 first:pt-0">
                                 <div className="flex items-center gap-2.5">
-                                  <img 
-                                    src={employees.find(e => e.id === p.employeeId)?.avatar} 
-                                    alt="Worker" 
+                                  <img
+                                    src={employees.find(e => e.id === p.employeeId)?.avatar}
+                                    alt="Worker"
                                     className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-lg"
                                   />
                                   <div>
@@ -1628,11 +1686,11 @@ ${companyInfo.name}`
 
                         <div className="space-y-3">
                           {hrAlerts.filter(a => !a.resolved).slice(0, 4).map(alert => (
-                            <div 
-                              key={alert.id} 
+                            <div
+                              key={alert.id}
                               className={`p-3 rounded-lg border flex items-start gap-2.5 ${
-                                alert.type === 'danger' 
-                                  ? 'bg-red-950/20 border-red-500/40 text-red-200' 
+                                alert.type === 'danger'
+                                  ? 'bg-red-950/20 border-red-500/40 text-red-200'
                                   : alert.type === 'warning'
                                   ? 'bg-orange-950/20 border-orange-500/40 text-orange-200'
                                   : 'bg-blue-950/20 border-blue-500/40 text-blue-200'
@@ -1678,9 +1736,9 @@ ${companyInfo.name}`
                             {punchSessions.slice(0, 8).map(punch => (
                               <tr key={punch.id} className="hover:bg-gray-800/10">
                                 <td className="py-3 font-semibold text-white flex items-center gap-2">
-                                  <img 
-                                    src={employees.find(e => e.id === punch.employeeId)?.avatar} 
-                                    className="w-11 h-11 rounded-full object-cover shadow-md" 
+                                  <img
+                                    src={employees.find(e => e.id === punch.employeeId)?.avatar}
+                                    className="w-11 h-11 rounded-full object-cover shadow-md"
                                     alt=""
                                   />
                                   {punch.employeeName}
@@ -1716,7 +1774,7 @@ ${companyInfo.name}`
                       Factures québécoises auto-générées pour chaque session de punch in/out fermée.
                     </p>
                   </div>
-                  
+
                   {activeEmployee.role === 'admin' && (
                     <div className="flex items-center gap-2">
                       <button
@@ -1822,7 +1880,7 @@ ${companyInfo.name}`
 
                 {/* Form to add project for Admin only */}
                 {activeEmployee.role === 'admin' && (
-                  <form 
+                  <form
                     onSubmit={(e) => {
                       e.preventDefault();
                       addProject({
@@ -1842,70 +1900,70 @@ ${companyInfo.name}`
                   >
                     <div>
                       <label className="text-[10px] font-mono uppercase text-gray-500">Nom du Chantier</label>
-                      <input 
-                        type="text" 
-                        value={newProjectForm.name} 
+                      <input
+                        type="text"
+                        value={newProjectForm.name}
                         onChange={e => setNewProjectForm({ ...newProjectForm, name: e.target.value })}
                         className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left"
-                        required 
-                        placeholder="ex: Condos de la Montagne" 
+                        required
+                        placeholder="ex: Condos de la Montagne"
                       />
                     </div>
                     <div>
                       <label className="text-[10px] font-mono uppercase text-gray-500">Client</label>
-                      <input 
-                        type="text" 
-                        value={newProjectForm.clientName} 
+                      <input
+                        type="text"
+                        value={newProjectForm.clientName}
                         onChange={e => setNewProjectForm({ ...newProjectForm, clientName: e.target.value })}
                         className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left"
-                        required 
-                        placeholder="ex: Sogeprim" 
+                        required
+                        placeholder="ex: Sogeprim"
                       />
                     </div>
                     <div className="md:col-span-2">
                       <label className="text-[10px] font-mono uppercase text-gray-500">Adresse</label>
-                      <input 
-                        type="text" 
-                        value={newProjectForm.address} 
+                      <input
+                        type="text"
+                        value={newProjectForm.address}
                         onChange={e => setNewProjectForm({ ...newProjectForm, address: e.target.value })}
                         className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left"
-                        required 
-                        placeholder="ex: 12 Boul Taschereau, Brossard, QC" 
+                        required
+                        placeholder="ex: 12 Boul Taschereau, Brossard, QC"
                       />
                     </div>
                     <div>
                       <label className="text-[10px] font-mono uppercase text-gray-500">Latitude GPS</label>
-                      <input 
-                        type="number" 
-                        step="0.0001" 
-                        value={newProjectForm.latitude} 
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={newProjectForm.latitude}
                         onChange={e => setNewProjectForm({ ...newProjectForm, latitude: Number(e.target.value) })}
                         className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left"
-                        required 
+                        required
                       />
                     </div>
                     <div>
                       <label className="text-[10px] font-mono uppercase text-gray-500">Longitude GPS</label>
-                      <input 
-                        type="number" 
-                        step="0.0001" 
-                        value={newProjectForm.longitude} 
+                      <input
+                        type="number"
+                        step="0.0001"
+                        value={newProjectForm.longitude}
                         onChange={e => setNewProjectForm({ ...newProjectForm, longitude: Number(e.target.value) })}
                         className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left"
-                        required 
+                        required
                       />
                     </div>
                     <div>
                       <label className="text-[10px] font-mono uppercase text-gray-500">Rayon GPS de validation (mètres)</label>
-                      <input 
-                        type="number" 
-                        value={newProjectForm.radius} 
+                      <input
+                        type="number"
+                        value={newProjectForm.radius}
                         onChange={e => setNewProjectForm({ ...newProjectForm, radius: Number(e.target.value) })}
                         className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left"
-                        required 
+                        required
                       />
                     </div>
-                    
+
                     {/* Position Fast-Filing Helpers */}
                     <div className="md:col-span-2 bg-gray-950 p-3 rounded-xl border border-gray-850 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs leading-none">
                       <div className="text-left">
@@ -1935,7 +1993,7 @@ ${companyInfo.name}`
                         >
                           <span>📍 Je suis sur le chantier</span>
                         </button>
-                        
+
                         <button
                           type="button"
                           onClick={() => {
@@ -1951,7 +2009,7 @@ ${companyInfo.name}`
                     </div>
 
                     <div className="flex items-end md:col-span-2">
-                      <button 
+                      <button
                         type="submit"
                         className="w-full p-2.5 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded transition cursor-pointer"
                       >
@@ -1973,7 +2031,7 @@ ${companyInfo.name}`
 
                       <h4 className="font-bold text-white text-sm mt-1">{proj.name}</h4>
                       <p className="text-xs text-gray-400 mt-0.5">{proj.clientName}</p>
-                      
+
                       <div className="mt-3 text-xs text-gray-400 flex flex-col gap-1">
                         <p className="flex items-center gap-1">
                           <MapPin className="w-3.5 h-3.5 text-orange-500" />
@@ -1991,11 +2049,11 @@ ${companyInfo.name}`
                         </span>
                         <div className="flex -space-x-1.5 overflow-hidden">
                           {employees.filter(e => proj.assignedEmployees?.includes(e.id)).map((emp) => (
-                            <img 
-                              key={emp.id} 
-                              src={emp.avatar} 
-                              title={emp.name} 
-                              className="w-9 h-9 rounded-full object-cover border border-gray-900" 
+                            <img
+                              key={emp.id}
+                              src={emp.avatar}
+                              title={emp.name}
+                              className="w-9 h-9 rounded-full object-cover border border-gray-900"
                               alt={emp.name}
                             />
                           ))}
@@ -2044,7 +2102,7 @@ ${companyInfo.name}`
                                   type="button"
                                   onClick={() => {
                                     const currentAssigns = proj.assignedEmployees || [];
-                                    const nextAssigns = isAssigned 
+                                    const nextAssigns = isAssigned
                                       ? currentAssigns.filter(id => id !== emp.id)
                                       : [...currentAssigns, emp.id];
                                     updateProject({
@@ -2053,8 +2111,8 @@ ${companyInfo.name}`
                                     });
                                   }}
                                   className={`px-1.5 py-0.5 rounded text-[8px] font-bold border transition ${
-                                    isAssigned 
-                                      ? 'bg-orange-600/10 border-orange-500 text-orange-400' 
+                                    isAssigned
+                                      ? 'bg-orange-600/10 border-orange-500 text-orange-400'
                                       : 'bg-gray-950 border-gray-850 text-gray-400 hover:text-white'
                                   }`}
                                 >
@@ -2090,7 +2148,7 @@ ${companyInfo.name}`
             {/* -------------------- VIEW CONTAINER : INVENTAIRE -------------------- */}
             {activeTab === 'inventory' && (
               <div id="view-inventory-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
-                
+
                 {/* Segmented Sub-Tabs */}
                 <div className="flex border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-md">
                   <button
@@ -2128,7 +2186,7 @@ ${companyInfo.name}`
                       </div>
 
                       {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                        <button 
+                        <button
                           onClick={() => {
                             setShowAddInventoryForm(!showAddInventoryForm);
                             setNewInventoryForm({ name: '', quantity: 15, unit: 'paquets', emoji: '🧱', minThreshold: 5 });
@@ -2149,7 +2207,7 @@ ${companyInfo.name}`
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Nom du Matériau</label>
-                            <input 
+                            <input
                               type="text"
                               placeholder="Ex: Tôle plate aluminium"
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-left"
@@ -2159,7 +2217,7 @@ ${companyInfo.name}`
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Quantité Initiale</label>
-                            <input 
+                            <input
                               type="number"
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 font-mono text-left"
                               value={newInventoryForm.quantity}
@@ -2168,7 +2226,7 @@ ${companyInfo.name}`
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Unité de mesure</label>
-                            <select 
+                            <select
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 cursor-pointer text-left"
                               value={newInventoryForm.unit}
                               onChange={(e) => setNewInventoryForm({ ...newInventoryForm, unit: e.target.value })}
@@ -2183,7 +2241,7 @@ ${companyInfo.name}`
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Seuil d'alerte min</label>
-                            <input 
+                            <input
                               type="number"
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 font-mono text-left"
                               value={newInventoryForm.minThreshold}
@@ -2192,7 +2250,7 @@ ${companyInfo.name}`
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Émoji représentatif</label>
-                            <input 
+                            <input
                               type="text"
                               maxLength={2}
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-center"
@@ -2232,8 +2290,8 @@ ${companyInfo.name}`
                             <div>
                               <h4 className="font-extrabold text-white text-sm">{item.name}</h4>
                               <span className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded ${
-                                item.quantity < item.minThreshold 
-                                  ? 'bg-red-500/10 text-red-400 border border-red-500/20' 
+                                item.quantity < item.minThreshold
+                                  ? 'bg-red-500/10 text-red-400 border border-red-500/20'
                                   : 'bg-gray-800 text-gray-400'
                               }`}>
                                 Seuil min: {item.minThreshold} {item.unit}
@@ -2252,14 +2310,14 @@ ${companyInfo.name}`
                             {/* Adjust quantities & Remove */}
                             <div className="flex items-center gap-2">
                               <div className="flex flex-col gap-1">
-                                <button 
+                                <button
                                   onClick={() => updateInventoryItem({ ...item, quantity: item.quantity + 5 })}
                                   className="p-1 px-1.5 bg-gray-850 hover:bg-gray-750 text-white text-[10px] font-mono font-bold rounded cursor-pointer"
                                   title="+5"
                                 >
                                   +5
                                 </button>
-                                <button 
+                                <button
                                   onClick={() => updateInventoryItem({ ...item, quantity: Math.max(0, item.quantity - 5) })}
                                   className="p-1 px-1.5 bg-gray-850 hover:bg-gray-750 text-white text-[10px] font-mono font-bold rounded cursor-pointer"
                                   title="-5"
@@ -2301,7 +2359,7 @@ ${companyInfo.name}`
                       </div>
 
                       {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                        <button 
+                        <button
                           onClick={() => {
                             setShowAddCatalogueForm(!showAddCatalogueForm);
                             setNewCatalogueForm({ name: '', emoji: '🪵', pricePerSqFt: 5.5, imageUrl: '', imageAlt: '' });
@@ -2319,11 +2377,11 @@ ${companyInfo.name}`
                         <h4 className="text-sm font-extrabold text-white uppercase tracking-wider text-orange-400 flex items-center gap-1.5">
                           <span>📦</span> Créer un modèle de produit standard de catalogue
                         </h4>
-                        
+
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Émoji</label>
-                            <input 
+                            <input
                               type="text"
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-center"
                               value={newCatalogueForm.emoji}
@@ -2333,7 +2391,7 @@ ${companyInfo.name}`
 
                           <div className="col-span-2 space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Nom de l'élément standard / Brevet</label>
-                            <input 
+                            <input
                               type="text"
                               className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-left"
                               placeholder="Ex: Bardeau architectural premium"
@@ -2358,7 +2416,7 @@ ${companyInfo.name}`
 
                           <div className="col-span-2 space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">🖼️ URL de l'image (optionnel - suggestions automatiques incluses)</label>
-                            <input 
+                            <input
                               type="text"
                               className="w-full p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850 text-left"
                               placeholder="https://images.unsplash.com/..."
@@ -2369,7 +2427,7 @@ ${companyInfo.name}`
 
                           <div className="space-y-1">
                             <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Valeur au pi² ($)</label>
-                            <input 
+                            <input
                               type="number"
                               step="0.05"
                               className="w-full p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850 text-left"
@@ -2419,7 +2477,7 @@ ${companyInfo.name}`
                           </div>
                           <div className="flex justify-end mt-4 pt-3 border-t border-gray-850">
                             {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                              <button 
+                              <button
                                 onClick={() => {
                                   if (confirm(`Supprimer "${cat.name}" du catalogue de soumission ?`)) {
                                     deleteCatalogueMaterial(cat.id);
@@ -2454,7 +2512,7 @@ ${companyInfo.name}`
                   </div>
 
                   {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                    <button 
+                    <button
                       onClick={() => {
                         setShowAddOrderForm(!showAddOrderForm);
                         setOrderSupplier('');
@@ -2521,7 +2579,7 @@ ${companyInfo.name}`
                         {orderItems.map((field, idx) => (
                           <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-gray-950 p-2.5 rounded-lg border border-gray-850">
                             <div className="col-span-6 space-y-1">
-                              <input 
+                              <input
                                 type="text"
                                 placeholder="Nom de l'article (ex: Bardeau d'asphalte)"
                                 className="w-full p-1.5 bg-gray-900 border border-gray-800 text-white text-xs rounded text-left"
@@ -2534,7 +2592,7 @@ ${companyInfo.name}`
                               />
                             </div>
                             <div className="col-span-2 space-y-1">
-                              <input 
+                              <input
                                 type="number"
                                 placeholder="Qté"
                                 className="w-full p-1.5 bg-gray-900 border border-gray-800 text-white font-mono text-xs rounded text-left"
@@ -2547,7 +2605,7 @@ ${companyInfo.name}`
                               />
                             </div>
                             <div className="col-span-3 space-y-1 relative">
-                              <input 
+                              <input
                                 type="number"
                                 step="0.01"
                                 placeholder="Prix $"
@@ -2625,8 +2683,8 @@ ${companyInfo.name}`
                       <div>
                         <div className="flex items-center gap-1.5">
                           <span className={`text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded ${
-                            ord.status === 'received' 
-                              ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
+                            ord.status === 'received'
+                              ? 'bg-green-500/10 text-green-400 border border-green-500/20'
                               : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                           }`}>
                             {ord.status}
@@ -2634,7 +2692,7 @@ ${companyInfo.name}`
                           <span className="text-xs text-gray-450 font-mono">Émis le {ord.date}</span>
                         </div>
                         <h4 className="font-bold text-white text-sm mt-1">{ord.supplierName}</h4>
-                        
+
                         {/* Summary items */}
                         <div className="mt-2 text-xs text-gray-400 space-y-1">
                           {ord.items.map((item, idx) => (
@@ -2770,7 +2828,7 @@ ${companyInfo.name}`
                         Analyse dynamique des heures accumulées, performances d'équipe et rentabilité de Hailite Xteriors.
                       </p>
                     </div>
-                    
+
                     {/* Subtab Navigation */}
                     <div className="flex gap-1 p-1 bg-gray-950 rounded-xl border border-gray-850 self-start md:self-center">
                       <button
@@ -2924,7 +2982,7 @@ ${companyInfo.name}`
 
                   {/* -------------------- FOUR MAIN METRICS WITH TRENDS & SPARKLINES -------------------- */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 pt-2">
-                    
+
                     {/* METRIC: REVENUE */}
                     <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-3 flex flex-col justify-between">
                       <div className="flex justify-between items-start">
@@ -3173,8 +3231,8 @@ ${companyInfo.name}`
                               const laborCost = projSessions.reduce((sum, p) => sum + p.revenue, 0);
 
                               // Billed Client from documents
-                              const billedDocMatches = documents.filter(d => 
-                                d.type === 'invoice' && 
+                              const billedDocMatches = documents.filter(d =>
+                                d.type === 'invoice' &&
                                 (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
                                 (d.clientName === proj.clientName || d.clientId === proj.id || d.siteAddress?.includes(proj.name.slice(0, 10)))
                               );
@@ -3316,21 +3374,21 @@ ${companyInfo.name}`
                       <div className="space-y-3">
                         <div>
                           <label className="text-[10px] font-mono text-gray-400 uppercase">Salaire brut à tester ($)</label>
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             defaultValue="1000"
                             id="gross_simulator_input"
                             onChange={(e) => {
                               const val = Number(e.target.value) || 0;
                               const decs = calculateSimulatedDeductions(val);
-                              
+
                               // Dynamically update calculations text elements
                               const elNet = document.getElementById("net_sim_output");
                               const elFed = document.getElementById("fed_sim_output");
                               const elProv = document.getElementById("prov_sim_output");
                               const elRrq = document.getElementById("rrq_sim_output");
                               const elAe = document.getElementById("ae_sim_output");
-                              
+
                               if (elNet) elNet.innerText = decs.net.toFixed(2) + "$";
                               if (elFed) elFed.innerText = decs.fedTax.toFixed(2) + "$";
                               if (elProv) elProv.innerText = decs.provTax.toFixed(2) + "$";
@@ -3366,7 +3424,7 @@ ${companyInfo.name}`
                           <span>{t.eiRate}</span>
                           <span className="font-mono animate-none" id="ae_sim_output">12.70$</span>
                         </div>
-                        
+
                         <div className="pt-2 border-t border-gray-800 flex justify-between items-center">
                           <span className="text-xs font-bold text-white uppercase">{t.netEarnings}</span>
                           <span className="text-base font-black text-green-400 font-mono animate-none" id="net_sim_output font-mono">623.30$</span>
@@ -3428,11 +3486,11 @@ ${companyInfo.name}`
 
                           {/* Live worksheet / pay stub breakdown */}
                           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            
+
                             {/* Left Col: Hours & Rate Summary */}
                             <div className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
                               <span className="text-xs font-black uppercase text-gray-400 block tracking-wider font-sans">⏱️ ACTIVITÉ & ENTRÉE DE TEMPS</span>
-                              
+
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">Heures de terrain compilées</span>
                                 <p className="text-2xl font-black text-orange-500 font-mono">{empHours.toFixed(1)} h</p>
@@ -3630,7 +3688,7 @@ ${companyInfo.name}`
                         {/* Grand Ledger Table */}
                         <div className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
                           <h4 className="text-xs font-black uppercase text-gray-300 block tracking-wider font-sans">📋 Grand Livre de Paie CCQ & Contracteurs ({statsMonth})</h4>
-                          
+
                           <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
@@ -3871,8 +3929,8 @@ ${companyInfo.name}`
                         key={tab.idx}
                         onClick={() => setActiveSettingsTab(tab.idx)}
                         className={`text-left text-xs font-semibold px-3 py-2.5 rounded-lg transition-colors flex items-center justify-between cursor-pointer ${
-                          activeSettingsTab === tab.idx 
-                            ? 'bg-orange-600 text-white font-bold' 
+                          activeSettingsTab === tab.idx
+                            ? 'bg-orange-600 text-white font-bold'
                             : 'hover:bg-gray-800 text-gray-300'
                         }`}
                       >
@@ -3888,7 +3946,7 @@ ${companyInfo.name}`
 
                   {/* Right options display */}
                   <div className="flex-1 min-w-0">
-                    
+
                     {/* ONGLET 0: COMPAGNIE */}
                     {activeSettingsTab === 0 && (
                       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
@@ -3900,9 +3958,9 @@ ${companyInfo.name}`
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Nom légal</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.name}
                               onChange={(e) => updateCompanyInfo({ name: e.target.value })}
                             />
@@ -3951,9 +4009,9 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">No. d'entreprise du Canada (BN/NE)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
                               defaultValue={companyInfo.bnNumber || "NE 80234-5122"}
                               onChange={(e) => updateCompanyInfo({ bnNumber: e.target.value })}
                             />
@@ -3961,9 +4019,9 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">NEQ (Numéro d'entreprise du Québec)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed"
                               defaultValue="NEQ 1178224591"
                               disabled
                               title="Fixé par le registre des entreprises du Québec"
@@ -3972,9 +4030,9 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de TPS / GST</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
                               defaultValue={companyInfo.gstNumber}
                               onChange={(e) => updateCompanyInfo({ gstNumber: e.target.value })}
                             />
@@ -3982,9 +4040,9 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de TVQ / QST</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
                               defaultValue={companyInfo.qstNumber}
                               onChange={(e) => updateCompanyInfo({ qstNumber: e.target.value })}
                             />
@@ -3992,9 +4050,9 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de Permis RBQ</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950"
                               defaultValue="RBQ 5683-1044-02"
                               disabled
                             />
@@ -4002,9 +4060,9 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">No. d’adhésion CNESST (ex-CSST)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950"
                               defaultValue="CNESST-774021-Q"
                               disabled
                             />
@@ -4017,28 +4075,28 @@ ${companyInfo.name}`
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro Institution (3 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="006" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue="006"
                                 placeholder="Ex: 006 (Desjardins)"
                               />
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro Transit / Succ. (5 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="92204" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue="92204"
                                 placeholder="Ex: 92204"
                               />
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro de Compte (7-12 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="4122589" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue="4122589"
                                 placeholder="Ex: 4122589"
                               />
                             </div>
@@ -4202,11 +4260,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">☀️ Indemnité de Vacances (%)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
+                                    <input
+                                      type="number"
                                       step="1"
                                       className="w-full p-2 pr-7 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollVacationRate !== undefined ? companyInfo.payrollVacationRate : 6} 
+                                      value={companyInfo.payrollVacationRate !== undefined ? companyInfo.payrollVacationRate : 6}
                                       onChange={(e) => updateCompanyInfo({ payrollVacationRate: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">%</span>
@@ -4217,11 +4275,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">🩺 Assurances Maladie collective ($)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
-                                      step="0.01" 
+                                    <input
+                                      type="number"
+                                      step="0.01"
                                       className="w-full p-2 pr-6 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollHealthInsurance || 0} 
+                                      value={companyInfo.payrollHealthInsurance || 0}
                                       onChange={(e) => updateCompanyInfo({ payrollHealthInsurance: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">$</span>
@@ -4232,11 +4290,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">🦷 Assurances Dentaire collective ($)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
-                                      step="0.01" 
+                                    <input
+                                      type="number"
+                                      step="0.01"
                                       className="w-full p-2 pr-6 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollDentalInsurance || 0} 
+                                      value={companyInfo.payrollDentalInsurance || 0}
                                       onChange={(e) => updateCompanyInfo({ payrollDentalInsurance: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">$</span>
@@ -4247,11 +4305,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">👥 Assurances Vie & Décès ($)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
-                                      step="0.01" 
+                                    <input
+                                      type="number"
+                                      step="0.01"
                                       className="w-full p-2 pr-6 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollLifeInsurance || 0} 
+                                      value={companyInfo.payrollLifeInsurance || 0}
                                       onChange={(e) => updateCompanyInfo({ payrollLifeInsurance: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">$</span>
@@ -4262,11 +4320,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">♿ Cotisation Invalidité LTD ($)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
-                                      step="0.01" 
+                                    <input
+                                      type="number"
+                                      step="0.01"
                                       className="w-full p-2 pr-6 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollLTD || 0} 
+                                      value={companyInfo.payrollLTD || 0}
                                       onChange={(e) => updateCompanyInfo({ payrollLTD: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">$</span>
@@ -4277,11 +4335,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">📈 Contribution REER Collectif (%)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
-                                      step="0.1" 
+                                    <input
+                                      type="number"
+                                      step="0.1"
                                       className="w-full p-2 pr-7 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollRRSP || 0} 
+                                      value={companyInfo.payrollRRSP || 0}
                                       onChange={(e) => updateCompanyInfo({ payrollRRSP: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">%</span>
@@ -4292,11 +4350,11 @@ ${companyInfo.name}`
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition sm:col-span-2 md:col-span-1">
                                   <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">🧘 Assistance Employé (PAE / EAP) ($)</label>
                                   <div className="relative">
-                                    <input 
-                                      type="number" 
-                                      step="0.01" 
+                                    <input
+                                      type="number"
+                                      step="0.01"
                                       className="w-full p-2 pr-6 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
-                                      value={companyInfo.payrollEAP || 0} 
+                                      value={companyInfo.payrollEAP || 0}
                                       onChange={(e) => updateCompanyInfo({ payrollEAP: Number(e.target.value) })}
                                     />
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">$</span>
@@ -4325,23 +4383,23 @@ ${companyInfo.name}`
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <div>
                                       <label className="text-[9px] text-gray-500 uppercase font-mono block mb-1">Désignation</label>
-                                      <input 
-                                        type="text" 
-                                        placeholder="ex: Uniformes / Bottes" 
+                                      <input
+                                        type="text"
+                                        placeholder="ex: Uniformes / Bottes"
                                         className="w-full p-2 bg-gray-900 text-white text-xs rounded border border-gray-800 text-left"
-                                        value={companyInfo.payrollCustom1Name || ""} 
+                                        value={companyInfo.payrollCustom1Name || ""}
                                         onChange={(e) => updateCompanyInfo({ payrollCustom1Name: e.target.value })}
                                       />
                                     </div>
                                     <div>
                                       <label className="text-[9px] text-gray-500 uppercase font-mono block mb-1">Montant par paie ($)</label>
                                       <div className="relative">
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           step="0.01"
-                                          placeholder="0.00" 
+                                          placeholder="0.00"
                                           className="w-full p-2 pr-6 bg-gray-900 text-white text-xs rounded border border-gray-800 font-mono text-right"
-                                          value={companyInfo.payrollCustom1Amount || 0} 
+                                          value={companyInfo.payrollCustom1Amount || 0}
                                           onChange={(e) => updateCompanyInfo({ payrollCustom1Amount: Number(e.target.value) })}
                                         />
                                         <span className="absolute right-2 top-2 text-[10px] text-gray-600 font-bold">$</span>
@@ -4353,15 +4411,15 @@ ${companyInfo.name}`
                                   <div className="space-y-1">
                                     <span className="text-[8.5px] text-gray-550 font-bold uppercase font-mono block">Raccourcis pré-réglés :</span>
                                     <div className="flex flex-wrap gap-1.5">
-                                      <button 
-                                        type="button" 
+                                      <button
+                                        type="button"
                                         onClick={() => updateCompanyInfo({ payrollCustom1Name: "Allocation Bottes Sec.", payrollCustom1Amount: 15.00 })}
                                         className="px-2 py-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-[8.5px] border border-gray-800 rounded font-bold cursor-pointer"
                                       >
                                         👢 Bottes de Sécurité ($15)
                                       </button>
-                                      <button 
-                                        type="button" 
+                                      <button
+                                        type="button"
                                         onClick={() => updateCompanyInfo({ payrollCustom1Name: "Remboursement Mobile", payrollCustom1Amount: 12.50 })}
                                         className="px-2 py-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-[8.5px] border border-gray-800 rounded font-bold cursor-pointer"
                                       >
@@ -4380,23 +4438,23 @@ ${companyInfo.name}`
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <div>
                                       <label className="text-[9px] text-gray-500 uppercase font-mono block mb-1">Désignation</label>
-                                      <input 
-                                        type="text" 
-                                        placeholder="ex: Club Social" 
+                                      <input
+                                        type="text"
+                                        placeholder="ex: Club Social"
                                         className="w-full p-2 bg-gray-900 text-white text-xs rounded border border-gray-800 text-left"
-                                        value={companyInfo.payrollCustom2Name || ""} 
+                                        value={companyInfo.payrollCustom2Name || ""}
                                         onChange={(e) => updateCompanyInfo({ payrollCustom2Name: e.target.value })}
                                       />
                                     </div>
                                     <div>
                                       <label className="text-[9px] text-gray-500 uppercase font-mono block mb-1">Montant par paie ($)</label>
                                       <div className="relative">
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           step="0.01"
-                                          placeholder="0.00" 
+                                          placeholder="0.00"
                                           className="w-full p-2 pr-6 bg-gray-900 text-white text-xs rounded border border-gray-800 font-mono text-right"
-                                          value={companyInfo.payrollCustom2Amount || 0} 
+                                          value={companyInfo.payrollCustom2Amount || 0}
                                           onChange={(e) => updateCompanyInfo({ payrollCustom2Amount: Number(e.target.value) })}
                                         />
                                         <span className="absolute right-2 top-2 text-[10px] text-gray-600 font-bold">$</span>
@@ -4408,15 +4466,15 @@ ${companyInfo.name}`
                                   <div className="space-y-1">
                                     <span className="text-[8.5px] text-gray-550 font-bold uppercase font-mono block">Raccourcis pré-réglés :</span>
                                     <div className="flex flex-wrap gap-1.5">
-                                      <button 
-                                        type="button" 
+                                      <button
+                                        type="button"
                                         onClick={() => updateCompanyInfo({ payrollCustom2Name: "Cotisation Club Social", payrollCustom2Amount: 10.00 })}
                                         className="px-2 py-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-[8.5px] border border-gray-800 rounded font-bold cursor-pointer"
                                       >
                                         🥳 Club Social ($10)
                                       </button>
-                                      <button 
-                                        type="button" 
+                                      <button
+                                        type="button"
                                         onClick={() => updateCompanyInfo({ payrollCustom2Name: "Abonnement Gym Pro", payrollCustom2Amount: 20.00 })}
                                         className="px-2 py-1 bg-gray-900 hover:bg-gray-800 text-gray-300 text-[8.5px] border border-gray-800 rounded font-bold cursor-pointer"
                                       >
@@ -4438,11 +4496,11 @@ ${companyInfo.name}`
 
                             const cpp = gross * 0.0595; // 5.95%
                             const ei = gross * 0.0166;  // 1.16%
-                            
+
                             const annualGross = gross * 52;
                             const fedTaxAnn = calculateProgressiveTax(annualGross, true);
                             const provTaxAnn = calculateProgressiveTax(annualGross, false);
-                            
+
                             const fedTax = fedTaxAnn / 52;
                             const provTax = provTaxAnn / 52;
 
@@ -4478,7 +4536,7 @@ ${companyInfo.name}`
                                 {/* Simulator Inputs Panel */}
                                 <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-3 text-xs">
                                   <span className="text-[10px] text-teal-400 font-extrabold uppercase font-mono block">🎯 Données d'Entrée de la Simulation :</span>
-                                  
+
                                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div>
                                       <label className="text-[9px] text-gray-550 uppercase font-mono block mb-1">Remplir depuis un employé réel</label>
@@ -4504,21 +4562,21 @@ ${companyInfo.name}`
                                     <div>
                                       <label className="text-[9px] text-gray-550 uppercase font-mono block mb-1">Taux Horaire de Simulation ($)</label>
                                       <div className="flex gap-1 items-center">
-                                        <button 
-                                          type="button" 
+                                        <button
+                                          type="button"
                                           onClick={() => setSimHourlyRate(Math.max(15.75, simHourlyRate - 1))}
                                           className="p-1.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded text-xs cursor-pointer px-2.5"
                                         >
                                           -
                                         </button>
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           className="w-full p-1.5 bg-gray-900 text-white text-xs rounded border border-gray-800 text-center font-mono font-bold"
                                           value={simHourlyRate}
                                           onChange={(e) => setSimHourlyRate(Number(e.target.value))}
                                         />
-                                        <button 
-                                          type="button" 
+                                        <button
+                                          type="button"
                                           onClick={() => setSimHourlyRate(simHourlyRate + 1)}
                                           className="p-1.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded text-xs cursor-pointer px-2.5"
                                         >
@@ -4530,21 +4588,21 @@ ${companyInfo.name}`
                                     <div>
                                       <label className="text-[9px] text-gray-550 uppercase font-mono block mb-1">Heures Travaillées Semaine</label>
                                       <div className="flex gap-1 items-center">
-                                        <button 
-                                          type="button" 
+                                        <button
+                                          type="button"
                                           onClick={() => setSimHoursCount(Math.max(0, simHoursCount - 5))}
                                           className="p-1.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded text-xs cursor-pointer px-2.5"
                                         >
                                           -
                                         </button>
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           className="w-full p-1.5 bg-gray-900 text-white text-xs rounded border border-gray-800 text-center font-mono"
                                           value={simHoursCount}
                                           onChange={(e) => setSimHoursCount(Number(e.target.value))}
                                         />
-                                        <button 
-                                          type="button" 
+                                        <button
+                                          type="button"
                                           onClick={() => setSimHoursCount(simHoursCount + 5)}
                                           className="p-1.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded text-xs cursor-pointer px-2.5"
                                         >
@@ -4560,7 +4618,7 @@ ${companyInfo.name}`
                                   {/* Left: Earnings and non-mandatory */}
                                   <div className="bg-gray-950/40 border border-gray-850 p-4 rounded-xl space-y-3">
                                     <h6 className="text-[10px] font-black uppercase tracking-wider text-gray-300 border-b border-gray-850 pb-1.5">💵 REVENUS ET INDEMNITÉS (Génération brute)</h6>
-                                    
+
                                     <div className="space-y-2">
                                       <div className="flex justify-between items-center text-[11px]">
                                         <span className="text-gray-400">Salaire de base ({simHoursCount} h × {simHourlyRate.toFixed(2)}$/h) :</span>
@@ -4580,7 +4638,7 @@ ${companyInfo.name}`
                                       <span>⚙️ RETENUES AVANTAGES SOCIAUX (Ajustables)</span>
                                       <span className="font-mono text-orange-400">-{totalOptional.toFixed(2)}$</span>
                                     </h6>
-                                    
+
                                     <div className="space-y-1 text-[11px]">
                                       <div className="flex justify-between items-center text-gray-400">
                                         <span>Assurance Maladie :</span>
@@ -4627,7 +4685,7 @@ ${companyInfo.name}`
                                       <span>🔒 RETENUES LÉGALES OBLIGATOIRES (Verrouillées)</span>
                                       <span className="font-mono">-{totalMandatory.toFixed(2)}$</span>
                                     </h6>
-                                    
+
                                     <div className="space-y-2 text-[11px]">
                                       <div className="flex justify-between items-center text-gray-400">
                                         <span>Régime de Rentes du Québec (RRQ) :</span>
@@ -4650,7 +4708,7 @@ ${companyInfo.name}`
                                     {/* Final Pay Reconciliation card */}
                                     <div className="bg-[#191D26] border border-orange-500/20 p-4 rounded-xl mt-3 space-y-2.5 antialiased">
                                       <span className="text-[10px] font-black uppercase tracking-wider block text-orange-400 font-mono text-center">🏁 BULLETIN DE PAIE ESTIMÉ 🇨🇦</span>
-                                      
+
                                       <div className="space-y-1">
                                         <div className="flex justify-between text-[11px] text-gray-400 font-mono">
                                           <span>Brut Total :</span>
@@ -4692,7 +4750,7 @@ ${companyInfo.name}`
                           {employees.map(emp => {
                             const empTeam = motivationTeams.find(t => t.memberIds.includes(emp.id));
                             const isContractor = emp.workerType === 'contractor';
-                            
+
                             // Seniority calculation
                             const getSeniorityLabel = (dateStr: string) => {
                               if (!dateStr) return "Nouveau";
@@ -4772,12 +4830,12 @@ ${companyInfo.name}`
                                             </span>
                                           )}
                                           {empTeam && (
-                                            <span 
-                                              className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase border" 
-                                              style={{ 
-                                                backgroundColor: `${empTeam.color}15`, 
-                                                color: empTeam.color, 
-                                                borderColor: `${empTeam.color}30` 
+                                            <span
+                                              className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase border"
+                                              style={{
+                                                backgroundColor: `${empTeam.color}15`,
+                                                color: empTeam.color,
+                                                borderColor: `${empTeam.color}30`
                                               }}
                                             >
                                               {empTeam.name}
@@ -4785,14 +4843,14 @@ ${companyInfo.name}`
                                           )}
                                         </div>
                                         <p className="text-[10px] text-gray-400 mt-0.5 text-left">
-                                          PIN: <span className="font-mono text-white font-bold bg-black px-1 rounded">{emp.nip}</span> — 
+                                          PIN: <span className="font-mono text-white font-bold bg-black px-1 rounded">{emp.nip}</span> —
                                           {isContractor ? ` Entreprise: ${emp.businessName || 'N/D'}` : ` Province: ${emp.employeeProvince || 'QC'} • Fréquence: ${emp.payFrequency || 'weekly'}`}
                                         </p>
                                       </div>
                                     </div>
 
                                     <div className="flex items-center gap-2 flex-wrap pt-0.5 font-mono text-[10px]">
-                                      <span className="text-gray-500 font-sans">Ancienneté:</span> 
+                                      <span className="text-gray-500 font-sans">Ancienneté:</span>
                                       <span className="text-yellow-500 font-bold">{seniority}</span>
                                       {!isContractor && (
                                         <>
@@ -4815,7 +4873,7 @@ ${companyInfo.name}`
                                     <div className="text-right">
                                       <span className="text-[10px] text-gray-400 block uppercase font-mono">Taux réglé</span>
                                       <div className="flex items-center gap-1 mt-0.5">
-                                        <input 
+                                        <input
                                           type="number"
                                           className="w-14 bg-gray-950 p-1 rounded border border-gray-850 font-mono text-white text-[11px] text-center"
                                           defaultValue={emp.hourlyRate}
@@ -4829,7 +4887,7 @@ ${companyInfo.name}`
                                     </div>
 
                                     <div className="flex items-center gap-1.5">
-                                      <select 
+                                      <select
                                         className="bg-gray-950 text-white text-[10px] p-1.5 rounded-lg border border-gray-850 pointer cursor-pointer max-w-[85px]"
                                         value={empTeam?.id || ""}
                                         onChange={(e) => {
@@ -4859,7 +4917,7 @@ ${companyInfo.name}`
                                       </button>
 
                                       {employees.length > 1 && login && activeEmployee.id !== emp.id && (
-                                        <button 
+                                        <button
                                           onClick={() => {
                                             if (confirm(`Êtes-vous sûr de vouloir supprimer ${emp.name} définitivement du personnel?`)) {
                                               deleteEmployee(emp.id);
@@ -4879,12 +4937,12 @@ ${companyInfo.name}`
                                 {isEditing && editEmployeeForm && (
                                   <div className="p-4 bg-gray-950 rounded-lg border border-orange-500/25 space-y-3 text-left">
                                     <h6 className="text-[10px] text-orange-400 font-bold uppercase tracking-wider block">⚙️ PROFIL FISCAL & COORDONNÉES DE {emp.name.toUpperCase()}</h6>
-                                    
+
                                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                                       <div>
                                         <label className="text-[9px] text-gray-500 uppercase font-mono">Nom Complet</label>
-                                        <input 
-                                          type="text" 
+                                        <input
+                                          type="text"
                                           className="w-full mt-1 p-1.5 bg-[#12141C] text-white text-xs rounded border border-gray-800"
                                           value={editEmployeeForm.name}
                                           onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, name: e.target.value })}
@@ -4892,8 +4950,8 @@ ${companyInfo.name}`
                                       </div>
                                       <div>
                                         <label className="text-[9px] text-gray-500 uppercase font-mono">NIP (4 ch.)</label>
-                                        <input 
-                                          type="text" 
+                                        <input
+                                          type="text"
                                           className="w-full mt-1 p-1.5 bg-[#12141C] text-white text-xs font-mono rounded border border-gray-800"
                                           maxLength={4}
                                           value={editEmployeeForm.nip}
@@ -4902,8 +4960,8 @@ ${companyInfo.name}`
                                       </div>
                                       <div>
                                         <label className="text-[9px] text-gray-500 uppercase font-mono">Taux horaire ($/h)</label>
-                                        <input 
-                                          type="number" 
+                                        <input
+                                          type="number"
                                           className="w-full mt-1 p-1.5 bg-[#12141C] text-white text-xs font-mono rounded border border-gray-800"
                                           value={editEmployeeForm.hourlyRate}
                                           onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, hourlyRate: Number(e.target.value) })}
@@ -4911,7 +4969,7 @@ ${companyInfo.name}`
                                       </div>
                                       <div>
                                         <label className="text-[9px] text-emerald-500 uppercase font-mono">Type d'emploi / profil fiscal</label>
-                                        <select 
+                                        <select
                                           className="w-full mt-1 p-1.5 bg-[#12141C] text-white text-xs rounded border border-emerald-950/60 font-bold cursor-pointer text-left"
                                           value={editEmployeeForm.workerType}
                                           onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, workerType: e.target.value })}
@@ -4929,7 +4987,7 @@ ${companyInfo.name}`
                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                           <div>
                                             <label className="text-[8px] text-gray-400 uppercase font-mono">Province d'émission fiscal</label>
-                                            <select 
+                                            <select
                                               className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs rounded border border-gray-800 text-left cursor-pointer"
                                               value={editEmployeeForm.employeeProvince}
                                               onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, employeeProvince: e.target.value })}
@@ -4942,7 +5000,7 @@ ${companyInfo.name}`
                                           </div>
                                           <div>
                                             <label className="text-[8px] text-gray-400 uppercase font-mono">Fréquence de versement</label>
-                                            <select 
+                                            <select
                                               className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs rounded border border-gray-800 text-left cursor-pointer"
                                               value={editEmployeeForm.payFrequency}
                                               onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, payFrequency: e.target.value })}
@@ -4955,8 +5013,8 @@ ${companyInfo.name}`
                                           </div>
                                           <div>
                                             <label className="text-[8px] text-gray-400 uppercase font-mono">Salaire Annuel Fixe (Brut)</label>
-                                            <input 
-                                              type="number" 
+                                            <input
+                                              type="number"
                                               placeholder="0 (Calcul progressif par h)"
                                               className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
                                               value={editEmployeeForm.annualSalary || ''}
@@ -4979,8 +5037,8 @@ ${companyInfo.name}`
                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                           <div>
                                             <label className="text-[8px] text-gray-400 uppercase font-mono">Dénomination Sociale</label>
-                                            <input 
-                                              type="text" 
+                                            <input
+                                              type="text"
                                               placeholder="Ex: Construction Tremblay Inc."
                                               className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs rounded border border-gray-800"
                                               value={editEmployeeForm.businessName}
@@ -4989,8 +5047,8 @@ ${companyInfo.name}`
                                           </div>
                                           <div>
                                             <label className="text-[8px] text-gray-400 uppercase font-mono">No. TPS / GST</label>
-                                            <input 
-                                              type="text" 
+                                            <input
+                                              type="text"
                                               placeholder="Ex: 123456789 RT0001"
                                               className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
                                               value={editEmployeeForm.gstNumber}
@@ -4999,8 +5057,8 @@ ${companyInfo.name}`
                                           </div>
                                           <div>
                                             <label className="text-[8px] text-gray-400 uppercase font-mono">No. d'Assurance Sociale (NAS)</label>
-                                            <input 
-                                              type="text" 
+                                            <input
+                                              type="text"
                                               placeholder="Ex: 123-456-789"
                                               className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
                                               value={editEmployeeForm.sin}
@@ -5021,22 +5079,22 @@ ${companyInfo.name}`
                                             type="button"
                                             onClick={() => setEditEmployeeForm({ ...editEmployeeForm, avatar: pav.url })}
                                             className={`relative rounded-full overflow-hidden w-14 h-14 border-2 transition cursor-pointer ${
-                                              editEmployeeForm.avatar === pav.url 
-                                                ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
+                                              editEmployeeForm.avatar === pav.url
+                                                ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10'
                                                 : 'border-transparent hover:border-gray-700'
                                             }`}
                                             title={pav.label}
                                           >
-                                            <img 
-                                              src={pav.url} 
-                                              alt={pav.label} 
+                                            <img
+                                              src={pav.url}
+                                              alt={pav.label}
                                               className="w-full h-full object-cover"
                                               referrerPolicy="no-referrer"
                                             />
                                           </button>
                                         ))}
                                       </div>
-                                      <input 
+                                      <input
                                         type="text"
                                         placeholder="Coller l'URL d'une photo personnalisée..."
                                         className="w-full p-1 bg-gray-900 font-mono text-[9.5px] text-white rounded border border-gray-800 text-left"
@@ -5047,15 +5105,15 @@ ${companyInfo.name}`
 
                                     <div className="flex justify-between items-center pt-2">
                                       <div className="text-[10px] text-gray-500 font-mono">
-                                        AS/CCQ : <input 
-                                          type="text" 
+                                        AS/CCQ : <input
+                                          type="text"
                                           className="p-1 bg-gray-900 text-white border border-gray-800 rounded font-mono text-[10px] w-28"
                                           value={editEmployeeForm.asNumber}
                                           onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, asNumber: e.target.value })}
                                         />
                                       </div>
                                       <div className="flex justify-end gap-1.5">
-                                        <button 
+                                        <button
                                           onClick={() => {
                                             setEditingEmployeeId(null);
                                             setEditEmployeeForm(null);
@@ -5064,7 +5122,7 @@ ${companyInfo.name}`
                                         >
                                           Annuler
                                         </button>
-                                        <button 
+                                        <button
                                           onClick={() => {
                                             updateEmployee({
                                               ...emp,
@@ -5106,7 +5164,7 @@ ${companyInfo.name}`
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Nom Complet</label>
-                              <input 
+                              <input
                                 type="text"
                                 className="w-full mt-1 p-2 bg-gray-900 text-white text-xs rounded border border-gray-800 text-left"
                                 placeholder="Ex: Marc-André Roy"
@@ -5116,7 +5174,7 @@ ${companyInfo.name}`
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">NIP d'authentification (4 ch.)</label>
-                              <input 
+                              <input
                                 type="text"
                                 maxLength={4}
                                 className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
@@ -5127,7 +5185,7 @@ ${companyInfo.name}`
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Date d'embauche</label>
-                              <input 
+                              <input
                                 type="date"
                                 className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
                                 value={newEmployeeForm.hireDate || "2026-06-03"}
@@ -5136,7 +5194,7 @@ ${companyInfo.name}`
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Taux Horaire ($/h)</label>
-                              <input 
+                              <input
                                 type="number"
                                 className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
                                 value={newEmployeeForm.hourlyRate}
@@ -5145,7 +5203,7 @@ ${companyInfo.name}`
                             </div>
                             <div>
                               <label className="text-[9px] text-emerald-500 uppercase font-mono">Profil fiscal</label>
-                              <select 
+                              <select
                                 className="w-full mt-1 p-2 bg-[#12141C] text-white text-xs rounded border border-emerald-950/60 font-bold cursor-pointer text-left"
                                 value={newEmployeeForm.workerType}
                                 onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, workerType: e.target.value })}
@@ -5156,7 +5214,7 @@ ${companyInfo.name}`
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">No. Certificat CCQ / AS</label>
-                              <input 
+                              <input
                                 type="text"
                                 className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
                                 placeholder="CCQ-14220-41"
@@ -5173,7 +5231,7 @@ ${companyInfo.name}`
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div>
                                   <label className="text-[9px] text-gray-400 uppercase font-mono">Province de paie</label>
-                                  <select 
+                                  <select
                                     className="w-full mt-1 p-2 bg-gray-900 text-white text-xs rounded border border-gray-800 cursor-pointer text-left"
                                     value={newEmployeeForm.employeeProvince}
                                     onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, employeeProvince: e.target.value })}
@@ -5186,7 +5244,7 @@ ${companyInfo.name}`
                                 </div>
                                 <div>
                                   <label className="text-[9px] text-gray-400 uppercase font-mono">Fréquence des payes</label>
-                                  <select 
+                                  <select
                                     className="w-full mt-1 p-2 bg-gray-900 text-white text-xs rounded border border-gray-800 cursor-pointer text-left"
                                     value={newEmployeeForm.payFrequency}
                                     onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, payFrequency: e.target.value as any })}
@@ -5199,7 +5257,7 @@ ${companyInfo.name}`
                                 </div>
                                 <div>
                                   <label className="text-[9px] text-gray-400 uppercase font-mono">Salaire Annuel Fixe (Brut)</label>
-                                  <input 
+                                  <input
                                     type="number"
                                     placeholder="0 (basé sur taux horaire)"
                                     className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
@@ -5223,7 +5281,7 @@ ${companyInfo.name}`
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div>
                                   <label className="text-[9px] text-gray-400 uppercase font-mono">Nom d'entreprise / Affiliation</label>
-                                  <input 
+                                  <input
                                     type="text"
                                     placeholder="Ex: Construction Elite MB Inc."
                                     className="w-full mt-1 p-2 bg-gray-900 text-white text-xs rounded border border-gray-800 text-left"
@@ -5233,7 +5291,7 @@ ${companyInfo.name}`
                                 </div>
                                 <div>
                                   <label className="text-[9px] text-gray-400 uppercase font-mono">Numéro de TPS / GST</label>
-                                  <input 
+                                  <input
                                     type="text"
                                     placeholder="Ex: 889210455 RT0001"
                                     className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
@@ -5243,7 +5301,7 @@ ${companyInfo.name}`
                                 </div>
                                 <div>
                                   <label className="text-[9px] text-gray-400 uppercase font-mono">NAS (Si pas de TPS)</label>
-                                  <input 
+                                  <input
                                     type="text"
                                     placeholder="Ex: 123-456-789"
                                     className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
@@ -5258,7 +5316,7 @@ ${companyInfo.name}`
                           {/* Avatar Selection Row */}
                           <div className="p-3.5 bg-gray-900/40 border border-gray-850 rounded-xl space-y-3 text-left">
                             <span className="text-[10px] text-orange-400 font-extrabold uppercase font-mono block">📸 Choisir la photo / l'avatar de l'employé</span>
-                            
+
                             <div className="flex flex-wrap gap-3 items-center">
                               {EMPLOYEE_PRESET_AVATARS.map((pav, pidx) => (
                                 <button
@@ -5269,15 +5327,15 @@ ${companyInfo.name}`
                                     setPendingEmployeeAvatar('');
                                   }}
                                   className={`relative rounded-full overflow-hidden w-[70px] h-[70px] border-2 transition ${
-                                    newEmployeeForm.avatar === pav.url 
-                                      ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
+                                    newEmployeeForm.avatar === pav.url
+                                      ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10'
                                       : 'border-transparent hover:border-gray-700'
                                   }`}
                                   title={pav.label}
                                 >
-                                  <img 
-                                    src={pav.url} 
-                                    alt={pav.label} 
+                                  <img
+                                    src={pav.url}
+                                    alt={pav.label}
                                     className="w-full h-full object-cover"
                                     referrerPolicy="no-referrer"
                                   />
@@ -5325,7 +5383,7 @@ ${companyInfo.name}`
 
                             <div className="space-y-1">
                               <label className="text-[8.5px] text-gray-500 font-bold uppercase block font-mono">Option avancée : coller l'URL d'une photo</label>
-                              <input 
+                              <input
                                 type="text"
                                 placeholder="https://unsplash.com/... ou URL personnalisée"
                                 className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850 text-left"
@@ -5337,8 +5395,8 @@ ${companyInfo.name}`
                               />
                             </div>
                           </div>
-                          
-                          <button 
+
+                          <button
                             disabled={!newEmployeeForm.name || !newEmployeeForm.nip}
                             onClick={() => {
                               addEmployee({
@@ -5359,15 +5417,15 @@ ${companyInfo.name}`
                                 payFrequency: newEmployeeForm.payFrequency,
                                 annualSalary: newEmployeeForm.annualSalary
                               });
-                              setNewEmployeeForm({ 
-                                name: '', 
-                                nip: '', 
-                                role: 'employee', 
-                                hourlyRate: 35, 
-                                workerType: 'salaried', 
-                                asNumber: '', 
-                                phone: '', 
-                                address: '', 
+                              setNewEmployeeForm({
+                                name: '',
+                                nip: '',
+                                role: 'employee',
+                                hourlyRate: 35,
+                                workerType: 'salaried',
+                                asNumber: '',
+                                phone: '',
+                                address: '',
                                 hireDate: '2026-06-03',
                                 avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
                                 businessName: '',
@@ -5391,7 +5449,7 @@ ${companyInfo.name}`
                     {activeSettingsTab === 2 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">Thème Visuel du bouton central ({currentTheme})</h4>
-                        
+
                         <div className="grid grid-cols-2 gap-3">
                           {[
                             { id: 'quantum', name: 'Quantum (Bleu d\'un diamant)', desc: 'Bleu/Cyan radial' },
@@ -5405,8 +5463,8 @@ ${companyInfo.name}`
                               key={tPreset.id}
                               onClick={() => setTheme(tPreset.id as any)}
                               className={`p-3 rounded-xl text-left border cursor-pointer transition ${
-                                currentTheme === tPreset.id 
-                                  ? 'bg-orange-600/10 border-orange-500 text-white' 
+                                currentTheme === tPreset.id
+                                  ? 'bg-orange-600/10 border-orange-500 text-white'
                                   : 'bg-gray-900 border-gray-805 hover:bg-gray-850 text-gray-300'
                               }`}
                             >
@@ -5447,31 +5505,31 @@ ${companyInfo.name}`
                     {activeSettingsTab === 4 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">💰 Échelonnements par défaut des Factures & Intérêts</h4>
-                        
+
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Dépôt Initial (%)</label>
-                            <input 
-                              type="number" 
-                              className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono font-bold text-center" 
+                            <input
+                              type="number"
+                              className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono font-bold text-center"
                               defaultValue={companyInfo.paymentDepositPct || 30}
                               onChange={(e) => updateCompanyInfo({ paymentDepositPct: Number(e.target.value) })}
                             />
                           </div>
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Milieu de Chantier (%)</label>
-                            <input 
-                              type="number" 
-                              className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono font-bold text-center" 
+                            <input
+                              type="number"
+                              className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono font-bold text-center"
                               defaultValue={companyInfo.paymentMidPct || 40}
                               onChange={(e) => updateCompanyInfo({ paymentMidPct: Number(e.target.value) })}
                             />
                           </div>
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Finition / Livraison (%)</label>
-                            <input 
-                              type="number" 
-                              className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono font-bold text-center" 
+                            <input
+                              type="number"
+                              className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono font-bold text-center"
                               defaultValue={companyInfo.paymentFinalPct || 30}
                               onChange={(e) => updateCompanyInfo({ paymentFinalPct: Number(e.target.value) })}
                             />
@@ -5480,18 +5538,18 @@ ${companyInfo.name}`
 
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Taux d'intérêt annuel appliqué aux factures en retard (%)</label>
-                          <input 
-                            type="number" 
-                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
+                          <input
+                            type="number"
+                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
                             defaultValue={18}
                           />
                         </div>
 
                         <div className="pt-2">
                           <label className="text-[10px] text-gray-500 uppercase font-mono">Courriel des virements Interac salaires</label>
-                          <input 
-                            type="text" 
-                            className="w-full p-2 mt-1 bg-gray-900 rounded border border-gray-850 text-xs text-left font-mono" 
+                          <input
+                            type="text"
+                            className="w-full p-2 mt-1 bg-gray-900 rounded border border-gray-850 text-xs text-left font-mono"
                             defaultValue={companyInfo.interacEmail}
                             onChange={(e) => updateCompanyInfo({ interacEmail: e.target.value })}
                             placeholder="Ex: paye@hailitexteriors.com"
@@ -5506,11 +5564,11 @@ ${companyInfo.name}`
                         <h4 className="text-xs font-black uppercase text-orange-500">🔔 Notifications Sonores & Planification</h4>
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Volume des carillons de début et fin de pause ({companyInfo.voiceReminderVolume}%)</label>
-                          <input 
-                            type="range" 
-                            min="0" 
-                            max="100" 
-                            className="w-full mt-2 cursor-pointer accent-orange-600" 
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            className="w-full mt-2 cursor-pointer accent-orange-600"
                             defaultValue={companyInfo.voiceReminderVolume}
                             onChange={(e) => updateCompanyInfo({ voiceReminderVolume: Number(e.target.value) })}
                           />
@@ -5532,17 +5590,17 @@ ${companyInfo.name}`
                         <h4 className="text-xs font-black uppercase text-orange-500">📋 Clauses Légales pour Devis & Factures</h4>
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Garantie standards appliquée par Hailite Xteriors (années)</label>
-                          <input 
-                            type="number" 
-                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                            defaultValue={10} 
+                          <input
+                            type="number"
+                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                            defaultValue={10}
                           />
                         </div>
 
                         <div className="space-y-3">
                           <div>
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Clause de Modification / Extra Chantiers (Avenant)</label>
-                            <textarea 
+                            <textarea
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
                               defaultValue="Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable CCQ de 120$/h."
                             />
@@ -5550,7 +5608,7 @@ ${companyInfo.name}`
 
                           <div>
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Droit de Résiliation du Client de Construction</label>
-                            <textarea 
+                            <textarea
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
                               defaultValue="Le client peut résilier unilatéralement le contrat avant le début des travaux moyennant des frais administratifs fixes de 10% correspondant aux réservations logistiques."
                             />
@@ -5562,41 +5620,41 @@ ${companyInfo.name}`
                     {activeSettingsTab === 7 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                         <h4 className="text-xs font-black uppercase text-orange-500">👥 Fichier Clients ({clients.length})</h4>
-                        
+
                         {/* Add client */}
                         <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-3">
                           <span className="text-[10px] font-bold text-white uppercase block">Ajouter un Client</span>
                           <div className="grid grid-cols-2 gap-2">
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               placeholder="Nom du contact"
-                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left" 
+                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
                               value={newClientForm.name}
                               onChange={(e) => setNewClientForm({ ...newClientForm, name: e.target.value })}
                             />
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               placeholder="Nom d'entreprise"
-                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left" 
+                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
                               value={newClientForm.company}
                               onChange={(e) => setNewClientForm({ ...newClientForm, company: e.target.value })}
                             />
-                            <input 
-                              type="email" 
+                            <input
+                              type="email"
                               placeholder="Courriel"
-                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left" 
+                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
                               value={newClientForm.email}
                               onChange={(e) => setNewClientForm({ ...newClientForm, email: e.target.value })}
                             />
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               placeholder="Téléphone"
-                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left" 
+                              className="p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
                               value={newClientForm.phone}
                               onChange={(e) => setNewClientForm({ ...newClientForm, phone: e.target.value })}
                             />
                           </div>
-                          <button 
+                          <button
                             disabled={!newClientForm.name}
                             onClick={() => {
                               addClient({
@@ -5623,7 +5681,7 @@ ${companyInfo.name}`
                                 <h5 className="font-bold text-white">{cli.name} <span className="text-gray-500 font-normal">({cli.company})</span></h5>
                                 <p className="text-[10px] text-gray-400 font-mono mt-0.5">{cli.email} — {cli.phone}</p>
                               </div>
-                              <button 
+                              <button
                                 onClick={() => {
                                   if (confirm("Supprimer ce client?")) deleteClient(cli.id);
                                 }}
@@ -5640,17 +5698,17 @@ ${companyInfo.name}`
                     {activeSettingsTab === 8 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                         <h4 className="text-xs font-black uppercase text-orange-500">📦 Catalogue Unitaire de Soumission ({catalogue.length})</h4>
-                        
+
                         {/* Add to catalog */}
                         <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-3 text-left">
                           <span className="text-[10px] font-bold text-white uppercase block">Créer un Matériau / Service standard</span>
-                          
+
                           {/* Image Preview inside form if present */}
                           {newCatalogueForm.imageUrl && (
                             <div className="relative group rounded-lg overflow-hidden border border-gray-800">
-                              <img 
-                                src={newCatalogueForm.imageUrl} 
-                                alt={newCatalogueForm.imageAlt || "Aperçu"} 
+                              <img
+                                src={newCatalogueForm.imageUrl}
+                                alt={newCatalogueForm.imageAlt || "Aperçu"}
                                 className="w-full h-20 object-cover"
                                 referrerPolicy="no-referrer"
                               />
@@ -5665,9 +5723,9 @@ ${companyInfo.name}`
                           <div className="grid grid-cols-3 gap-2">
                             <div className="space-y-1">
                               <label className="text-[9px] text-gray-500 font-semibold block uppercase">Émoji</label>
-                              <input 
-                                type="text" 
-                                placeholder="Émoji" 
+                              <input
+                                type="text"
+                                placeholder="Émoji"
                                 className="w-full p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-center animate-none"
                                 value={newCatalogueForm.emoji}
                                 onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, emoji: e.target.value })}
@@ -5675,9 +5733,9 @@ ${companyInfo.name}`
                             </div>
                             <div className="col-span-2 space-y-1">
                               <label className="text-[9px] text-gray-500 font-semibold block uppercase">Nom du Produit</label>
-                              <input 
-                                type="text" 
-                                placeholder="Ex: Bardeau d'Asphalte" 
+                              <input
+                                type="text"
+                                placeholder="Ex: Bardeau d'Asphalte"
                                 className="w-full p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
                                 value={newCatalogueForm.name}
                                 onChange={(e) => {
@@ -5700,10 +5758,10 @@ ${companyInfo.name}`
 
                             <div className="col-span-3 space-y-1">
                               <label className="text-[9px] text-gray-400 font-semibold block uppercase">🖼️ URL image (optionnel)</label>
-                              <input 
+                              <input
                                 type="text"
                                 className="w-full p-1.5 bg-gray-900 text-xs font-mono text-white rounded border border-gray-800 text-left"
-                                placeholder="https://images.unsplash.com/..." 
+                                placeholder="https://images.unsplash.com/..."
                                 value={newCatalogueForm.imageUrl}
                                 onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, imageUrl: e.target.value })}
                               />
@@ -5711,8 +5769,8 @@ ${companyInfo.name}`
 
                             <div className="col-span-3 flex items-center justify-between bg-gray-900 p-1.5 rounded border border-gray-800">
                               <span className="text-[10px] font-mono text-gray-400 uppercase">Prix estimatif ($/pi²)</span>
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 step="0.1"
                                 className="w-24 bg-transparent border-0 text-white text-xs font-mono font-bold text-right outline-none"
                                 value={newCatalogueForm.pricePerSqFt}
@@ -5720,8 +5778,8 @@ ${companyInfo.name}`
                               />
                             </div>
                           </div>
-                          
-                          <button 
+
+                          <button
                             disabled={!newCatalogueForm.name}
                             onClick={() => {
                               addCatalogueMaterial({
@@ -5754,7 +5812,7 @@ ${companyInfo.name}`
                                 </div>
                               </div>
                               <div className="flex justify-end mt-2 pt-2 border-t border-gray-850">
-                                <button 
+                                <button
                                   onClick={() => {
                                     if (confirm("Supprimer ce matériel du catalogue?")) deleteCatalogueMaterial(cat.id);
                                   }}
@@ -5773,13 +5831,13 @@ ${companyInfo.name}`
                     {activeSettingsTab === 9 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 font-sans text-xs">
                         <div className="flex justify-between items-center bg-gray-950 p-1.5 rounded-lg border border-gray-800">
-                          <button 
+                          <button
                             onClick={() => setAccountingViewMode('expenses')}
                             className={`flex-1 py-1 text-center font-bold text-[11px] rounded transition cursor-pointer ${accountingViewMode === 'expenses' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'}`}
                           >
                             Dépenses Matérielles ({expenses?.length || 0})
                           </button>
-                          <button 
+                          <button
                             onClick={() => setAccountingViewMode('payroll')}
                             className={`flex-1 py-1 text-center font-bold text-[11px] rounded transition cursor-pointer ${accountingViewMode === 'payroll' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'}`}
                           >
@@ -5796,26 +5854,26 @@ ${companyInfo.name}`
                               <div className="grid grid-cols-2 gap-2 text-left">
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Description</label>
-                                  <input 
-                                    type="text" 
+                                  <input
+                                    type="text"
                                     placeholder="Ex: Bardeau d'asphalte (Canac)"
-                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs text-white text-left" 
+                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs text-white text-left"
                                     value={newExpenseFormSetting.description}
                                     onChange={(e) => setNewExpenseFormSetting({ ...newExpenseFormSetting, description: e.target.value })}
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Date de dépense</label>
-                                  <input 
-                                    type="date" 
-                                    className="w-full p-1.5 bg-gray-900 rounded border border-gray-800 text-xs text-mono font-bold text-white text-left" 
+                                  <input
+                                    type="date"
+                                    className="w-full p-1.5 bg-gray-900 rounded border border-gray-800 text-xs text-mono font-bold text-white text-left"
                                     value={newExpenseFormSetting.date}
                                     onChange={(e) => setNewExpenseFormSetting({ ...newExpenseFormSetting, date: e.target.value })}
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Catégorie</label>
-                                  <select 
+                                  <select
                                     className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs text-white cursor-pointer text-left"
                                     value={newExpenseFormSetting.category}
                                     onChange={(e) => setNewExpenseFormSetting({ ...newExpenseFormSetting, category: e.target.value })}
@@ -5829,17 +5887,17 @@ ${companyInfo.name}`
                                 </div>
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Montant brut ($)</label>
-                                  <input 
-                                    type="number" 
+                                  <input
+                                    type="number"
                                     placeholder="0"
-                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs font-mono font-bold text-white text-right" 
+                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs font-mono font-bold text-white text-right"
                                     value={newExpenseFormSetting.amount || ''}
                                     onChange={(e) => setNewExpenseFormSetting({ ...newExpenseFormSetting, amount: Number(e.target.value) })}
                                   />
                                 </div>
                                 <div className="col-span-2">
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Projet Associé</label>
-                                  <select 
+                                  <select
                                     className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs text-white cursor-pointer text-left"
                                     value={newExpenseFormSetting.projectId}
                                     onChange={(e) => setNewExpenseFormSetting({ ...newExpenseFormSetting, projectId: e.target.value })}
@@ -5851,7 +5909,7 @@ ${companyInfo.name}`
                                   </select>
                                 </div>
                               </div>
-                              <button 
+                              <button
                                 disabled={!newExpenseFormSetting.description || !newExpenseFormSetting.amount}
                                 onClick={() => {
                                   addExpense({
@@ -5891,7 +5949,7 @@ ${companyInfo.name}`
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <span className="font-mono text-red-400 font-bold">-{exp.amount.toFixed(2)}$</span>
-                                      <button 
+                                      <button
                                         onClick={() => {
                                           if (confirm("Supprimer cette dépense?")) deleteExpense(exp.id);
                                         }}
@@ -5916,7 +5974,7 @@ ${companyInfo.name}`
                               <div className="grid grid-cols-2 gap-2 text-left">
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Bénéficiaire</label>
-                                  <select 
+                                  <select
                                     className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs text-white cursor-pointer text-left"
                                     value={newPayrollFormSetting.employeeId}
                                     onChange={(e) => setNewPayrollFormSetting({ ...newPayrollFormSetting, employeeId: e.target.value })}
@@ -5929,35 +5987,35 @@ ${companyInfo.name}`
                                 </div>
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Date de paiement</label>
-                                  <input 
-                                    type="date" 
-                                    className="w-full p-1.5 bg-gray-900 rounded border border-gray-800 text-xs text-mono font-bold text-white text-left" 
+                                  <input
+                                    type="date"
+                                    className="w-full p-1.5 bg-gray-900 rounded border border-gray-800 text-xs text-mono font-bold text-white text-left"
                                     value={newPayrollFormSetting.date}
                                     onChange={(e) => setNewPayrollFormSetting({ ...newPayrollFormSetting, date: e.target.value })}
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Heures payées</label>
-                                  <input 
-                                    type="number" 
+                                  <input
+                                    type="number"
                                     placeholder="0"
-                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs font-mono text-white text-right font-bold" 
+                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs font-mono text-white text-right font-bold"
                                     value={newPayrollFormSetting.hours || ''}
                                     onChange={(e) => setNewPayrollFormSetting({ ...newPayrollFormSetting, hours: Number(e.target.value) })}
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[9px] uppercase font-mono text-gray-500 mb-1 block">Montant Net Versé ($)</label>
-                                  <input 
-                                    type="number" 
+                                  <input
+                                    type="number"
                                     placeholder="0"
-                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs font-mono font-bold text-white text-right" 
+                                    className="w-full p-2 bg-gray-900 rounded border border-gray-800 text-xs font-mono font-bold text-white text-right"
                                     value={newPayrollFormSetting.amount || ''}
                                     onChange={(e) => setNewPayrollFormSetting({ ...newPayrollFormSetting, amount: Number(e.target.value) })}
                                   />
                                 </div>
                               </div>
-                              <button 
+                              <button
                                 disabled={!newPayrollFormSetting.employeeId || !newPayrollFormSetting.amount}
                                 onClick={() => {
                                   const targetEmployee = employees.find(e => e.id === newPayrollFormSetting.employeeId);
@@ -6008,7 +6066,7 @@ ${companyInfo.name}`
                                       >
                                         <MessageCircle className="w-3.5 h-3.5" />
                                       </button>
-                                      <button 
+                                      <button
                                         onClick={() => {
                                           if (confirm("Supprimer ce versement de paie?")) deletePayrollPayment(p.id);
                                         }}
@@ -6030,7 +6088,7 @@ ${companyInfo.name}`
                       <div className="space-y-4">
                         <div className="flex justify-between items-center text-left">
                           <h4 className="text-xs font-black uppercase text-orange-500">📍 Barrière GPS de Sécurité (Geofencing)</h4>
-                          <input 
+                          <input
                             type="checkbox"
                             checked={companyInfo.geofencingEnabled}
                             onChange={(e) => updateCompanyInfo({ geofencingEnabled: e.target.checked })}
@@ -6076,7 +6134,7 @@ ${companyInfo.name}`
                                   <p className="text-[10px] text-red-400 mt-0.5 leading-snug">{alertItem.message}</p>
                                 </div>
                               </div>
-                              <button 
+                              <button
                                 onClick={() => {
                                   resolveHRAlert(alertItem.id);
                                   window.alert("Alerte résolue avec succès!");
@@ -6124,7 +6182,7 @@ ${companyInfo.name}`
 
           {/* Right Rail Panel : active workers count list + inventory alarm widgets */}
           <div id="right-rail-scaffold" className="w-full lg:w-80 flex flex-col gap-6 flex-shrink-0">
-            
+
             {/* Proximity geofence card */}
             <div className="p-4 bg-[#16191F] border border-gray-800 rounded-2xl flex flex-col gap-3">
               <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
@@ -6151,7 +6209,7 @@ ${companyInfo.name}`
                 </h4>
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
               </div>
-              
+
               <div className="space-y-2">
                 {inventory.filter(i => i.quantity < i.minThreshold).map(i => (
                   <div key={i.id} className="text-xs flex items-center justify-between text-red-400">
@@ -6194,7 +6252,7 @@ ${companyInfo.name}`
           </button>
         ) : (
           <div className="w-80 sm:w-96 h-[500px] bg-[#16191F] border border-gray-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative">
-            <div 
+            <div
               onPointerDown={(e) => dragControls.start(e)}
               className="p-4 bg-gradient-to-r from-cyan-950 to-blue-950 text-white flex items-center justify-between border-b border-gray-800 cursor-grab active:cursor-grabbing"
             >
@@ -6218,13 +6276,13 @@ ${companyInfo.name}`
             {/* Chat message logs */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {aiHistory.map((chat, idx) => (
-                <div 
-                  key={idx} 
+                <div
+                  key={idx}
                   className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div className={`p-3 rounded-xl text-xs max-w-[85%] leading-relaxed ${
-                    chat.role === 'user' 
-                      ? 'bg-orange-600 text-white rounded-br-none' 
+                    chat.role === 'user'
+                      ? 'bg-orange-600 text-white rounded-br-none'
                       : 'bg-gray-850 text-gray-200 rounded-bl-none'
                   }`}>
                     {chat.imagePreviewUrl && (
@@ -6331,7 +6389,7 @@ ${companyInfo.name}`
 
       {/* -------------------- ADMIN / EMPLOYEE FIXED BOTTOM NAV BAR -------------------- */}
       {activeEmployee && (
-        <nav 
+        <nav
           id="fixed-bottom-navigation-main"
           className="fixed bottom-0 left-0 right-0 h-16 bg-[#16191F] border-t border-gray-800 flex items-center justify-between px-4 z-40 shadow-2xl"
         >
@@ -6502,7 +6560,7 @@ ${companyInfo.name}`
               <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
                 🔨 {t.modalPunchInTitle}
               </h4>
-              <button 
+              <button
                 onClick={() => setShowPunchInModal(false)}
                 className="text-gray-500 hover:text-white transition cursor-pointer"
               >
@@ -6548,8 +6606,8 @@ ${companyInfo.name}`
                       type="button"
                       onClick={() => setHomePayMode(option.mode as any)}
                       className={`p-2 py-2.5 rounded border cursor-pointer transition ${
-                        homePayMode === option.mode 
-                          ? 'bg-orange-600 border-orange-500 text-white font-black' 
+                        homePayMode === option.mode
+                          ? 'bg-orange-600 border-orange-500 text-white font-black'
                           : 'bg-gray-850 border-gray-800 text-gray-400 hover:text-white'
                       }`}
                     >
@@ -6562,7 +6620,7 @@ ${companyInfo.name}`
               {/* Custom rate value */}
               <div>
                 <label className="text-[10px] text-gray-500 font-mono uppercase">{t.modalConfirmRate}</label>
-                <input 
+                <input
                   type="number"
                   value={homeRateCustom}
                   onChange={e => setHomeRateCustom(Number(e.target.value))}
@@ -6572,13 +6630,13 @@ ${companyInfo.name}`
             </div>
 
             <div className="flex gap-3 pt-3 border-t border-gray-850">
-              <button 
+              <button
                 onClick={() => setShowPunchInModal(false)}
                 className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
               >
                 {t.modalCancelBtn}
               </button>
-              <button 
+              <button
                 onClick={handlePunchInStart}
                 disabled={!homePunchProject}
                 className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-40"
@@ -6599,7 +6657,7 @@ ${companyInfo.name}`
               <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
                 ⏹️ {t.modalPunchOutTitle}
               </h4>
-              <button 
+              <button
                 onClick={() => setShowPunchOutModal(false)}
                 className="text-gray-500 hover:text-white transition cursor-pointer"
               >
@@ -6679,13 +6737,13 @@ ${companyInfo.name}`
               </div>
 
               <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
-              <button 
+              <button
                 onClick={() => setShowPunchOutModal(false)}
                 className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
               >
                 {t.modalCancelBtn}
               </button>
-              <button 
+              <button
                 onClick={handlePunchOutConfirm}
                 className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-red-950/25"
               >
@@ -6702,7 +6760,7 @@ ${companyInfo.name}`
             <span className="p-1 px-2.5 bg-orange-600/15 border border-orange-500/20 text-orange-400 font-bold uppercase font-mono text-[9px] rounded-lg tracking-wider">
               {TOUR_STEPS[tourStep].badgeText} (Étape {tourStep + 1} / {TOUR_STEPS.length})
             </span>
-            <button 
+            <button
               onClick={() => setTourStep(null)}
               className="text-gray-400 hover:text-white transition cursor-pointer font-bold text-xs"
             >
