@@ -1,1 +1,47 @@
 @import "tailwindcss";
+
+/*
+  Accessibilité terrain : plusieurs vues utilisent de très petits textes
+  Tailwind (text-xs, text-[9px], etc.) dans des cellules de tableau, cartes,
+  badges et formulaires. On augmente ces micro-libellés globalement pour que
+  les équipes plus âgées puissent lire l'application sans zoom navigateur.
+*/
+:root {
+  --readable-copy-xs: 0.9rem;
+  --readable-copy-2xs: 0.85rem;
+  --readable-cell-copy: 1rem;
+}
+
+#root :is(.text-xs, .text-\[11px\], .text-\[10px\], .text-\[9px\]) {
+  font-size: var(--readable-copy-xs) !important;
+  line-height: 1.45 !important;
+}
+
+#root :is(.text-\[10px\], .text-\[9px\]) {
+  font-size: var(--readable-copy-2xs) !important;
+}
+
+#root :is(th, td) {
+  font-size: var(--readable-cell-copy) !important;
+  line-height: 1.55 !important;
+  padding-top: 1rem !important;
+  padding-bottom: 1rem !important;
+  vertical-align: middle;
+}
+
+#root :is(th, td) :is(.text-xs, .text-sm, .text-\[11px\], .text-\[10px\], .text-\[9px\]) {
+  font-size: var(--readable-cell-copy) !important;
+  line-height: 1.5 !important;
+}
+
+#root :is(input, select, textarea, button) {
+  line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --readable-copy-xs: 0.86rem;
+    --readable-copy-2xs: 0.8rem;
+    --readable-cell-copy: 0.95rem;
+  }
+}
