@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { translations } from './translations';
-import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
+import { Employee, CompanyInfo, EmployeeRole, Invoice, AiProvider } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import OnboardingScreen from './components/OnboardingScreen';
 import MotivationTab from './components/MotivationTab';
@@ -342,6 +342,8 @@ export default function App() {
   const [isListening, setIsListening] = useState<boolean>(false);
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const [aiImageAttachment, setAiImageAttachment] = useState<{ data: string; mimeType: string; name: string; previewUrl: string } | null>(null);
+  const [aiProviderTestResults, setAiProviderTestResults] = useState<Array<{ provider: AiProvider; ok: boolean; simulated?: boolean; reply?: string; error?: string; model?: string }>>([]);
+  const [isTestingAiProviders, setIsTestingAiProviders] = useState<boolean>(false);
   const recognitionRef = useRef<any>(null);
   const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -655,6 +657,24 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  const handleTestAiProviders = async (provider: 'all' | AiProvider = 'all') => {
+    setIsTestingAiProviders(true);
+    setAiProviderTestResults([]);
+    try {
+      const res = await fetch('/api/ai/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      const data = await res.json();
+      setAiProviderTestResults(data.results || []);
+    } catch (error: any) {
+      setAiProviderTestResults([{ provider: companyInfo.aiProvider || 'gemini', ok: false, error: error.message || 'Erreur de test provider' }]);
+    } finally {
+      setIsTestingAiProviders(false);
+    }
+  };
+
   const handleToggleVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -709,6 +729,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userText,
+          provider: companyInfo.aiProvider || 'gemini',
           image: imageToSend ? {
             data: imageToSend.data,
             mimeType: imageToSend.mimeType,
@@ -4314,6 +4335,53 @@ ${companyInfo.name}`
                                   </p>
                                 </div>
                               </div>
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Provider IA actif</label>
+                            <div className="mt-1.5 rounded-xl border border-gray-850 bg-gray-900 p-4 space-y-3">
+                              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-center">
+                                <select
+                                  value={companyInfo.aiProvider || 'gemini'}
+                                  onChange={(e) => updateCompanyInfo({ aiProvider: e.target.value as AiProvider })}
+                                  className="w-full p-2 bg-gray-950 rounded border border-gray-800 text-white text-xs font-bold"
+                                >
+                                  <option value="gemini">Gemini — GEMINI_API_KEY</option>
+                                  <option value="openai">OpenAI — OPENAI_API_KEY</option>
+                                  <option value="anthropic">Anthropic — ANTHROPIC_API_KEY</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTestAiProviders(companyInfo.aiProvider || 'gemini')}
+                                  disabled={isTestingAiProviders}
+                                  className="px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-black rounded-lg transition disabled:opacity-50"
+                                >
+                                  Tester actif
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTestAiProviders('all')}
+                                  disabled={isTestingAiProviders}
+                                  className="px-3 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition disabled:opacity-50"
+                                >
+                                  Tester tous
+                                </button>
+                              </div>
+                              <p className="text-[10px] text-gray-400 leading-relaxed">
+                                Les clés restent côté serveur dans les variables d'environnement : GEMINI_API_KEY, OPENAI_API_KEY et ANTHROPIC_API_KEY. Un seul provider est actif pour le chat IA.
+                              </p>
+                              {aiProviderTestResults.length > 0 && (
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                  {aiProviderTestResults.map(result => (
+                                    <div key={result.provider} className={`rounded-lg border p-2 text-xs ${result.ok ? 'border-green-500/30 bg-green-950/20 text-green-200' : 'border-red-500/30 bg-red-950/20 text-red-200'}`}>
+                                      <p className="font-black uppercase">{result.provider} — {result.ok ? 'Réponse OK' : 'Erreur'}</p>
+                                      <p className="text-[10px] opacity-80">{result.model}</p>
+                                      <p className="mt-1 text-[10px] leading-snug">{result.reply || result.error || 'Aucune réponse'}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
 

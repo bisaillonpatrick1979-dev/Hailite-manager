@@ -15,6 +15,6 @@ View your app in AI Studio: https://ai.studio/apps/148abb89-fbf1-4a9d-9841-7febc
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Set `AI_PROVIDER` plus the server-side provider key you want in [.env.local](.env.local): `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`. The admin can choose and test the active provider in Réglages > Compagnie.
 3. Run the app:
    `npm run dev`

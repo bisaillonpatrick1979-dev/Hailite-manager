@@ -175,6 +175,8 @@ export interface Client {
   address: string;
 }
 
+export type AiProvider = 'gemini' | 'openai' | 'anthropic';
+
 export interface CompanyInfo {
   name: string;
   address: string;
@@ -198,6 +200,7 @@ export interface CompanyInfo {
   voiceReminderVolume: number; // 0-100
   voiceReminderSchedule: string; // hours e.g., "08:00, 12:00, 17:00"
   paymentTerms: string; // conditions de paiement
+  aiProvider?: AiProvider;
   
   // Salaried Payroll Settings
   payrollVacationRate?: number;
