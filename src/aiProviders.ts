@@ -1,5 +1,4 @@
 import { GoogleGenAI } from '@google/genai';
-import Anthropic from '@anthropic-ai/sdk';
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic';
 export type ChatImage = { data: string; mimeType: string; name?: string };
@@ -120,11 +119,12 @@ async function generateWithOpenAI(message: string, image?: ChatImage) {
 }
 
 async function generateWithAnthropic(message: string, image?: ChatImage) {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({
     apiKey: getProviderKey('anthropic'),
   });
 
-  const content: Anthropic.Messages.MessageParam['content'] = [
+  const content: any[] = [
     { type: 'text', text: message || 'Analyse cette photo de chantier et donne tes recommandations.' }
   ];
 
@@ -133,7 +133,7 @@ async function generateWithAnthropic(message: string, image?: ChatImage) {
       type: 'image',
       source: {
         type: 'base64',
-        media_type: image.mimeType as any,
+        media_type: image.mimeType,
         data: image.data,
       },
     });

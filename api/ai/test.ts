@@ -1,10 +1,8 @@
-import { testAiProviders } from '../../src/aiProviders';
-
 type VercelLikeRequest = {
   method?: string;
   body?: {
     provider?: string;
-  };
+  } | string;
 };
 
 type VercelLikeResponse = {
@@ -13,9 +11,9 @@ type VercelLikeResponse = {
   setHeader?: (name: string, value: string) => void;
 };
 
-function normalizeRequestBody(body: VercelLikeRequest['body'] | string | undefined): VercelLikeRequest['body'] {
+function normalizeRequestBody(body: VercelLikeRequest['body']): Exclude<VercelLikeRequest['body'], string> | undefined {
   if (!body) return undefined;
-  if (typeof body !== 'string') return body as VercelLikeRequest['body'];
+  if (typeof body !== 'string') return body;
   try {
     return JSON.parse(body);
   } catch {
@@ -31,9 +29,13 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 
   try {
     const body = normalizeRequestBody(req.body);
+    const { testAiProviders } = await import('../../src/aiProviders');
     return res.status(200).json(await testAiProviders(body?.provider));
   } catch (error: any) {
     console.error('Error on Vercel /api/ai/test:', error);
-    return res.status(500).json({ error: error.message || 'Error occurred while testing AI provider' });
+    return res.status(200).json({
+      activeProvider: 'anthropic',
+      results: [{ provider: 'anthropic', ok: false, error: error.message || 'Erreur backend test provider' }],
+    });
   }
 }
