@@ -596,20 +596,10 @@ export default function ClientDocumentsManager() {
               className="bg-white text-slate-900 rounded-xl p-8 shadow-2xl relative overflow-hidden font-sans border border-gray-200 select-all print:shadow-none print:border-none"
             >
               
-              {/* Dynamic Logo Watermark & Diagonal text overlay (from improvements spec) */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
-                {/* Angular watermark */}
-                <div className="relative transform -rotate-12 opacity-[0.09] flex flex-col items-center justify-center">
-                  <div className="w-72 h-72 border-8 border-slate-900 rounded-full flex items-center justify-center p-6 mix-blend-multiply">
-                    <img 
-                      src={getLogoImageSrc(companyInfo.logo)}
-                      alt="Watermark Logo"
-                      className="w-48 h-48 rounded-full object-cover grayscale"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                  {/* Diagonal Type of document PAR-DESSUS exact diagonal overlay */}
-                  <span className="absolute text-5xl font-mono font-black uppercase tracking-widest text-slate-900 mt-2 filter drop-shadow">
+              {/* Centered document status watermark only; the company logo lives in the header above. */}
+              <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none select-none" aria-hidden="true">
+                <div className="w-72 h-72 border-8 border-slate-900 rounded-full opacity-[0.09] mix-blend-multiply transform -rotate-12 flex items-center justify-center p-8">
+                  <span className="block w-full text-center text-5xl font-mono font-black uppercase tracking-widest leading-tight text-slate-900 filter drop-shadow">
                     {selectedDocForView.status === 'paid' ? 'FACTURE PAYÉE' : 
                      selectedDocForView.status === 'accepted' ? 'DEVIS ACCEPTÉ' : 
                      selectedDocForView.type === 'quote' ? 'DEVIS PROJECTION' : 
@@ -624,8 +614,15 @@ export default function ClientDocumentsManager() {
                 {/* Header row */}
                 <div className="flex justify-between items-start gap-4 border-b border-slate-250 pb-5">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center font-bold text-white text-xl">H</div>
+                    <div className="relative z-20 flex items-center gap-3">
+                      <div className="w-16 h-16 bg-white rounded-xl border border-slate-200 shadow-sm flex items-center justify-center overflow-hidden p-1">
+                        <img
+                          src={getLogoImageSrc(companyInfo.logo)}
+                          alt="Logo de la compagnie"
+                          className="h-full w-full object-contain"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
                       <div>
                         <h2 className="text-lg font-black text-slate-900 uppercase leading-none tracking-tighter">{companyInfo.name || "HAILITE XTERIORS"}</h2>
                         <span className="text-[9px] uppercase tracking-wider font-mono text-gray-500">Pose Professionnelle & Revêtement</span>
