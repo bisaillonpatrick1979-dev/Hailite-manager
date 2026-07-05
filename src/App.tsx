@@ -4,6 +4,10 @@ import useAppStore from './store';
 import { translations } from './translations';
 import { Employee, CompanyInfo, EmployeeRole } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
+import {
+  CANADIAN_REGIONS, US_REGIONS, TaxRegion,
+  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
+} from './regionsData';
 import OnboardingScreen from './components/OnboardingScreen';
 import MotivationTab from './components/MotivationTab';
 import ClientDocumentsManager from './components/ClientDocumentsManager';
@@ -112,6 +116,16 @@ const TOUR_STEPS = [
   }
 ];
 
+// Résout la province/état de la compagnie (fixé au Québec seulement si rien n'a
+// été configuré), pour que les libellés et calculs de paie s'adaptent au bon
+// endroit au lieu de présumer le Québec partout.
+function getCompanyRegion(companyInfo: CompanyInfo): { country: 'CA' | 'US'; region: TaxRegion } {
+  const country = companyInfo.country || 'CA';
+  const list = country === 'US' ? US_REGIONS : CANADIAN_REGIONS;
+  const region = list.find(r => r.code === companyInfo.region) || list[0];
+  return { country, region };
+}
+
 export default function App() {
   const {
     employees, projects, punchSessions, invoices, catalogue, inventory,
@@ -128,6 +142,15 @@ export default function App() {
 
   const dragControls = useDragControls();
   const t = translations[currentLanguage];
+  const { country: companyCountry, region: companyRegion } = getCompanyRegion(companyInfo);
+  const payrollMeta = getRegionPayrollMeta(companyRegion, companyCountry);
+  const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
+  const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
+  const pensionName = currentLanguage === 'FR' ? payrollMeta.pensionNameFR : payrollMeta.pensionNameEN;
+  const secondaryDeductionName = currentLanguage === 'FR' ? payrollMeta.secondaryDeductionNameFR : payrollMeta.secondaryDeductionNameEN;
+  const workersCompName = currentLanguage === 'FR' ? payrollMeta.workersCompNameFR : payrollMeta.workersCompNameEN;
+  const breakRuleText = currentLanguage === 'FR' ? payrollMeta.breakRuleFR : payrollMeta.breakRuleEN;
+  const businessNumberLabel = currentLanguage === 'FR' ? payrollMeta.businessNumberLabelFR : payrollMeta.businessNumberLabelEN;
   const { coords, gpsError, isChecking, checkLocation, evaluateProjectGeofence } = useGeofencing();
 
   // App Navigation state
@@ -480,7 +503,8 @@ export default function App() {
         body: JSON.stringify({
           message: userText,
           provider: companyInfo.aiProvider || 'gemini',
-          apiKey: companyInfo.aiApiKey || ''
+          apiKey: companyInfo.aiApiKey || '',
+          regionLabel: `${companyRegion.nameFR} (${companyCountry === 'US' ? 'États-Unis' : 'Canada'})`
         })
       });
       const data = await res.json();
@@ -513,30 +537,18 @@ export default function App() {
     };
   };
 
-  // Progressive Tax Bracket Estimator (Quebec / Canada)
+  // Progressive Tax Bracket Estimator — s'adapte au pays/province de la compagnie
+  // au lieu de présumer le Québec. Pour les États-Unis, l'impôt fédéral/état n'est
+  // pas modélisé en détail (affiché avec une mention "à valider" dans l'UI).
   const calculateProgressiveTax = (annualGross: number, isFederal: boolean) => {
-    if (isFederal) {
-      if (annualGross <= 55867) {
-        return annualGross * 0.15;
-      } else if (annualGross <= 111733) {
-        return (55867 * 0.15) + (annualGross - 55867) * 0.205;
-      } else if (annualGross <= 173205) {
-        return (55867 * 0.15) + ((111733 - 55867) * 0.205) + (annualGross - 111733) * 0.26;
-      } else {
-        return (55867 * 0.15) + ((111733 - 55867) * 0.205) + ((173205 - 111733) * 0.26) + (annualGross - 173205) * 0.29;
-      }
-    } else {
-      // Québec provincial progressive
-      if (annualGross <= 51780) {
-        return annualGross * 0.14;
-      } else if (annualGross <= 103545) {
-        return (51780 * 0.14) + (annualGross - 51780) * 0.19;
-      } else if (annualGross <= 126285) {
-        return (51780 * 0.14) + ((103545 - 51780) * 0.19) + (annualGross - 103545) * 0.24;
-      } else {
-        return (51780 * 0.14) + ((103545 - 51780) * 0.19) + ((126285 - 103545) * 0.24) + (annualGross - 126285) * 0.2575;
-      }
+    if (companyCountry === 'US') {
+      return 0;
     }
+    if (isFederal) {
+      return computeBracketTax(annualGross, CA_FEDERAL_BRACKETS);
+    }
+    const brackets = CA_PROVINCIAL_BRACKETS[companyRegion.code];
+    return brackets ? computeBracketTax(annualGross, brackets) : annualGross * CA_PROVINCIAL_FALLBACK_RATE;
   };
 
   const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number) => {
@@ -544,10 +556,10 @@ export default function App() {
     const isContractor = emp.workerType === 'contractor';
 
     if (isContractor) {
-      // Contractors (no source deductions or benefits, add GST / QST if they have GST registered)
+      // Contractors (no source deductions or benefits, add sales taxes of the company's region if registered)
       const hasGst = !!emp.gstNumber;
-      const gst = hasGst ? gross * 0.05 : 0;
-      const qst = hasGst ? gross * 0.09975 : 0;
+      const gst = hasGst ? gross * companyRegion.taxRate1 : 0;
+      const qst = hasGst ? gross * companyRegion.taxRate2 : 0;
       const totalTaxes = gst + qst;
       const net = gross + totalTaxes;
 
@@ -592,9 +604,9 @@ export default function App() {
       : (company.payrollVacationRate !== undefined ? company.payrollVacationRate : 6);
     const vacationAmount = gross * (vacRate / 100);
 
-    // Source deductions
-    const cpp = gross * 0.0595; // RRQ / CPP: 5.95%
-    const ei = gross * 0.0166;  // EI / AE: 1.66%
+    // Source deductions (pension + secondary deduction rates adapt to the company's province/state)
+    const cpp = gross * payrollMeta.pensionRate;
+    const ei = gross * payrollMeta.secondaryDeductionRate;
     
     // Income taxes
     const annualGross = gross * periods;
@@ -640,12 +652,14 @@ export default function App() {
     };
   };
 
-  // Under Quebec / Canada structures, simulate simple gross vs net deductions
+  // Simule les déductions à la source pour un salaire brut ponctuel, avec les
+  // taux et le régime de retraite adaptés à la province/état de la compagnie.
   const calculateSimulatedDeductions = (gross: number) => {
-    const fedTax = gross * 0.15; // 15% Federal
-    const provTax = gross * 0.15; // 15% Provincial (Quebec)
-    const rrq = gross * 0.064; // 6.4% Régime de rentes du Québec (RRQ)
-    const ae = gross * 0.0127; // 1.27% Assurance Emploi
+    const provRate = companyCountry === 'US' ? 0 : (CA_PROVINCIAL_BRACKETS[companyRegion.code]?.[0].rate ?? CA_PROVINCIAL_FALLBACK_RATE);
+    const fedTax = companyCountry === 'US' ? 0 : gross * CA_FEDERAL_BRACKETS[0].rate;
+    const provTax = gross * provRate;
+    const rrq = gross * payrollMeta.pensionRate;
+    const ae = gross * payrollMeta.secondaryDeductionRate;
     const net = gross - fedTax - provTax - rrq - ae;
     return {
       fedTax,
@@ -2335,7 +2349,7 @@ export default function App() {
                             : 'text-gray-400 hover:text-white border border-transparent'
                         }`}
                       >
-                        🧾 Calcul Paie Québec
+                        🧾 Calcul Paie {regionName}
                       </button>
                     </div>
                   </div>
@@ -2821,7 +2835,7 @@ export default function App() {
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
                             <span className="text-[10px] text-gray-500 uppercase block font-sans">Masse Salariale</span>
                             <p className="text-base text-white font-black">{totalPayrollPaid.toFixed(2)} $</p>
-                            <p className="text-[11px] text-cyan-400">Prov. CNESST (5.5%) : {cnesstProvision.toFixed(2)} $</p>
+                            <p className="text-[11px] text-cyan-400">Prov. {workersCompName} (5.5%) : {cnesstProvision.toFixed(2)} $</p>
                             <p className="text-[10px] text-gray-500 font-sans">Gens de métier</p>
                           </div>
 
@@ -2848,10 +2862,10 @@ export default function App() {
                       </div>
                       <div>
                         <h4 className="text-sm font-black text-white uppercase tracking-tight">
-                          {t.payCalculatorTitle}
+                          {currentLanguage === 'FR' ? `Simulateur de Fiche de Paie (${regionName} - Déductions)` : `Pay Slip Simulator (${regionName} - Deductions)`}
                         </h4>
                         <p className="text-xs text-gray-400">
-                          Visualisez les déductions provinciales du Québec (RRQ) et de l'assurance-emploi.
+                          Visualisez les déductions {regionWithPreposition(companyRegion, companyCountry)} ({payrollMeta.pensionNameFR.split(' ')[0]}) et de {payrollMeta.secondaryDeductionNameFR.toLowerCase()}.
                         </p>
                       </div>
                     </div>
@@ -2885,7 +2899,7 @@ export default function App() {
                           />
                         </div>
                         <p className="text-[11px] text-gray-400 leading-normal font-sans">
-                          Ce simulateur correspond aux barèmes de déductions à la source moyennes pour un travailleur du bâtiment (sous-traitant ou salarié) enregistré au Québec.
+                          Ce simulateur correspond aux barèmes de déductions à la source estimés pour un travailleur du bâtiment (sous-traitant ou salarié) enregistré en {companyRegion.nameFR}.
                         </p>
                       </div>
 
@@ -2899,15 +2913,15 @@ export default function App() {
                           <span className="font-mono animate-none" id="fed_sim_output">150.00$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-red-400">
-                          <span>{t.provincialTax}</span>
+                          <span>{currentLanguage === 'FR' ? `Impôt Provincial (${regionName}) estimé` : `Estimated Provincial Tax (${regionName})`}</span>
                           <span className="font-mono animate-none" id="prov_sim_output">150.00$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
-                          <span>{t.cppRate}</span>
+                          <span>{pensionName} estimé ({(payrollMeta.pensionRate * 100).toFixed(2)}%)</span>
                           <span className="font-mono animate-none" id="rrq_sim_output">64.00$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
-                          <span>{t.eiRate}</span>
+                          <span>{secondaryDeductionName} ({(payrollMeta.secondaryDeductionRate * 100).toFixed(2)}%)</span>
                           <span className="font-mono animate-none" id="ae_sim_output">12.70$</span>
                         </div>
                         
@@ -2959,7 +2973,7 @@ export default function App() {
                                     ) : (
                                       <span className="p-0.5 px-2 text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 font-black uppercase rounded">💼 Salarié régulier (T4)</span>
                                     )}
-                                    <span className="p-0.5 px-2 text-[9px] bg-gray-500/10 text-gray-400 border border-gray-500/15 font-mono uppercase rounded font-mono">AS/CCQ: {emp.asNumber || 'S/O'}</span>
+                                    <span className="p-0.5 px-2 text-[9px] bg-gray-500/10 text-gray-400 border border-gray-500/15 font-mono uppercase rounded font-mono">{isQuebec ? 'AS/CCQ' : 'Certification'}: {emp.asNumber || 'S/O'}</span>
                                   </div>
                                 </div>
                               </div>
@@ -3010,10 +3024,10 @@ export default function App() {
                                 <div className="space-y-4 font-mono text-xs">
                                   <div className="p-4 bg-emerald-950/10 border border-emerald-900/20 text-emerald-300 rounded-xl space-y-1.5 leading-relaxed">
                                     <p className="font-black text-[10px] text-emerald-400 uppercase tracking-wider">📋 STATUT CONTRACTUEL / SOUS-TRAITANT</p>
-                                    <p className="text-[10px] text-gray-400 font-sans leading-relaxed">Régime de facturation autonome. Sans retenues d'impôt ou d'assurance-emploi à la source. Assujetti aux acomptes provisionnels auprès de REVENU QUÉBEC.</p>
+                                    <p className="text-[10px] text-gray-400 font-sans leading-relaxed">Régime de facturation autonome. Sans retenues d'impôt ou d'assurance-emploi à la source. Assujetti aux acomptes provisionnels de {regionName}.</p>
                                     {emp.businessName && <p className="text-[11px] text-white pt-1">🏢 <strong>Société :</strong> {emp.businessName}</p>}
                                     {emp.gstNumber ? (
-                                      <p className="text-[11px] text-white">⚙️ <strong>TPS/TVQ :</strong> {emp.gstNumber}</p>
+                                      <p className="text-[11px] text-white">⚙️ <strong>{companyRegion.taxRate1NameFR}/{companyRegion.taxRate2NameFR} :</strong> {emp.gstNumber}</p>
                                     ) : (
                                       <p className="text-[11px] text-yellow-500 font-bold font-sans">⚠️ Sans numéros de taxes saisis (Chiffre d'affaires global &lt; 30k$). Prestation non taxée.</p>
                                     )}
@@ -3027,11 +3041,11 @@ export default function App() {
                                     {emp.gstNumber && (
                                       <>
                                         <div className="flex justify-between text-emerald-500">
-                                          <span>TPS facturée (5%) :</span>
+                                          <span>{companyRegion.taxRate1NameFR} facturée :</span>
                                           <span>+{pay.gst.toFixed(2)} $</span>
                                         </div>
                                         <div className="flex justify-between text-emerald-500">
-                                          <span>TVQ facturée (9.975%) :</span>
+                                          <span>{companyRegion.taxRate2NameFR} facturée :</span>
                                           <span>+{pay.qst.toFixed(2)} $</span>
                                         </div>
                                       </>
@@ -3065,11 +3079,11 @@ export default function App() {
                                     <div className="space-y-2 p-3 bg-gray-950 rounded-xl border border-gray-850">
                                       <span className="text-[9px] text-gray-500 block uppercase font-sans font-bold">Sécurité sociale</span>
                                       <div className="flex justify-between text-red-500 text-xs font-mono">
-                                        <span className="font-sans">RRQ / Cotisation Retraite:</span>
+                                        <span className="font-sans">{pensionName} / Cotisation Retraite:</span>
                                         <span>-{pay.cpp.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500 text-xs font-mono">
-                                        <span className="font-sans">Assurance Emploi (AE):</span>
+                                        <span className="font-sans">{secondaryDeductionName}:</span>
                                         <span>-{pay.ei.toFixed(2)} $</span>
                                       </div>
                                     </div>
@@ -3078,7 +3092,7 @@ export default function App() {
                                   <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-1.5 text-left">
                                     <span className="text-[9px] text-gray-500 block uppercase font-sans font-bold">Retenues d’impôt provinciales & fédérales</span>
                                     <div className="flex justify-between text-red-500 font-mono">
-                                      <span className="font-sans">Impôt Provincial (Revenu Québec):</span>
+                                      <span className="font-sans">Impôt Provincial ({regionName}):</span>
                                       <span>-{pay.provTax.toFixed(2)} $</span>
                                     </div>
                                     <div className="flex justify-between text-red-500 font-mono">
@@ -3149,7 +3163,7 @@ export default function App() {
                           </div>
 
                           <div className="p-4 bg-gray-950 border border-gray-850 rounded-xl text-left space-y-1">
-                            <span className="text-[9.5px] text-gray-400 uppercase font-mono block">Charges CNESST / Provisions</span>
+                            <span className="text-[9.5px] text-gray-400 uppercase font-mono block">Charges {workersCompName} / Provisions</span>
                             <p className="text-lg font-mono text-white font-black">
                               {(employees.reduce((sum, e) => {
                                 if (e.workerType === 'contractor') return sum;
@@ -3159,7 +3173,7 @@ export default function App() {
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).gross;
                               }, 0) * 0.055).toFixed(2)} $
                             </p>
-                            <span className="text-[9px] text-gray-500 block font-sans">Assurance CCQ / CSST (5.5% des bruts)</span>
+                            <span className="text-[9px] text-gray-500 block font-sans">Assurance {workersCompName} (5.5% des bruts)</span>
                           </div>
 
                           <div className="p-4 bg-gray-950 border border-gray-850 rounded-xl text-left space-y-1">
@@ -3173,7 +3187,7 @@ export default function App() {
 
                         {/* Grand Ledger Table */}
                         <div className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
-                          <h4 className="text-xs font-black uppercase text-gray-300 block tracking-wider font-sans">📋 Grand Livre de Paie CCQ & Contracteurs ({statsMonth})</h4>
+                          <h4 className="text-xs font-black uppercase text-gray-300 block tracking-wider font-sans">📋 Grand Livre de Paie{isQuebec ? ' CCQ' : ''} & Contracteurs ({statsMonth})</h4>
                           
                           <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse text-xs">
@@ -3205,7 +3219,7 @@ export default function App() {
                                         <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-9 h-9 rounded-full object-cover" />
                                         <div>
                                           <p className="font-bold text-white leading-none text-left">{emp.name}</p>
-                                          <p className="text-[9.5px] text-gray-500 mt-0.5 text-left">NAS: {emp.sin || 'Non inscrit'} | CCQ: {emp.asNumber || 'S/O'}</p>
+                                          <p className="text-[9.5px] text-gray-500 mt-0.5 text-left">NAS: {emp.sin || 'Non inscrit'} | {isQuebec ? 'CCQ' : 'Cert.'}: {emp.asNumber || 'S/O'}</p>
                                         </div>
                                       </td>
                                       <td className="py-3 font-sans text-left">
@@ -3222,7 +3236,7 @@ export default function App() {
                                       <td className="py-3 text-right text-gray-300">{pay.gross.toFixed(2)} $</td>
                                       <td className="py-3 text-right">
                                         {isContractor ? (
-                                          <span className="text-emerald-400">+{pay.totalTaxes.toFixed(2)} $ TPS/TVQ</span>
+                                          <span className="text-emerald-400">+{pay.totalTaxes.toFixed(2)} $ {companyRegion.taxRate1NameFR}/{companyRegion.taxRate2NameFR}</span>
                                         ) : (
                                           <span className="text-red-400">-{pay.totalDeductions.toFixed(2)} $ retenues</span>
                                         )}
@@ -3280,16 +3294,16 @@ export default function App() {
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
                                 <div className="space-y-2.5 p-4 bg-gray-950 rounded-xl border border-gray-850 text-left">
                                   <span className="text-[10px] text-gray-500 font-bold block uppercase font-sans">Dossier de l'ouvrier</span>
-                                  <p className="text-gray-400 font-sans">Profil fiscal : <span className="text-white font-black">{isContractor ? 'CO-CONTRACTANT INDÉPENDANT' : 'SALARIÉ CCQ/T4'}</span></p>
+                                  <p className="text-gray-400 font-sans">Profil fiscal : <span className="text-white font-black">{isContractor ? 'CO-CONTRACTANT INDÉPENDANT' : `SALARIÉ${isQuebec ? ' CCQ' : ''}/T4`}</span></p>
                                   {isContractor ? (
                                     <>
                                       <p className="text-gray-400 font-sans">Raison Sociale : <span className="text-white font-bold">{emp.businessName || 'S/O'}</span></p>
-                                      <p className="text-gray-400 font-sans">GST/TVQ Enregistrée : <span className="text-white font-bold">{emp.gstNumber || 'Aucun no. de taxes saisi'}</span></p>
+                                      <p className="text-gray-400 font-sans">{companyRegion.taxRate1NameFR}/{companyRegion.taxRate2NameFR} Enregistrée : <span className="text-white font-bold">{emp.gstNumber || 'Aucun no. de taxes saisi'}</span></p>
                                     </>
                                   ) : (
                                     <>
                                       <p className="text-gray-400 font-sans">Fréquence de versements: <span className="text-white font-bold">{emp.payFrequency || 'Hebdomadaire'}</span></p>
-                                      <p className="text-gray-400 font-sans">Province fiscale : <span className="text-white font-bold">{emp.employeeProvince || 'QC'}</span></p>
+                                      <p className="text-gray-400 font-sans">Province fiscale : <span className="text-white font-bold">{emp.employeeProvince || companyRegion.code}</span></p>
                                       {emp.annualSalary ? <p className="text-gray-400 font-sans">Base salaire annuel: <span className="text-white font-bold">{emp.annualSalary.toLocaleString()} $</span></p> : null}
                                     </>
                                   )}
@@ -3309,11 +3323,11 @@ export default function App() {
                                   {isContractor ? (
                                     <>
                                       <div className="flex justify-between text-emerald-400">
-                                        <span>TPS facturée (5.0%) :</span>
+                                        <span>{companyRegion.taxRate1NameFR} facturée :</span>
                                         <span>+{pay.gst.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-emerald-400">
-                                        <span>TVQ facturée (9.975%) :</span>
+                                        <span>{companyRegion.taxRate2NameFR} facturée :</span>
                                         <span>+{pay.qst.toFixed(2)} $</span>
                                       </div>
                                     </>
@@ -3324,15 +3338,15 @@ export default function App() {
                                         <span>+{pay.vacationAmount.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500">
-                                        <span>Impût Fédéral (Canada) :</span>
+                                        <span>Impôt Fédéral (Canada) :</span>
                                         <span>-{pay.fedTax.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500">
-                                        <span>Impût Provincial (Revenu QC) :</span>
+                                        <span>Impôt Provincial ({regionName}) :</span>
                                         <span>-{pay.provTax.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500">
-                                        <span>Cotisation Retraite (RRQ) :</span>
+                                        <span>Cotisation Retraite ({pensionName}) :</span>
                                         <span>-{pay.cpp.toFixed(2)} $</span>
                                       </div>
                                     </>
@@ -3439,15 +3453,66 @@ export default function App() {
                       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
                         <div>
                           <h4 className="text-xs font-black uppercase text-orange-500">🏢 Compagnie & Paramètres Salariaux</h4>
-                          <p className="text-[10px] text-gray-400 mt-0.5">Configurez l'adresse légale, les identifiants fiscaux québécois et les coordonnées bancaires.</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">Configurez l'adresse légale, les identifiants fiscaux de {regionName} et les coordonnées bancaires.</p>
+                        </div>
+
+                        {/* Pays / Province ou État — pilote tous les libellés et calculs de paie de l'application */}
+                        <div className="p-3 bg-gray-950 border border-orange-500/20 rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Pays</label>
+                            <select
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
+                              value={companyCountry}
+                              onChange={(e) => {
+                                const nextCountry = e.target.value as 'CA' | 'US';
+                                const nextRegion = (nextCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS)[0];
+                                updateCompanyInfo({
+                                  country: nextCountry,
+                                  region: nextRegion.code,
+                                  taxRate1: nextRegion.taxRate1,
+                                  taxRate2: nextRegion.taxRate2,
+                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
+                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
+                                });
+                              }}
+                            >
+                              <option value="CA">Canada</option>
+                              <option value="US">États-Unis / United States</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Province / État</label>
+                            <select
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
+                              value={companyRegion.code}
+                              onChange={(e) => {
+                                const nextRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === e.target.value);
+                                if (!nextRegion) return;
+                                updateCompanyInfo({
+                                  region: nextRegion.code,
+                                  taxRate1: nextRegion.taxRate1,
+                                  taxRate2: nextRegion.taxRate2,
+                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
+                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
+                                });
+                              }}
+                            >
+                              {(companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).map(r => (
+                                <option key={r.code} value={r.code}>{currentLanguage === 'FR' ? r.nameFR : r.nameEN}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <p className="sm:col-span-2 text-[9px] text-gray-500">
+                            Détermine les taxes, le régime de retraite, {workersCompName} et les rappels réglementaires affichés dans toute l'application.
+                          </p>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Nom légal</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.name}
                               onChange={(e) => updateCompanyInfo({ name: e.target.value })}
                             />
@@ -3455,72 +3520,67 @@ export default function App() {
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Logo / Bannière (Émoji ou texte)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.logo || "📐 Hailite Xteriors Pro"}
                               onChange={(e) => updateCompanyInfo({ logo: e.target.value })}
                             />
                           </div>
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">No. d'entreprise du Canada (BN/NE)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                              defaultValue={companyInfo.bnNumber || "NE 80234-5122"}
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">{businessNumberLabel}</label>
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                              defaultValue={companyInfo.bnNumber || ''}
                               onChange={(e) => updateCompanyInfo({ bnNumber: e.target.value })}
                             />
                           </div>
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">NEQ (Numéro d'entreprise du Québec)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed" 
-                              defaultValue="NEQ 1178224591"
-                              disabled
-                              title="Fixé par le registre des entreprises du Québec"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de TPS / GST</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de {companyRegion.taxRate1NameFR}</label>
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
                               defaultValue={companyInfo.gstNumber}
                               onChange={(e) => updateCompanyInfo({ gstNumber: e.target.value })}
                             />
                           </div>
 
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de TVQ / QST</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                              defaultValue={companyInfo.qstNumber}
-                              onChange={(e) => updateCompanyInfo({ qstNumber: e.target.value })}
-                            />
-                          </div>
+                          {companyRegion.taxRate2 > 0 && (
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de {companyRegion.taxRate2NameFR}</label>
+                              <input
+                                type="text"
+                                className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue={companyInfo.qstNumber}
+                                onChange={(e) => updateCompanyInfo({ qstNumber: e.target.value })}
+                              />
+                            </div>
+                          )}
+
+                          {isQuebec && (
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de Permis RBQ</label>
+                              <input
+                                type="text"
+                                className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue={companyInfo.constructionLicenseNumber || ''}
+                                placeholder="RBQ 5683-1044-02"
+                                onChange={(e) => updateCompanyInfo({ constructionLicenseNumber: e.target.value })}
+                              />
+                            </div>
+                          )}
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de Permis RBQ</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950" 
-                              defaultValue="RBQ 5683-1044-02"
-                              disabled
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">No. d’adhésion CNESST (ex-CSST)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950" 
-                              defaultValue="CNESST-774021-Q"
-                              disabled
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">No. d'adhésion {workersCompName}</label>
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                              defaultValue={companyInfo.wcbNumber || ''}
+                              placeholder={`${workersCompName}-000000`}
+                              onChange={(e) => updateCompanyInfo({ wcbNumber: e.target.value })}
                             />
                           </div>
                         </div>
@@ -3629,7 +3689,7 @@ export default function App() {
                                 <span className="text-xl">🔒</span>
                                 <div>
                                   <h5 className="text-xs font-black text-red-400 uppercase tracking-wider">Déductions Source Obligatoires de Droit Commun</h5>
-                                  <p className="text-[9.5px] text-gray-400">Ces retenues à la source canadiennes et québécoises sont dictées par l'impôt progressif et les taux officiels de la CNESST & de Revenu Québec. Elles ne peuvent être modifiées ou retirées par l'administration.</p>
+                                  <p className="text-[9.5px] text-gray-400">Ces retenues à la source sont dictées par l'impôt progressif et les taux officiels de {workersCompName} & de l'agence du revenu de {regionName}. Elles ne peuvent être modifiées ou retirées par l'administration.</p>
                                 </div>
                               </div>
 
@@ -3646,8 +3706,14 @@ export default function App() {
 
                                 <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
                                   <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Impôt sur le revenu Provincial (Québec)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Calculé avec barèmes progressive Revenu Québec (de 14% à 25.75%)</span>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Impôt sur le revenu Provincial ({regionName})</span>
+                                    <span className="text-[9px] text-gray-500 italic block">
+                                      {companyCountry === 'US'
+                                        ? "À valider avec un comptable local (non modélisé)"
+                                        : (CA_PROVINCIAL_BRACKETS[companyRegion.code]
+                                          ? `Calculé avec barèmes progressifs ${regionWithPreposition(companyRegion, companyCountry)}`
+                                          : `Estimation forfaitaire (${(CA_PROVINCIAL_FALLBACK_RATE * 100).toFixed(0)}%) — barème détaillé non disponible`)}
+                                    </span>
                                   </div>
                                   <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
                                     <span>Bloqué</span> 🔒
@@ -3656,43 +3722,49 @@ export default function App() {
 
                                 <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
                                   <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">RRQ (Régime de Rentes du Québec)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Taux de cotisation de base appliqué sur le gain admissible (5.95%)</span>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{pensionName}</span>
+                                    <span className="text-[9px] text-gray-500 italic block">Taux de cotisation de base appliqué sur le gain admissible ({(payrollMeta.pensionRate * 100).toFixed(2)}%)</span>
                                   </div>
                                   <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>5.95 %</span> 🔒
+                                    <span>{(payrollMeta.pensionRate * 100).toFixed(2)} %</span> 🔒
                                   </span>
                                 </div>
 
                                 <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
                                   <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Assurance-Emploi (AE / EI)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Taux légal d'assurance-emploi réduit appliqué au Québec (1.25%)</span>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{secondaryDeductionName}</span>
+                                    <span className="text-[9px] text-gray-500 italic block">
+                                      {isQuebec ? 'Taux légal réduit appliqué au Québec' : 'Taux légal appliqué sur le gain admissible'} ({(payrollMeta.secondaryDeductionRate * 100).toFixed(2)}%)
+                                    </span>
                                   </div>
                                   <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>1.25 %</span> 🔒
+                                    <span>{(payrollMeta.secondaryDeductionRate * 100).toFixed(2)} %</span> 🔒
                                   </span>
                                 </div>
 
-                                <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
-                                  <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">RQAP (Régime assurance parentale)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Cotisation assurance parentale pour congés maternité (0.49%)</span>
+                                {isQuebec && (
+                                  <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
+                                    <div className="space-y-0.5">
+                                      <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">RQAP (Régime assurance parentale)</span>
+                                      <span className="text-[9px] text-gray-500 italic block">Cotisation assurance parentale pour congés maternité (0.49%)</span>
+                                    </div>
+                                    <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
+                                      <span>0.49 %</span> 🔒
+                                    </span>
                                   </div>
-                                  <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>0.49 %</span> 🔒
-                                  </span>
-                                </div>
+                                )}
 
-                                <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between font-mono">
-                                  <div className="space-y-0.5 font-sans">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Permis CCQ & Cotisation Syndicales</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Retenue sectorielle réglementaire de type construction</span>
+                                {isQuebec && (
+                                  <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between font-mono">
+                                    <div className="space-y-0.5 font-sans">
+                                      <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Permis CCQ & Cotisation Syndicales</span>
+                                      <span className="text-[9px] text-gray-500 italic block">Retenue sectorielle réglementaire de type construction</span>
+                                    </div>
+                                    <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
+                                      <span>Déd. Fixe</span> 🔒
+                                    </span>
                                   </div>
-                                  <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>Déd. Fixe</span> 🔒
-                                  </span>
-                                </div>
+                                )}
                               </div>
 
                               <div className="p-3 bg-blue-950/40 border border-blue-900/20 text-[9.5px] text-blue-300 rounded-lg">
@@ -4144,11 +4216,11 @@ export default function App() {
                                     
                                     <div className="space-y-2 text-[11px]">
                                       <div className="flex justify-between items-center text-gray-400">
-                                        <span>Régime de Rentes du Québec (RRQ) :</span>
+                                        <span>{pensionName} :</span>
                                         <span className="font-mono text-gray-300">-{cpp.toFixed(2)}$</span>
                                       </div>
                                       <div className="flex justify-between items-center text-gray-400">
-                                        <span>Assurance-Emploi (AE) :</span>
+                                        <span>{secondaryDeductionName} :</span>
                                         <span className="font-mono text-gray-300">-{ei.toFixed(2)}$</span>
                                       </div>
                                       <div className="flex justify-between items-center text-gray-400">
@@ -4560,7 +4632,7 @@ export default function App() {
 
                                     <div className="flex justify-between items-center pt-2">
                                       <div className="text-[10px] text-gray-500 font-mono">
-                                        AS/CCQ : <input 
+                                        {isQuebec ? 'AS/CCQ' : 'Certification'} : <input
                                           type="text" 
                                           className="p-1 bg-gray-900 text-white border border-gray-800 rounded font-mono text-[10px] w-28"
                                           value={editEmployeeForm.asNumber}
@@ -4668,11 +4740,11 @@ export default function App() {
                               </select>
                             </div>
                             <div>
-                              <label className="text-[9px] text-gray-500 uppercase font-mono">No. Certificat CCQ / AS</label>
-                              <input 
+                              <label className="text-[9px] text-gray-500 uppercase font-mono">{isQuebec ? 'No. Certificat CCQ / AS' : 'No. de Certification'}</label>
+                              <input
                                 type="text"
                                 className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
-                                placeholder="CCQ-14220-41"
+                                placeholder={isQuebec ? 'CCQ-14220-41' : ''}
                                 value={newEmployeeForm.asNumber}
                                 onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, asNumber: e.target.value })}
                               />
@@ -4861,9 +4933,9 @@ export default function App() {
                                 workerType: newEmployeeForm.workerType || 'salaried',
                                 avatar: newEmployeeForm.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
                                 hireDate: newEmployeeForm.hireDate || '2026-06-03',
-                                asNumber: newEmployeeForm.asNumber || 'CCQ-14220-41',
+                                asNumber: newEmployeeForm.asNumber || '',
                                 phone: newEmployeeForm.phone || '(418) 555-0199',
-                                address: newEmployeeForm.address || 'Québec, QC',
+                                address: newEmployeeForm.address || `${companyRegion.nameFR}, ${companyRegion.code}`,
                                 businessName: newEmployeeForm.businessName,
                                 gstNumber: newEmployeeForm.gstNumber,
                                 sin: newEmployeeForm.sin,
@@ -5056,7 +5128,7 @@ export default function App() {
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Clause de Modification / Extra Chantiers (Avenant)</label>
                             <textarea 
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
-                              defaultValue="Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable CCQ de 120$/h."
+                              defaultValue={`Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable${isQuebec ? ' CCQ' : ''} de 120$/h.`}
                             />
                           </div>
 
@@ -5432,7 +5504,7 @@ export default function App() {
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-xs font-sans">
                         <div className="text-left">
                           <h4 className="text-xs font-black uppercase text-orange-500">Expirations & Sécurité RH</h4>
-                          <p className="text-[10px] text-gray-400 mt-0.5">Suivi de la carte ASP et certificats de compétences CCQ.</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{isQuebec ? 'Suivi de la carte ASP et certificats de compétences CCQ.' : 'Suivi des certifications de sécurité et de compétence des employés.'}</p>
                         </div>
 
                         {/* Active alert boxes */}
@@ -5468,10 +5540,10 @@ export default function App() {
 
                         {/* Calendar View representation */}
                         <div className="pt-3 border-t border-gray-850 space-y-2 text-left">
-                          <span className="text-[9px] uppercase font-mono text-gray-500 block">📅 Calendrier CCQ & CNESST</span>
+                          <span className="text-[9px] uppercase font-mono text-gray-500 block">📅 Calendrier {isQuebec ? 'CCQ & CNESST' : `Conformité & ${workersCompName}`}</span>
                           <div className="space-y-1.5">
                             {[
-                              { date: "15 Juin 2026", label: "Renouvellement assurance collective CCQ", type: "administrative" },
+                              { date: "15 Juin 2026", label: isQuebec ? "Renouvellement assurance collective CCQ" : "Renouvellement assurance collective", type: "administrative" },
                               { date: "01 Juillet 2026", label: "Audits annuels des harnais antichute", type: "safeguard" },
                               { date: "18 Juillet 2026", label: "Anniversaire d'embauche — Jean-Guy (7e année)", type: "anniversary" },
                               { date: "10 Août 2026", label: "Renouvellement Certification Chariot Élévateur", type: "safeguard" }
@@ -5601,11 +5673,13 @@ export default function App() {
               </div>
             </div>
 
-            {/* CCQ Rules reminder card */}
+            {/* Rappel des normes du travail — s'adapte à la province/état de la compagnie */}
             <div className="p-4 bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-800 rounded-2xl">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">Rappel CCQ Convention</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">
+                {isQuebec ? 'Rappel CCQ Convention' : (currentLanguage === 'FR' ? `Rappel Normes du Travail (${regionName})` : `Labor Standards Reminder (${regionName})`)}
+              </span>
               <p className="text-xs text-gray-300 mt-1.5 leading-normal">
-                Les pauses réglementaires québécoises de construction (15 mins de pause à 10h et 15h) ne sont pas déductibles des heures de paie finales.
+                {breakRuleText}
               </p>
             </div>
 

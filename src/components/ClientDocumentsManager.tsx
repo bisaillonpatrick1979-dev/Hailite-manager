@@ -5,19 +5,25 @@ import {
   GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine,
   GCPDocumentPaymentHistoryEntry
 } from '../types';
-import { 
-  Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar, 
-  DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck, 
-  FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin, 
+import {
+  Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar,
+  DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck,
+  FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin,
   CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
 } from 'lucide-react';
+import { CANADIAN_REGIONS, US_REGIONS, regionWithPreposition } from '../regionsData';
 
 export default function ClientDocumentsManager() {
-  const { 
-    documents, addGCPDocument, updateGCPDocument, deleteGCPDocument, 
+  const {
+    documents, addGCPDocument, updateGCPDocument, deleteGCPDocument,
     convertQuoteToInvoice, addPartialPayment, clients, projects, companyInfo,
     currentTheme, currentLanguage
   } = useAppStore();
+
+  const companyCountry = companyInfo.country || 'CA';
+  const companyRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === companyInfo.region) || CANADIAN_REGIONS[0];
+  const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
+  const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
 
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'invoice' | 'quote' | 'contract'>('all');
   const [activeStatusTab, setActiveStatusTab] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'paid' | 'overdue'>('all');
@@ -332,10 +338,12 @@ export default function ClientDocumentsManager() {
         <div className="bg-[#12131A] border border-gray-850 p-4 rounded-xl relative overflow-hidden col-span-2">
           <div className="flex items-center gap-2 mb-2">
             <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-            <span className="text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">Numérotation Automatique CCQ</span>
+            <span className="text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">Numérotation Automatique{isQuebec ? ' CCQ' : ''}</span>
           </div>
           <p className="text-xs text-gray-300 leading-relaxed max-w-sm">
-            Numérotation séquentielle québécoise homologuée pour l\'assurance qualité et le suivi diligent des inspections APCHQ/CCQ.
+            {isQuebec
+              ? "Numérotation séquentielle québécoise homologuée pour l'assurance qualité et le suivi diligent des inspections APCHQ/CCQ."
+              : `Numérotation séquentielle homologuée pour l'assurance qualité et le suivi diligent des documents ${regionWithPreposition(companyRegion, companyCountry)}.`}
           </p>
         </div>
 
@@ -667,7 +675,7 @@ export default function ClientDocumentsManager() {
                     <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Adresse du Chantier :</span>
                     <p className="text-xs text-slate-800 font-semibold">{selectedDocForView.siteAddress || selectedDocForView.clientAddress}</p>
                     <div className="pt-2 text-[10px] text-slate-500">
-                      <p>Règlement : Québec CCQ de Pose</p>
+                      <p>Règlement : {isQuebec ? 'Québec CCQ de Pose' : `Normes de construction — ${regionName}`}</p>
                       <p>Retenue légale admissible : {selectedDocForView.holdbackPct}%</p>
                     </div>
                   </div>
@@ -744,7 +752,7 @@ export default function ClientDocumentsManager() {
                       {/* Labor */}
                       {selectedDocForView.labourLines && selectedDocForView.labourLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
-                          <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">Catégorie B : Main-d\'œuvre spécialisée CCQ</h5>
+                          <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">Catégorie B : Main-d'œuvre spécialisée{isQuebec ? ' CCQ' : ''}</h5>
                           <table className="w-full text-left text-[11px] border-collapse">
                             <thead>
                               <tr className="border-b border-amber-100 text-slate-400 font-mono">
@@ -847,7 +855,7 @@ export default function ClientDocumentsManager() {
 
                     {selectedDocForView.holdbackPct > 0 && (
                       <div className="flex justify-between items-center text-amber-800">
-                        <span>Retenue légale CCQ ({selectedDocForView.holdbackPct}%) :</span>
+                        <span>Retenue légale{isQuebec ? ' CCQ' : ''} ({selectedDocForView.holdbackPct}%) :</span>
                         <span className="font-mono font-semibold">-{selectedDocForView.holdbackAmount.toFixed(2)}$</span>
                       </div>
                     )}
@@ -1250,7 +1258,7 @@ export default function ClientDocumentsManager() {
                     type="number"
                     value={holdbackPct}
                     onChange={e => setHoldbackPct(parseFloat(e.target.value) || 0)}
-                    placeholder="ex: 10 pour la CCQ"
+                    placeholder={isQuebec ? 'ex: 10 pour la CCQ' : 'ex: 10'}
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono text-amber-400"
                   />
                 </div>

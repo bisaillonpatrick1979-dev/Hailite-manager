@@ -109,18 +109,14 @@ export const translations = {
     xpConcs: "Chaque heure de travail rapporte 50 XP, chaque rapport de surface 350 XP !",
     
     // DecomptePaye
-    payCalculatorTitle: "Simulateur de Fiche de Paie (Québec - Déductions)",
     grossEarnings: "Gains brut",
     federalTax: "Impôt Fédéral estimé (15%)",
-    provincialTax: "Impôt Provincial (Qc) estimé (15%)",
-    cppRate: "RRQ / RPC estimé (6.4%)",
-    eiRate: "Assurance-Emploi (AE) (1.27%)",
     netEarnings: "Gains Net de poche",
     annualEstimate: "Estimation annuelle projetée",
     
     // AI Chat Agent
     aiAgentTitle: "Assistant IA Chantier Pro",
-    aiAgentSubtitle: "Posez-moi des questions sur les chantiers, les calculs de surface, les règles de conformité CCQ / CNESST ou l'inventaire !",
+    aiAgentSubtitle: "Posez-moi des questions sur les chantiers, les calculs de surface, les règles de conformité et de sécurité ou l'inventaire !",
     aiPlaceholder: "Comment calculer la surface d'un toit 2 versants ?",
     aiSend: "Envoyer",
     aiThinking: "Analyse en cours...",
@@ -236,21 +232,17 @@ export const translations = {
     xpConcs: "Each hour worked rewards 50 XP; each surface report rewards 350 XP!",
 
     // DecomptePaye
-    payCalculatorTitle: "Pay Slip Simulator (Quebec - Deductions)",
     grossEarnings: "Gross earnings",
     federalTax: "Estimated Federal Tax (15%)",
-    provincialTax: "Estimated Qc Tax (15%)",
-    cppRate: "Estimated RRQ / CPP (6.4%)",
-    eiRate: "Employment Insurance (EI) (1.27%)",
     netEarnings: "Net pocket earnings",
     annualEstimate: "Projected annual estimate",
 
     // AI Chat Agent
     aiAgentTitle: "Chantier Pro AI Assistant",
-    aiAgentSubtitle: "Ask me about project layout formulas, invoice totals, CCQ union standards, or materials stock!",
+    aiAgentSubtitle: "Ask me about project layout formulas, invoice totals, compliance and safety standards, or materials stock!",
     aiPlaceholder: "How is a two-sided pitched roof surface evaluated?",
     aiSend: "Send",
     aiThinking: "Analyzing...",
-    aiWarmWelcome: "Hello! I am the intelligent virtual assistant of **Hailite Xteriors**. I can help you draft orders, calculate metal sheet area sizes, or review CNESST health safety measures!",
+    aiWarmWelcome: "Hello! I am the intelligent virtual assistant of **Hailite Xteriors**. I can help you draft orders, calculate metal sheet area sizes, or review workplace health and safety measures!",
   }
 };

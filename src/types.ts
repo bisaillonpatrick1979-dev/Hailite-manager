@@ -176,8 +176,9 @@ export interface CompanyInfo {
   email: string;
   gstNumber: string; // TPS
   qstNumber: string; // TVQ
-  wcbNumber: string; // CNESST / WCB
+  wcbNumber: string; // CNESST / WCB / Workers' Comp registration
   bnNumber: string; // NEQ / BN
+  constructionLicenseNumber?: string; // ex: Permis RBQ (Québec) ou licence d'entrepreneur locale
   logo: string;
   interacEmail: string;
   bankDetails: {

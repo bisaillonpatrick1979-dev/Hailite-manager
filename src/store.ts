@@ -319,7 +319,7 @@ const initialHRAlerts: HRAlert[] = [
   {
     id: 'hr-2',
     type: 'danger',
-    title: 'Conformité CCQ expirée',
+    title: 'Certification professionnelle expirée',
     message: 'Le certificat de compétence de Stéphane Roy nécessite une mise à jour administrative (Expiré depuis 2 jours).',
     date: '2026-06-01T08:00:00Z',
     employeeId: 'emp-3',

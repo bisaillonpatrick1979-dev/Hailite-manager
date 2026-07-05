@@ -14,16 +14,19 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  const SYSTEM_INSTRUCTION = `
-    Tu es l'assistant d'IA intelligent d'une entreprise québécoise de pose de toiture et parement extérieur appelée "Hailite Xteriors".
+  function buildSystemInstruction(regionLabel?: string): string {
+    const location = regionLabel && regionLabel.trim() ? regionLabel.trim() : 'Amérique du Nord';
+    return `
+    Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${location}.
     L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
     Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
-    Tu connais la CCQ (Commission de la construction du Québec) et les réglementations CNESST.
-    Donne des conseils professionnels, clairs et utilise des termes québécois quand approprié (ex: "Chantier", "Pièce", "Bardeaux", "Soufflage").
+    Base tes réponses de conformité, de sécurité et de charges sociales sur les règles applicables en ${location} — ne présume jamais que l'entreprise est au Québec à moins que ce soit précisé.
+    Donne des conseils professionnels et clairs.
     Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
   `;
+  }
 
-  async function callGemini(message: string, apiKey: string): Promise<string> {
+  async function callGemini(message: string, apiKey: string, systemInstruction: string): Promise<string> {
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -31,7 +34,7 @@ async function startServer() {
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
       contents: [
-        { role: 'user', parts: [{ text: `Système: ${SYSTEM_INSTRUCTION}\n\nClient message: ${message}` }] }
+        { role: 'user', parts: [{ text: `Système: ${systemInstruction}\n\nClient message: ${message}` }] }
       ],
     });
     return response.text || '';
@@ -46,7 +49,7 @@ async function startServer() {
     }
   }
 
-  async function callAnthropic(message: string, apiKey: string): Promise<string> {
+  async function callAnthropic(message: string, apiKey: string, systemInstruction: string): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -57,7 +60,7 @@ async function startServer() {
       body: JSON.stringify({
         model: 'claude-sonnet-5',
         max_tokens: 1024,
-        system: SYSTEM_INSTRUCTION,
+        system: systemInstruction,
         messages: [{ role: 'user', content: message }]
       })
     });
@@ -68,7 +71,7 @@ async function startServer() {
     return data?.content?.[0]?.text || '';
   }
 
-  async function callOpenAI(message: string, apiKey: string): Promise<string> {
+  async function callOpenAI(message: string, apiKey: string, systemInstruction: string): Promise<string> {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -78,7 +81,7 @@ async function startServer() {
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: SYSTEM_INSTRUCTION },
+          { role: 'system', content: systemInstruction },
           { role: 'user', content: message }
         ]
       })
@@ -105,10 +108,11 @@ async function startServer() {
   // API Route for AI Agent chat (Gemini / Anthropic / OpenAI)
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message, provider, apiKey: clientApiKey } = req.body;
+      const { message, provider, apiKey: clientApiKey, regionLabel } = req.body;
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
       const envKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
       const apiKey = (clientApiKey && clientApiKey.trim()) || envKey;
+      const systemInstruction = buildSystemInstruction(regionLabel);
 
       if (!apiKey || apiKey.trim() === '') {
         return res.json({
@@ -119,11 +123,11 @@ async function startServer() {
 
       let text = '';
       if (selectedProvider === 'anthropic') {
-        text = await callAnthropic(message, apiKey);
+        text = await callAnthropic(message, apiKey, systemInstruction);
       } else if (selectedProvider === 'openai') {
-        text = await callOpenAI(message, apiKey);
+        text = await callOpenAI(message, apiKey, systemInstruction);
       } else {
-        text = await callGemini(message, apiKey);
+        text = await callGemini(message, apiKey, systemInstruction);
       }
 
       return res.json({ reply: text });
