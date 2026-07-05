@@ -104,14 +104,18 @@ export interface Supplier {
   notes?: string;
 }
 
+export type CatalogueUnit = 'pi2' | 'pi_lin' | 'boite' | 'rouleau' | 'unite' | 'lot';
+
 export interface CatalogueMaterial {
   id: string;
   name: string;
   emoji: string;
-  pricePerSqFt: number; // Prix payé au sous-traitant / pi² (utilisé pour calculer la paie en mode Surface)
-  supplierPrice?: number; // Coût payé au fournisseur / pi²
-  clientPrice?: number; // Prix chargé au client / pi²
+  pricePerSqFt: number; // Prix payé au sous-traitant / unité (utilisé pour calculer la paie en mode Surface)
+  supplierPrice?: number; // Coût payé au fournisseur / unité
+  clientPrice?: number; // Prix chargé au client / unité
   supplierId?: string; // Référence vers Supplier.id
+  unit?: CatalogueUnit; // Unité de vente : pi², pi linéaire, boîte, rouleau, unité, lot (défaut : pi2)
+  unitNote?: string; // Précision libre, ex: "≈340 pièces/boîte"
   imageUrl?: string;
   imageAlt?: string;
 }

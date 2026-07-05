@@ -25,6 +25,11 @@ function makeIconAvatar(emoji: string, bg: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+// Libellés courts pour les unités de vente du catalogue (voir CatalogueManager)
+const CATALOGUE_UNIT_LABELS: Record<string, string> = {
+  pi2: 'pi²', pi_lin: 'pi lin.', boite: 'boîte', rouleau: 'rouleau', unite: 'unité', lot: 'lot'
+};
+
 const EMPLOYEE_PRESET_AVATARS = [
   { url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80', label: 'Marc (Charpentier)' },
   { url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&q=80', label: 'Jessica (Bureau)' },
@@ -164,7 +169,7 @@ export default function App() {
   const [showPunchOutModal, setShowPunchOutModal] = useState<boolean>(false);
   
   // Punch-Out Surface materials reporting state
-  const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string }>>([]);
+  const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string; unit: string }>>([]);
 
   // Admin CRUD wizard states
   const [pendingEmployeeAvatar, setPendingEmployeeAvatar] = useState<string>('');
@@ -448,13 +453,13 @@ export default function App() {
     setShowPunchOutModal(false);
   };
 
-  const handleAddMaterialToReport = (materialName: string, quantity: number, unitPrice: number, emoji: string) => {
+  const handleAddMaterialToReport = (materialName: string, quantity: number, unitPrice: number, emoji: string, unit: string) => {
     if (quantity <= 0) return;
     const existing = reportedMaterials.find(m => m.name === materialName);
     if (existing) {
       setReportedMaterials(reportedMaterials.map(m => m.name === materialName ? { ...m, quantity: m.quantity + quantity } : m));
     } else {
-      setReportedMaterials([...reportedMaterials, { name: materialName, quantity, unitPrice, emoji }]);
+      setReportedMaterials([...reportedMaterials, { name: materialName, quantity, unitPrice, emoji, unit }]);
     }
   };
 
@@ -1914,10 +1919,10 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Grid items */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Liste linéaire : un matériau par ligne, pleine largeur */}
+                    <div className="flex flex-col gap-3">
                       {inventory.map(item => (
-                        <div key={item.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-xl flex items-center justify-between gap-4 transition duration-200">
+                        <div key={item.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition duration-200">
                           <div className="flex items-center gap-3">
                             <span className="text-3xl filter drop-shadow">{item.emoji}</span>
                             <div>
@@ -5996,17 +6001,20 @@ export default function App() {
                   <div className="space-y-2">
                     {/* Catalog Material choices quick click */}
                     <div className="grid grid-cols-2 gap-2">
-                      {catalogue.slice(0, 4).map(catItem => (
-                        <button
-                          key={catItem.id}
-                          type="button"
-                          onClick={() => handleAddMaterialToReport(catItem.name, 10, catItem.pricePerSqFt, catItem.emoji)}
-                          className="p-1 px-2.5 bg-gray-800 hover:bg-gray-750 text-white rounded text-[10px] text-left transition truncate cursor-pointer flex items-center gap-1.5"
-                        >
-                          <span className="text-sm">{catItem.emoji}</span>
-                          <span>+10 pi² {catItem.name} ({catItem.pricePerSqFt}$/pi²)</span>
-                        </button>
-                      ))}
+                      {catalogue.slice(0, 4).map(catItem => {
+                        const unitLabel = CATALOGUE_UNIT_LABELS[catItem.unit || 'pi2'];
+                        return (
+                          <button
+                            key={catItem.id}
+                            type="button"
+                            onClick={() => handleAddMaterialToReport(catItem.name, 10, catItem.pricePerSqFt, catItem.emoji, unitLabel)}
+                            className="p-1 px-2.5 bg-gray-800 hover:bg-gray-750 text-white rounded text-[10px] text-left transition truncate cursor-pointer flex items-center gap-1.5"
+                          >
+                            <span className="text-sm">{catItem.emoji}</span>
+                            <span>+10 {unitLabel} {catItem.name} ({catItem.pricePerSqFt}$/{unitLabel})</span>
+                          </button>
+                        );
+                      })}
                     </div>
 
                       {/* Reported list items */}
@@ -6016,7 +6024,7 @@ export default function App() {
                         ) : (
                           reportedMaterials.map((m, idx) => (
                             <div key={idx} className="flex justify-between items-center text-gray-300 font-mono">
-                              <span className="font-sans">{m.emoji} {m.name} ({m.quantity} pi²)</span>
+                              <span className="font-sans">{m.emoji} {m.name} ({m.quantity} {m.unit || 'pi²'})</span>
                               <span className="font-bold">{(m.quantity * m.unitPrice).toFixed(2)}$</span>
                             </div>
                           ))

@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import useAppStore from '../store';
-import { CatalogueMaterial } from '../types';
+import { CatalogueMaterial, CatalogueUnit } from '../types';
 import { Trash, Edit, Check, X, Camera } from 'lucide-react';
 
 const IMAGE_KEYWORDS: { keywords: string[]; url: string; alt: string }[] = [
@@ -96,6 +96,41 @@ function suggestEmoji(name: string): string {
   return '📦';
 }
 
+const UNIT_META: Record<CatalogueUnit, { short: string; full: string }> = {
+  pi2: { short: 'pi²', full: 'Pied carré (pi²)' },
+  pi_lin: { short: 'pi lin.', full: 'Pied linéaire (pi lin.)' },
+  boite: { short: 'boîte', full: 'Boîte' },
+  rouleau: { short: 'rouleau', full: 'Rouleau' },
+  unite: { short: 'unité', full: 'Unité' },
+  lot: { short: 'lot', full: 'Lot' },
+};
+
+const UNIT_OPTIONS: CatalogueUnit[] = ['pi2', 'pi_lin', 'boite', 'rouleau', 'unite', 'lot'];
+
+// Suggère une unité de vente courante à partir du nom (boîte, rouleau, pied linéaire...),
+// avec une note de contenu quand la quantité par boîte est connue d'usage.
+function suggestUnit(name: string): { unit: CatalogueUnit; unitNote: string } | null {
+  const n = name.toLowerCase();
+  if (n.includes('flashing') || n.includes('solin') || n.includes('tôle de rive') || n.includes('fascia')) {
+    return { unit: 'pi_lin', unitNote: '' };
+  }
+  if (n.includes('clou') || n.includes('vis') || n.includes('agrafe') || n.includes('attache')) {
+    return { unit: 'boite', unitNote: '' };
+  }
+  if (n.includes('siding') || n.includes('revêtement') || n.includes('parement')) {
+    return n.includes('premium')
+      ? { unit: 'boite', unitNote: '≈340 pièces/boîte' }
+      : { unit: 'boite', unitNote: '≈240 pièces/boîte' };
+  }
+  if (n.includes('bardeau') || n.includes('shingle')) {
+    return { unit: 'boite', unitNote: '' };
+  }
+  if (n.includes('membrane') || n.includes('sous-couche') || n.includes('pare-air') || n.includes('housewrap') || n.includes('tyvek')) {
+    return { unit: 'rouleau', unitNote: '' };
+  }
+  return null;
+}
+
 function MaterialImage({ mat, className }: { mat: { name: string; emoji?: string; imageUrl?: string; imageAlt?: string }; className?: string }) {
   const [error, setError] = useState(false);
   const box = className || 'w-full h-[90px] mb-2';
@@ -125,11 +160,13 @@ type CatalogueFormState = {
   supplierPrice: number;
   clientPrice: number;
   supplierId: string;
+  unit: CatalogueUnit;
+  unitNote: string;
   imageUrl: string;
   imageAlt: string;
 };
 
-const EMPTY_FORM: CatalogueFormState = { name: '', emoji: '🪵', pricePerSqFt: 5.0, supplierPrice: 0, clientPrice: 0, supplierId: '', imageUrl: '', imageAlt: '' };
+const EMPTY_FORM: CatalogueFormState = { name: '', emoji: '🪵', pricePerSqFt: 5.0, supplierPrice: 0, clientPrice: 0, supplierId: '', unit: 'pi2', unitNote: '', imageUrl: '', imageAlt: '' };
 
 function PhotoCaptureField({ imageUrl, onChange }: { imageUrl: string; onChange: (url: string, alt: string) => void }) {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -211,6 +248,13 @@ export default function CatalogueManager() {
     if (updated.emoji === '🪵' || !updated.emoji) {
       updated.emoji = suggestEmoji(name);
     }
+    if (updated.unit === 'pi2' && !updated.unitNote) {
+      const unitSuggestion = suggestUnit(name);
+      if (unitSuggestion) {
+        updated.unit = unitSuggestion.unit;
+        updated.unitNote = unitSuggestion.unitNote;
+      }
+    }
     setForm(updated);
   };
 
@@ -223,6 +267,8 @@ export default function CatalogueManager() {
       supplierPrice: mat.supplierPrice || 0,
       clientPrice: mat.clientPrice || 0,
       supplierId: mat.supplierId || '',
+      unit: mat.unit || 'pi2',
+      unitNote: mat.unitNote || '',
       imageUrl: mat.imageUrl || '',
       imageAlt: mat.imageAlt || ''
     });
@@ -237,6 +283,8 @@ export default function CatalogueManager() {
       supplierPrice: Number(editForm.supplierPrice),
       clientPrice: Number(editForm.clientPrice),
       supplierId: editForm.supplierId || undefined,
+      unit: editForm.unit,
+      unitNote: editForm.unitNote || undefined,
       imageUrl: editForm.imageUrl || undefined,
       imageAlt: editForm.imageAlt || editForm.name || undefined
     });
@@ -251,38 +299,69 @@ export default function CatalogueManager() {
   };
 
   const supplierName = (id?: string) => suppliers.find(s => s.id === id)?.name;
+  const unitShort = (unit?: CatalogueUnit) => UNIT_META[unit || 'pi2'].short;
 
-  const renderPriceFields = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => (
-    <div className="grid grid-cols-3 gap-2">
+  const renderUnitField = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => (
+    <div className="grid grid-cols-2 gap-2">
       <div className="space-y-1">
-        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Fournisseur ($/pi²)</label>
-        <input
-          type="number" step="0.05"
-          className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
-          value={form.supplierPrice}
-          onChange={(e) => setForm({ ...form, supplierPrice: Number(e.target.value) })}
-        />
+        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Unité de vente</label>
+        <select
+          className="w-full p-1.5 bg-gray-950 text-white text-xs rounded border border-gray-850"
+          value={form.unit}
+          onChange={(e) => setForm({ ...form, unit: e.target.value as CatalogueUnit })}
+        >
+          {UNIT_OPTIONS.map(u => (
+            <option key={u} value={u}>{UNIT_META[u].full}</option>
+          ))}
+        </select>
       </div>
       <div className="space-y-1">
-        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Sous-traitant ($/pi²)</label>
+        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Précision (optionnel)</label>
         <input
-          type="number" step="0.05"
+          type="text"
+          placeholder="Ex: ≈340 pièces/boîte"
           className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
-          value={form.pricePerSqFt}
-          onChange={(e) => setForm({ ...form, pricePerSqFt: Number(e.target.value) })}
-        />
-      </div>
-      <div className="space-y-1">
-        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Client ($/pi²)</label>
-        <input
-          type="number" step="0.05"
-          className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
-          value={form.clientPrice}
-          onChange={(e) => setForm({ ...form, clientPrice: Number(e.target.value) })}
+          value={form.unitNote}
+          onChange={(e) => setForm({ ...form, unitNote: e.target.value })}
         />
       </div>
     </div>
   );
+
+  const renderPriceFields = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => {
+    const u = UNIT_META[form.unit].short;
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        <div className="space-y-1">
+          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Fournisseur ({`$${u}`})</label>
+          <input
+            type="number" step="0.05"
+            className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
+            value={form.supplierPrice}
+            onChange={(e) => setForm({ ...form, supplierPrice: Number(e.target.value) })}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Sous-traitant ({`$${u}`})</label>
+          <input
+            type="number" step="0.05"
+            className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
+            value={form.pricePerSqFt}
+            onChange={(e) => setForm({ ...form, pricePerSqFt: Number(e.target.value) })}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Client ({`$${u}`})</label>
+          <input
+            type="number" step="0.05"
+            className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
+            value={form.clientPrice}
+            onChange={(e) => setForm({ ...form, clientPrice: Number(e.target.value) })}
+          />
+        </div>
+      </div>
+    );
+  };
 
   const renderSupplierSelect = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => (
     <div className="space-y-1">
@@ -424,6 +503,10 @@ export default function CatalogueManager() {
             </div>
 
             <div className="col-span-3">
+              {renderUnitField(newForm, setNewForm)}
+            </div>
+
+            <div className="col-span-3">
               {renderPriceFields(newForm, setNewForm)}
             </div>
 
@@ -469,6 +552,7 @@ export default function CatalogueManager() {
                 />
                 <PhotoCaptureField imageUrl={editForm.imageUrl} onChange={(url, alt) => setEditForm({ ...editForm, imageUrl: url, imageAlt: alt })} />
                 {renderSupplierSelect(editForm, setEditForm)}
+                {renderUnitField(editForm, setEditForm)}
                 {renderPriceFields(editForm, setEditForm)}
                 <div className="flex justify-end gap-2 pt-2 border-t border-gray-850">
                   <button
@@ -497,9 +581,11 @@ export default function CatalogueManager() {
                   <span>{cat.emoji}</span>
                   <span className="truncate">{cat.name}</span>
                 </h5>
-                {supplierName(cat.supplierId) && (
-                  <p className="text-[10px] text-gray-500 font-mono mt-0.5">🚚 {supplierName(cat.supplierId)}</p>
-                )}
+                <p className="text-[10px] text-gray-500 font-mono mt-0.5">
+                  {supplierName(cat.supplierId) && <span>🚚 {supplierName(cat.supplierId)} • </span>}
+                  <span className="uppercase">/{unitShort(cat.unit)}</span>
+                  {cat.unitNote && <span> • {cat.unitNote}</span>}
+                </p>
               </div>
 
               <div className="grid grid-cols-3 sm:flex gap-1.5 font-mono text-[10px] flex-shrink-0">
@@ -517,8 +603,8 @@ export default function CatalogueManager() {
                 </div>
               </div>
 
-              <p className={`text-[11px] font-black flex-shrink-0 sm:w-28 text-left sm:text-right ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                Marge : {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$/pi²
+              <p className={`text-[11px] font-black flex-shrink-0 sm:w-32 text-left sm:text-right ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                Marge : {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$/{unitShort(cat.unit)}
               </p>
 
               {canManage && (
