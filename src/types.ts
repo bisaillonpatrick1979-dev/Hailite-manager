@@ -39,6 +39,20 @@ export interface Employee {
   annualSalary?: number;
 }
 
+export interface ProjectTask {
+  id: string;
+  text: string; // ex: "Refaire le revêtement côté gauche"
+  done: boolean;
+  priority: 'normal' | 'critique';
+  createdAt: string;
+}
+
+export interface ProjectTool {
+  id: string;
+  name: string; // ex: "Cloueuse pneumatique"
+  brought: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -49,6 +63,8 @@ export interface Project {
   radius: number; // default: 100 meters
   assignedEmployees: string[]; // Employee IDs
   status: 'active' | 'completed' | 'on-hold';
+  tasks?: ProjectTask[]; // Liste de tâches à cocher pour ce chantier
+  tools?: ProjectTool[]; // Outils à apporter sur le chantier
 }
 
 export interface SurfaceMaterialInput {

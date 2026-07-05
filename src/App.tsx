@@ -9,6 +9,7 @@ import MotivationTab from './components/MotivationTab';
 import ClientDocumentsManager from './components/ClientDocumentsManager';
 import EmployeeAvatar from './components/EmployeeAvatar';
 import CatalogueManager from './components/CatalogueManager';
+import ProjectTasksAndTools from './components/ProjectTasksAndTools';
 import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
@@ -999,6 +1000,16 @@ export default function App() {
                       )}
                     </div>
 
+                    {/* Checklist Tâches & Outils du chantier actif */}
+                    {activePunchSession && (() => {
+                      const activeProject = projects.find(p => p.id === activePunchSession.projectId);
+                      return activeProject ? (
+                        <div className="w-full max-w-md mb-8 -mt-4 bg-gray-950/60 border border-gray-800 rounded-2xl p-3">
+                          <ProjectTasksAndTools project={activeProject} defaultOpen bordered={false} />
+                        </div>
+                      ) : null;
+                    })()}
+
                     {/* CENTRAL PUNCH BUTTON with Theme Styles */}
                     <div className="relative w-[230px] h-[230px] flex items-center justify-center mb-8">
                       {/* Concentric ambient backing */}
@@ -1761,6 +1772,8 @@ export default function App() {
                           </div>
                         </div>
                       )}
+
+                      <ProjectTasksAndTools project={proj} />
                     </div>
                   ))}
                 </div>
