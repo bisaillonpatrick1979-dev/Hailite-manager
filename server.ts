@@ -14,50 +14,122 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // API Route for Gemini Agent chat
+  const SYSTEM_INSTRUCTION = `
+    Tu es l'assistant d'IA intelligent d'une entreprise québécoise de pose de toiture et parement extérieur appelée "Hailite Xteriors".
+    L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
+    Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
+    Tu connais la CCQ (Commission de la construction du Québec) et les réglementations CNESST.
+    Donne des conseils professionnels, clairs et utilise des termes québécois quand approprié (ex: "Chantier", "Pièce", "Bardeaux", "Soufflage").
+    Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
+  `;
+
+  async function callGemini(message: string, apiKey: string): Promise<string> {
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+    });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: [
+        { role: 'user', parts: [{ text: `Système: ${SYSTEM_INSTRUCTION}\n\nClient message: ${message}` }] }
+      ],
+    });
+    return response.text || '';
+  }
+
+  async function parseJsonSafely(res: Response, providerLabel: string): Promise<any> {
+    const raw = await res.text();
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new Error(`Réponse invalide de l'API ${providerLabel} (HTTP ${res.status}). Vérifiez votre connexion ou réessayez plus tard.`);
+    }
+  }
+
+  async function callAnthropic(message: string, apiKey: string): Promise<string> {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 1024,
+        system: SYSTEM_INSTRUCTION,
+        messages: [{ role: 'user', content: message }]
+      })
+    });
+    const data = await parseJsonSafely(res, 'Anthropic');
+    if (!res.ok) {
+      throw new Error(data?.error?.message || `Anthropic API error (${res.status})`);
+    }
+    return data?.content?.[0]?.text || '';
+  }
+
+  async function callOpenAI(message: string, apiKey: string): Promise<string> {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTION },
+          { role: 'user', content: message }
+        ]
+      })
+    });
+    const data = await parseJsonSafely(res, 'OpenAI');
+    if (!res.ok) {
+      throw new Error(data?.error?.message || `OpenAI API error (${res.status})`);
+    }
+    return data?.choices?.[0]?.message?.content || '';
+  }
+
+  const PROVIDER_ENV_KEYS: Record<string, string> = {
+    gemini: 'GEMINI_API_KEY',
+    anthropic: 'ANTHROPIC_API_KEY',
+    openai: 'OPENAI_API_KEY'
+  };
+
+  const PROVIDER_LABELS: Record<string, string> = {
+    gemini: 'Google Gemini',
+    anthropic: 'Anthropic Claude',
+    openai: 'OpenAI'
+  };
+
+  // API Route for AI Agent chat (Gemini / Anthropic / OpenAI)
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message } = req.body;
-      const apiKey = process.env.GEMINI_API_KEY;
+      const { message, provider, apiKey: clientApiKey } = req.body;
+      const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
+      const envKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
+      const apiKey = (clientApiKey && clientApiKey.trim()) || envKey;
 
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
+      if (!apiKey || apiKey.trim() === '') {
         return res.json({
-          reply: "🤖 L'assistant IA fonctionne en mode simulation locale car la clé GEMINI_API_KEY n'est pas encore configurée dans vos Variables d'Environnement / Secrets. Pour l'activer, ajoutez la clé de l'API Gemini dans le panneau latérale de configuration.",
+          reply: `🤖 L'assistant IA fonctionne en mode simulation locale car aucune clé API n'est configurée pour ${PROVIDER_LABELS[selectedProvider]}. Ajoutez votre clé API dans Réglages > Assistant IA pour l'activer.`,
           simulated: true
         });
       }
 
-      const ai = new GoogleGenAI({
-        apiKey: apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
+      let text = '';
+      if (selectedProvider === 'anthropic') {
+        text = await callAnthropic(message, apiKey);
+      } else if (selectedProvider === 'openai') {
+        text = await callOpenAI(message, apiKey);
+      } else {
+        text = await callGemini(message, apiKey);
+      }
 
-      // Prepare system instruction
-      const systemInstruction = `
-        Tu es l'assistant d'IA intelligent d'une entreprise québécoise de pose de toiture et parement extérieur appelée "Hailite Xteriors".
-        L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
-        Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
-        Tu connais la CCQ (Commission de la construction du Québec) et les réglementations CNESST.
-        Donne des conseils professionnels, clairs et utilise des termes québécois quand approprié (ex: "Chantier", "Pièce", "Bardeaux", "Soufflage").
-        Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: [
-          { role: 'user', parts: [{ text: `Système: ${systemInstruction}\n\nClient message: ${message}` }] }
-        ],
-      });
-
-      const text = response.text;
       return res.json({ reply: text });
     } catch (error: any) {
       console.error('Error on /api/chat:', error);
-      return res.status(500).json({ error: error.message || 'Error occurred while calling Gemini API' });
+      return res.status(500).json({ error: error.message || 'Error occurred while calling the AI provider' });
     }
   });
 

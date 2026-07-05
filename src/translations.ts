@@ -90,6 +90,7 @@ export const translations = {
     setTabComptabilite: "📊 Comptab.",
     setTabGeofencing: "📍 Géofenc.",
     setTabRH: "🚨 RH",
+    setTabAI: "🤖 Assistant IA",
 
     // Settings elements
     addBtn: "Ajouter",
@@ -216,6 +217,7 @@ export const translations = {
     setTabComptabilite: "📊 Accounting",
     setTabGeofencing: "📍 Geofencing",
     setTabRH: "🚨 HR",
+    setTabAI: "🤖 AI Assistant",
 
     // Settings elements
     addBtn: "Add",

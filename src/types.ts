@@ -95,11 +95,23 @@ export interface Invoice {
   taxIncluded: boolean;
 }
 
+export interface Supplier {
+  id: string;
+  name: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+}
+
 export interface CatalogueMaterial {
   id: string;
   name: string;
   emoji: string;
-  pricePerSqFt: number; // Price per square foot / unit
+  pricePerSqFt: number; // Prix payé au sous-traitant / pi² (utilisé pour calculer la paie en mode Surface)
+  supplierPrice?: number; // Coût payé au fournisseur / pi²
+  clientPrice?: number; // Prix chargé au client / pi²
+  supplierId?: string; // Référence vers Supplier.id
   imageUrl?: string;
   imageAlt?: string;
 }
@@ -185,6 +197,10 @@ export interface CompanyInfo {
   paymentDepositPct?: number;
   paymentMidPct?: number;
   paymentFinalPct?: number;
+
+  // Assistant IA
+  aiProvider?: 'gemini' | 'anthropic' | 'openai';
+  aiApiKey?: string;
 }
 
 export interface WeeklyGoal {

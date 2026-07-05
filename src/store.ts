@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { 
-  Employee, Project, PunchSession, Invoice, CatalogueMaterial, 
-  InventoryItem, SupplierOrder, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
+import {
+  Employee, Project, PunchSession, Invoice, CatalogueMaterial,
+  InventoryItem, SupplierOrder, Supplier, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
   WeeklyGoal, MotivationTeam, MotivationGoal,
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine, GCPDocumentPaymentHistoryEntry,
   ExpenseRecord, PayrollPayment
@@ -14,6 +14,7 @@ interface AppState {
   punchSessions: PunchSession[];
   invoices: Invoice[];
   catalogue: CatalogueMaterial[];
+  suppliers: Supplier[];
   inventory: InventoryItem[];
   orders: SupplierOrder[];
   clients: Client[];
@@ -69,6 +70,11 @@ interface AppState {
   addCatalogueMaterial: (item: Omit<CatalogueMaterial, 'id'>) => void;
   updateCatalogueMaterial: (item: CatalogueMaterial) => void;
   deleteCatalogueMaterial: (id: string) => void;
+
+  // Supplier CRUD
+  addSupplier: (supplier: Omit<Supplier, 'id'>) => void;
+  updateSupplier: (supplier: Supplier) => void;
+  deleteSupplier: (id: string) => void;
 
   // Inventory CRUD
   addInventoryItem: (item: Omit<InventoryItem, 'id'>) => void;
@@ -242,6 +248,12 @@ const initialCatalogue: CatalogueMaterial[] = [
   { id: 'cat-4', name: 'Flashing en aluminium brossé', emoji: '📐', pricePerSqFt: 4.80, imageUrl: "https://images.unsplash.com/photo-1523217582562-09d0def993a6?w=400&q=80", imageAlt: "Tôle de rive aluminium grise au bord de toit" },
   { id: 'cat-5', name: 'Soffites d\'aluminium ventilés', emoji: '🧇', pricePerSqFt: 3.90, imageUrl: "https://images.unsplash.com/photo-1503174971373-b1f69850bded?w=400&q=80", imageAlt: "Soffite en vinyle blanc ventilé sous les avant-toits" },
   { id: 'cat-6', name: 'Membrane pare-air Tyvek Roll', emoji: '💨', pricePerSqFt: 2.10, imageUrl: "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=400&q=80", imageAlt: "Rouleau de membrane pare-air blanche" }
+];
+
+const initialSuppliers: Supplier[] = [
+  { id: 'sup-1', name: 'Distribution Pro-Toit Ltée', contactName: 'Marie-Claude Fournier', phone: '450-661-2200', email: 'ventes@protoit.ca' },
+  { id: 'sup-2', name: 'Aciers Québec Inc.', contactName: 'Réjean Bouchard', phone: '514-388-4477', email: 'commandes@aciersquebec.ca' },
+  { id: 'sup-3', name: 'Rona l\'Entrepôt', phone: '1-866-283-3846' }
 ];
 
 const initialInventory: InventoryItem[] = [
@@ -673,6 +685,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   punchSessions: getSavedState('gcp_punchSessions', initialPunchSessions),
   invoices: getSavedState('gcp_invoices', initialInvoices),
   catalogue: getSavedState('gcp_catalogue', initialCatalogue),
+  suppliers: getSavedState('gcp_suppliers', initialSuppliers),
   inventory: getSavedState('gcp_inventory', initialInventory),
   orders: getSavedState('gcp_orders', initialOrders),
   clients: getSavedState('gcp_clients', initialClients),
@@ -1077,6 +1090,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = catalogue.filter(c => c.id !== id);
     set({ catalogue: updated });
     saveState('gcp_catalogue', updated);
+  },
+
+  // Supplier CRUD
+  addSupplier: (supplier) => {
+    const { suppliers } = get();
+    const newSupplier: Supplier = {
+      ...supplier,
+      id: `sup-${Date.now()}`
+    };
+    const updated = [...suppliers, newSupplier];
+    set({ suppliers: updated });
+    saveState('gcp_suppliers', updated);
+  },
+
+  updateSupplier: (supplier) => {
+    const { suppliers } = get();
+    const updated = suppliers.map(s => s.id === supplier.id ? supplier : s);
+    set({ suppliers: updated });
+    saveState('gcp_suppliers', updated);
+  },
+
+  deleteSupplier: (id) => {
+    const { suppliers } = get();
+    const updated = suppliers.filter(s => s.id !== id);
+    set({ suppliers: updated });
+    saveState('gcp_suppliers', updated);
   },
 
   // Inventory CRUD

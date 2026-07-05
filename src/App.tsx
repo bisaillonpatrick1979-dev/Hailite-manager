@@ -8,86 +8,14 @@ import OnboardingScreen from './components/OnboardingScreen';
 import MotivationTab from './components/MotivationTab';
 import ClientDocumentsManager from './components/ClientDocumentsManager';
 import EmployeeAvatar from './components/EmployeeAvatar';
-import { 
+import CatalogueManager from './components/CatalogueManager';
+import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, Eye, EyeOff, CheckSquare, Dumbbell,
   Play, Pause, Award, HelpCircle, Phone, Mail, Coins
 } from 'lucide-react';
-
-const IMAGE_KEYWORDS: { keywords: string[]; url: string; alt: string }[] = [
-  // Toiture
-  { keywords: ['bardeau','shingle','asphalte','architectural'],
-    url: 'https://images.unsplash.com/photo-1625756975-c71c4ff88df1?w=400&q=80',
-    alt: 'Bardeaux d\'asphalte sur toiture' },
-  { keywords: ['sous-couche','feltex','synthétique'],
-    url: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80',
-    alt: 'Rouleau de sous-couche pour toiture' },
-  { keywords: ['ice','water','shield','membrane'],
-    url: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=400&q=80',
-    alt: 'Membrane ice and water shield' },
-  { keywords: ['ventilation','faîte','ridge'],
-    url: 'https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=400&q=80',
-    alt: 'Ventilation de faîte de toiture' },
-  // Siding
-  { keywords: ['hardie','fibrociment','fibre de ciment','cement'],
-    url: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&q=80',
-    alt: 'Revêtement en fibre de ciment' },
-  { keywords: ['vinyle','vinyl','clapboard','siding'],
-    url: 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&q=80',
-    alt: 'Siding en vinyle blanc' },
-  { keywords: ['lp','smartside','bois composite'],
-    url: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80',
-    alt: 'LP SmartSide revêtement composite' },
-  { keywords: ['tyvek','pare-air','housewrap'],
-    url: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=400&q=80',
-    alt: 'Membrane pare-air Tyvek' },
-  { keywords: ['osb','panneau','contreplaqué','plywood'],
-    url: 'https://images.unsplash.com/photo-1565008576549-57569a49371d?w=400&q=80',
-    alt: 'Panneaux OSB empilés' },
-  // Soffit / Fascia
-  { keywords: ['soffite','soffit'],
-    url: 'https://images.unsplash.com/photo-1503174971373-b1f69850bded?w=400&q=80',
-    alt: 'Soffite en vinyle ventilé' },
-  { keywords: ['fascia'],
-    url: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=400&q=80',
-    alt: 'Fascia aluminium blanc' },
-  // Fixations
-  { keywords: ['clou','nail'],
-    url: 'https://images.unsplash.com/photo-1590598016683-c8e8b8e6c99a?w=400&q=80',
-    alt: 'Clous galvanisés pour construction' },
-  { keywords: ['vis','screw','inox'],
-    url: 'https://images.unsplash.com/photo-1609220136736-443140cffec6?w=400&q=80',
-    alt: 'Vis en acier inoxydable' },
-  { keywords: ['agrafe','staple'],
-    url: 'https://images.unsplash.com/photo-1590041794748-2d8eb73a571c?w=400&q=80',
-    alt: 'Agrafes métalliques' },
-  // Étanchéité
-  { keywords: ['calfeutrant','caulk','silicone'],
-    url: 'https://images.unsplash.com/photo-1565008576549-57569a49371d?w=400&q=80',
-    alt: 'Tube de calfeutrant extérieur' },
-  { keywords: ['mousse','foam'],
-    url: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&q=80',
-    alt: 'Mousse polyuréthane expansive' },
-  { keywords: ['ruban','tape'],
-    url: 'https://images.unsplash.com/photo-1530587191325-3db32d826c18?w=400&q=80',
-    alt: 'Ruban adhésif pour membrane' },
-  // Structure
-  { keywords: ['planche','board','2x4','2x6','2x8','bois'],
-    url: 'https://images.unsplash.com/photo-1541123437800-1bb1317badc2?w=400&q=80',
-    alt: 'Planches de bois SPF empilées' },
-  // Main-d'oeuvre
-  { keywords: ['installation','pose','install'],
-    url: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80',
-    alt: 'Ouvrier installant du revêtement' },
-  { keywords: ['dépose','removal','enlèvement'],
-    url: 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=400&q=80',
-    alt: 'Dépose de l\'ancien revêtement' },
-  { keywords: ['toiture','roofing','couvreur'],
-    url: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=400&q=80',
-    alt: 'Couvreur posant des bardeaux' },
-];
 
 // Petites icônes-avatars générées localement (SVG en data URI) : aucune
 // dépendance réseau, donc toujours disponibles même hors ligne, en plus des
@@ -178,55 +106,13 @@ const TOUR_STEPS = [
   }
 ];
 
-function suggestImageUrl(name: string): { url: string; alt: string } | null {
-  const n = name.toLowerCase();
-  const match = IMAGE_KEYWORDS.find(entry =>
-    entry.keywords.some(k => n.includes(k))
-  );
-  return match ? { url: match.url, alt: match.alt } : null;
-}
-
-function suggestEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes('bardeau') || n.includes('shingle') || n.includes('asphalte') || n.includes('toiture')) return '🏠';
-  if (n.includes('siding') || n.includes('vinyle') || n.includes('revêtement')) return '🧱';
-  if (n.includes('clou') || n.includes('vis') || n.includes('screw') || n.includes('nail')) return '🔩';
-  if (n.includes('membrane') || n.includes('tyvek') || n.includes('pare-air')) return '💨';
-  if (n.includes('soffite') || n.includes('fascia')) return '🧇';
-  if (n.includes('planche') || n.includes('bois') || n.includes('osb')) return '🪵';
-  if (n.includes('installation') || n.includes('pose') || n.includes('poseur') || n.includes('couvreur') || n.includes('travail')) return '👷';
-  return '📦';
-}
-
-function MaterialImage({ mat }: { mat: { name: string; emoji?: string; imageUrl?: string; imageAlt?: string } }) {
-  const [error, setError] = useState(false);
-
-  if (mat.imageUrl && !error) {
-    return (
-      <img
-        src={mat.imageUrl}
-        alt={mat.imageAlt || mat.name}
-        onError={() => setError(true)}
-        className="w-full h-[90px] object-cover rounded-lg mb-2 block border border-gray-800"
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
-  // Fallback : grand emoji centré
-  return (
-    <div className="w-full h-[90px] flex items-center justify-center text-4xl rounded-lg bg-gray-950 mb-2 border border-gray-850">
-      {mat.emoji || '📦'}
-    </div>
-  );
-}
-
 export default function App() {
   const {
     employees, projects, punchSessions, invoices, catalogue, inventory,
     orders, clients, companyInfo, hrAlerts, activeEmployee, currentLanguage,
     currentTheme, login, logout, setTheme, setLanguage, addEmployee, updateEmployee,
-    deleteEmployee, addProject, updateProject, deleteProject, addCatalogueMaterial,
-    updateCatalogueMaterial, deleteCatalogueMaterial, addInventoryItem, updateInventoryItem,
+    deleteEmployee, addProject, updateProject, deleteProject,
+    addInventoryItem, updateInventoryItem,
     deleteInventoryItem, addSupplierOrder, updateSupplierOrder, addClient, updateClient,
     deleteClient, updateCompanyInfo, resolveHRAlert, startPunchSession, pausePunchSession,
     resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
@@ -321,13 +207,11 @@ export default function App() {
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
   const [newClientForm, setNewClientForm] = useState({ name: '', company: '', email: '', phone: '', address: '' });
   const [newInventoryForm, setNewInventoryForm] = useState({ name: '', quantity: 10, unit: 'pqt', emoji: '📦', minThreshold: 5 });
-  const [newCatalogueForm, setNewCatalogueForm] = useState({ name: '', emoji: '🪵', pricePerSqFt: 5.0, imageUrl: '', imageAlt: '' });
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
 
   // Custom states for Inventory, Catalogue, Supplier Orders & App Tour
   const [inventorySubTab, setInventorySubTab] = useState<'stock' | 'catalogue'>('stock');
   const [showAddInventoryForm, setShowAddInventoryForm] = useState(false);
-  const [showAddCatalogueForm, setShowAddCatalogueForm] = useState(false);
   const [showAddOrderForm, setShowAddOrderForm] = useState(false);
   const [orderSupplier, setOrderSupplier] = useState('');
   const [orderItems, setOrderItems] = useState<Array<{ name: string; quantity: number; price: number }>>([{ name: '', quantity: 20, price: 5.5 }]);
@@ -340,6 +224,8 @@ export default function App() {
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiKeyDraft, setAiKeyDraft] = useState<string>(companyInfo.aiApiKey || '');
+  const [showAiKey, setShowAiKey] = useState<boolean>(false);
 
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
@@ -572,10 +458,10 @@ export default function App() {
     }
   };
 
-  // Send message to Gemini server API
+  // Send message to the selected AI provider (Gemini / Anthropic / OpenAI) via the server proxy
   const handleSendAiMessage = async () => {
     if (!aiMessage.trim()) return;
-    
+
     const userText = aiMessage;
     setAiHistory(prev => [...prev, { role: 'user', text: userText }]);
     setAiMessage('');
@@ -585,20 +471,24 @@ export default function App() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText })
+        body: JSON.stringify({
+          message: userText,
+          provider: companyInfo.aiProvider || 'gemini',
+          apiKey: companyInfo.aiApiKey || ''
+        })
       });
       const data = await res.json();
-      
-      setAiHistory(prev => [...prev, { 
-        role: 'assistant', 
-        text: data.reply,
-        simulated: data.simulated 
+
+      setAiHistory(prev => [...prev, {
+        role: 'assistant',
+        text: res.ok ? data.reply : (data.error || "Désolé, l'agent IA a rencontré une erreur. Veuillez réessayer."),
+        simulated: data.simulated
       }]);
     } catch (err: any) {
       console.error(err);
-      setAiHistory(prev => [...prev, { 
-        role: 'assistant', 
-        text: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer." 
+      setAiHistory(prev => [...prev, {
+        role: 'assistant',
+        text: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer."
       }]);
     } finally {
       setIsAiLoading(false);
@@ -2090,153 +1980,7 @@ export default function App() {
                     </div>
                   </>
                 ) : (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-4 pb-2">
-                      <div>
-                        <h3 className="text-xl font-black text-white">
-                          Catalogue Unitaires pour Devis & Soumissions
-                        </h3>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Calculateur de tarifs de soumission client au pied carré ($/pi²). Utilisé pour estimer les coûts de revêtements extérieurs et toitures.
-                        </p>
-                      </div>
-
-                      {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                        <button 
-                          onClick={() => {
-                            setShowAddCatalogueForm(!showAddCatalogueForm);
-                            setNewCatalogueForm({ name: '', emoji: '🪵', pricePerSqFt: 5.5, imageUrl: '', imageAlt: '' });
-                          }}
-                          className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-xs font-black rounded-xl transition shadow-lg cursor-pointer flex items-center gap-1.5"
-                        >
-                          <span>{showAddCatalogueForm ? 'Fermer le formulaire' : '+ Nouveau Matériau Catalogue'}</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Inline Catalogue Add Form */}
-                    {showAddCatalogueForm && (
-                      <div className="p-5 bg-gray-900 border border-gray-800 rounded-2xl text-left space-y-4 max-w-2xl animate-fade-in">
-                        <h4 className="text-sm font-extrabold text-white uppercase tracking-wider text-orange-400 flex items-center gap-1.5">
-                          <span>📦</span> Créer un modèle de produit standard de catalogue
-                        </h4>
-                        
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Émoji</label>
-                            <input 
-                              type="text"
-                              className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-center"
-                              value={newCatalogueForm.emoji}
-                              onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, emoji: e.target.value })}
-                            />
-                          </div>
-
-                          <div className="col-span-2 space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Nom de l'élément standard / Brevet</label>
-                            <input 
-                              type="text"
-                              className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-left"
-                              placeholder="Ex: Bardeau architectural premium"
-                              value={newCatalogueForm.name}
-                              onChange={(e) => {
-                                const name = e.target.value;
-                                let updated = { ...newCatalogueForm, name };
-                                if (!updated.imageUrl || updated.imageUrl === '') {
-                                  const suggestion = suggestImageUrl(name);
-                                  if (suggestion) {
-                                    updated.imageUrl = suggestion.url;
-                                    updated.imageAlt = suggestion.alt;
-                                  }
-                                }
-                                if (updated.emoji === '🪵' || !updated.emoji) {
-                                  updated.emoji = suggestEmoji(name);
-                                }
-                                setNewCatalogueForm(updated);
-                              }}
-                            />
-                          </div>
-
-                          <div className="col-span-2 space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">🖼️ URL de l'image (optionnel - suggestions automatiques incluses)</label>
-                            <input 
-                              type="text"
-                              className="w-full p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850 text-left"
-                              placeholder="https://images.unsplash.com/..."
-                              value={newCatalogueForm.imageUrl}
-                              onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, imageUrl: e.target.value })}
-                            />
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Valeur au pi² ($)</label>
-                            <input 
-                              type="number"
-                              step="0.05"
-                              className="w-full p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850 text-left"
-                              value={newCatalogueForm.pricePerSqFt}
-                              onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, pricePerSqFt: Number(e.target.value) })}
-                            />
-                          </div>
-
-                          <div className="col-span-3 flex justify-end gap-2 pt-2">
-                            <button
-                              disabled={!newCatalogueForm.name}
-                              onClick={() => {
-                                addCatalogueMaterial({
-                                  name: newCatalogueForm.name,
-                                  emoji: newCatalogueForm.emoji || '🪵',
-                                  pricePerSqFt: Number(newCatalogueForm.pricePerSqFt),
-                                  imageUrl: newCatalogueForm.imageUrl || undefined,
-                                  imageAlt: newCatalogueForm.imageAlt || newCatalogueForm.name || undefined
-                                });
-                                setShowAddCatalogueForm(false);
-                                alert("Enregistré et synchronisé avec le configurateur de devis !");
-                              }}
-                              className="px-6 py-2 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-black text-xs rounded-xl"
-                            >
-                              Ajouter au Catalogue
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Catalogue Items Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                      {catalogue.map(cat => (
-                        <div key={cat.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-2xl flex flex-col justify-between text-xs transition duration-200">
-                          <div>
-                            <MaterialImage mat={cat} />
-                            <div className="text-left mt-2">
-                              <h5 className="font-extrabold text-white text-base flex items-center gap-1.5">
-                                <span>{cat.emoji}</span>
-                                <span className="line-clamp-1">{cat.name}</span>
-                              </h5>
-                              <p className="text-xs text-gray-400 font-mono mt-1.5">
-                                Calcul unitaire : <span className="text-orange-400 font-black text-sm">{cat.pricePerSqFt.toFixed(2)}$ / pi²</span>
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex justify-end mt-4 pt-3 border-t border-gray-850">
-                            {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                              <button 
-                                onClick={() => {
-                                  if (confirm(`Supprimer "${cat.name}" du catalogue de soumission ?`)) {
-                                    deleteCatalogueMaterial(cat.id);
-                                  }
-                                }}
-                                className="p-1 px-3 bg-red-950/45 hover:bg-red-900 text-red-300 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 transition"
-                              >
-                                <Trash className="w-3.5 h-3.5" />
-                                <span>Retirer du catalogue</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
+                  <CatalogueManager />
                 )}
               </div>
             )}
@@ -3647,7 +3391,8 @@ export default function App() {
                       { name: t.setTabCatalogue, idx: 8 },
                       { name: t.setTabComptabilite, idx: 9 },
                       { name: t.setTabGeofencing, idx: 10 },
-                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length }
+                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length },
+                      { name: t.setTabAI, idx: 12 }
                     ].map(tab => (
                       <button
                         key={tab.idx}
@@ -5387,135 +5132,8 @@ export default function App() {
                     )}
 
                     {activeSettingsTab === 8 && (
-                      <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-                        <h4 className="text-xs font-black uppercase text-orange-500">📦 Catalogue Unitaire de Soumission ({catalogue.length})</h4>
-                        
-                        {/* Add to catalog */}
-                        <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-3 text-left">
-                          <span className="text-[10px] font-bold text-white uppercase block">Créer un Matériau / Service standard</span>
-                          
-                          {/* Image Preview inside form if present */}
-                          {newCatalogueForm.imageUrl && (
-                            <div className="relative group rounded-lg overflow-hidden border border-gray-800">
-                              <img 
-                                src={newCatalogueForm.imageUrl} 
-                                alt={newCatalogueForm.imageAlt || "Aperçu"} 
-                                className="w-full h-20 object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition duration-155">
-                                <span className="text-[9px] text-white/80 font-mono bg-gray-900/80 px-1.5 py-0.5 rounded">
-                                  Aperçu de l'image suggérée
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="space-y-1">
-                              <label className="text-[9px] text-gray-500 font-semibold block uppercase">Émoji</label>
-                              <input 
-                                type="text" 
-                                placeholder="Émoji" 
-                                className="w-full p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-center animate-none"
-                                value={newCatalogueForm.emoji}
-                                onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, emoji: e.target.value })}
-                              />
-                            </div>
-                            <div className="col-span-2 space-y-1">
-                              <label className="text-[9px] text-gray-500 font-semibold block uppercase">Nom du Produit</label>
-                              <input 
-                                type="text" 
-                                placeholder="Ex: Bardeau d'Asphalte" 
-                                className="w-full p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
-                                value={newCatalogueForm.name}
-                                onChange={(e) => {
-                                  const name = e.target.value;
-                                  let updated = { ...newCatalogueForm, name };
-                                  if (!updated.imageUrl || updated.imageUrl === '') {
-                                    const suggestion = suggestImageUrl(name);
-                                    if (suggestion) {
-                                      updated.imageUrl = suggestion.url;
-                                      updated.imageAlt = suggestion.alt;
-                                    }
-                                  }
-                                  if (updated.emoji === '🪵' || updated.emoji === '📦' || !updated.emoji) {
-                                    updated.emoji = suggestEmoji(name);
-                                  }
-                                  setNewCatalogueForm(updated);
-                                }}
-                              />
-                            </div>
-
-                            <div className="col-span-3 space-y-1">
-                              <label className="text-[9px] text-gray-400 font-semibold block uppercase">🖼️ URL image (optionnel)</label>
-                              <input 
-                                type="text"
-                                className="w-full p-1.5 bg-gray-900 text-xs font-mono text-white rounded border border-gray-800 text-left"
-                                placeholder="https://images.unsplash.com/..." 
-                                value={newCatalogueForm.imageUrl}
-                                onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, imageUrl: e.target.value })}
-                              />
-                            </div>
-
-                            <div className="col-span-3 flex items-center justify-between bg-gray-900 p-1.5 rounded border border-gray-800">
-                              <span className="text-[10px] font-mono text-gray-400 uppercase">Prix estimatif ($/pi²)</span>
-                              <input 
-                                type="number" 
-                                step="0.1"
-                                className="w-24 bg-transparent border-0 text-white text-xs font-mono font-bold text-right outline-none"
-                                value={newCatalogueForm.pricePerSqFt}
-                                onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, pricePerSqFt: Number(e.target.value) })}
-                              />
-                            </div>
-                          </div>
-                          
-                          <button 
-                            disabled={!newCatalogueForm.name}
-                            onClick={() => {
-                              addCatalogueMaterial({
-                                name: newCatalogueForm.name,
-                                emoji: newCatalogueForm.emoji || '🪵',
-                                pricePerSqFt: Number(newCatalogueForm.pricePerSqFt),
-                                imageUrl: newCatalogueForm.imageUrl || undefined,
-                                imageAlt: newCatalogueForm.imageAlt || newCatalogueForm.name || undefined
-                              });
-                              setNewCatalogueForm({ name: '', emoji: '🪵', pricePerSqFt: 5.0, imageUrl: '', imageAlt: '' });
-                              alert("Enregistré dans le catalogue de devis !");
-                            }}
-                            className="w-full py-1.5 bg-orange-600 hover:bg-orange-500 text-white font-black text-[11px] rounded transition disabled:opacity-45 cursor-pointer"
-                          >
-                            Ajouter au Catalogue
-                          </button>
-                        </div>
-
-                        {/* List catalogue */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {catalogue.map(cat => (
-                            <div key={cat.id} className="p-3 bg-gray-900 rounded-xl border border-gray-850 flex flex-col justify-between text-xs transition hover:border-orange-500/30">
-                              <div>
-                                <MaterialImage mat={cat} />
-                                <div className="text-left mt-1">
-                                  <h5 className="font-bold text-white text-sm line-clamp-1">{cat.name}</h5>
-                                  <p className="text-[11px] text-gray-500 font-mono mt-1">
-                                    Valeur de calcul : <span className="text-orange-400 font-bold">{cat.pricePerSqFt.toFixed(2)}$ / pi²</span>
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex justify-end mt-2 pt-2 border-t border-gray-850">
-                                <button 
-                                  onClick={() => {
-                                    if (confirm("Supprimer ce matériel du catalogue?")) deleteCatalogueMaterial(cat.id);
-                                  }}
-                                  className="p-1 px-2.5 bg-red-950/45 hover:bg-red-900 text-red-300 rounded font-bold text-[10px] cursor-pointer flex items-center gap-1 transition"
-                                >
-                                  <Trash className="w-3 h-3" />
-                                  <span>Supprimer</span>
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                      <div className="max-h-[600px] overflow-y-auto pr-2">
+                        <CatalogueManager />
                       </div>
                     )}
 
@@ -5846,6 +5464,74 @@ export default function App() {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeSettingsTab === 12 && (
+                      <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-xs font-sans text-left">
+                        <div>
+                          <h4 className="text-xs font-black uppercase text-orange-500">🤖 Assistant IA</h4>
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            Choisissez le fournisseur d'intelligence artificielle et entrez votre propre clé API. Elle est enregistrée uniquement dans ce navigateur (LocalStorage) et sert uniquement à connecter l'assistant.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Fournisseur IA</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            {([
+                              { id: 'anthropic', label: 'Anthropic Claude' },
+                              { id: 'gemini', label: 'Google Gemini' },
+                              { id: 'openai', label: 'OpenAI ChatGPT' }
+                            ] as const).map(p => (
+                              <button
+                                key={p.id}
+                                onClick={() => updateCompanyInfo({ aiProvider: p.id })}
+                                className={`p-3 rounded-xl border text-xs font-black transition cursor-pointer ${
+                                  (companyInfo.aiProvider || 'gemini') === p.id
+                                    ? 'bg-orange-600 border-orange-500 text-white'
+                                    : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-700'
+                                }`}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Clé API</span>
+                          <div className="flex gap-2">
+                            <input
+                              type={showAiKey ? 'text' : 'password'}
+                              placeholder="Collez votre clé API ici..."
+                              className="flex-1 p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850"
+                              value={aiKeyDraft}
+                              onChange={(e) => setAiKeyDraft(e.target.value)}
+                            />
+                            <button
+                              onClick={() => setShowAiKey(!showAiKey)}
+                              className="px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg transition cursor-pointer"
+                              title={showAiKey ? 'Masquer' : 'Afficher'}
+                            >
+                              {showAiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => {
+                              updateCompanyInfo({ aiApiKey: aiKeyDraft });
+                              alert('Clé API enregistrée !');
+                            }}
+                            className="w-full py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded-xl transition cursor-pointer"
+                          >
+                            Enregistrer la clé
+                          </button>
+                          <p className="text-[10px] text-gray-500">
+                            {companyInfo.aiApiKey
+                              ? `Clé actuellement enregistrée pour ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI' : 'Google Gemini'} (••••${companyInfo.aiApiKey.slice(-4)}).`
+                              : "Aucune clé enregistrée : l'assistant répond en mode simulation locale."}
+                          </p>
                         </div>
                       </div>
                     )}
