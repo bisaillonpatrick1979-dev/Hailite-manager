@@ -156,6 +156,13 @@ export default function App() {
   // App Navigation state
   const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
+  // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
+  // réglages personnels (Thème, Langue) — jamais les réglages de compagnie,
+  // paie ou d'équipe. On limite l'onglet affiché sans toucher à l'état réel,
+  // pour ne jamais rendre un onglet réservé même si activeSettingsTab dérive.
+  const visibleSettingsTab = (activeEmployee && activeEmployee.role !== 'admin' && ![2, 3].includes(activeSettingsTab))
+    ? 2
+    : activeSettingsTab;
   const [statsMonth, setStatsMonth] = useState<string>('2026-06');
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [statsSubTab, setStatsSubTab] = useState<'analytics' | 'payroll'>('analytics');
@@ -467,11 +474,17 @@ export default function App() {
 
   const handlePunchOutConfirm = () => {
     if (!activeEmployee || !activePunchSession) return;
-    
+
     // Stop session and output reported materials
     stopPunchSession(activePunchSession.id, reportedMaterials);
     playSoundCue('out');
-    
+
+    // Ajoute la session tout juste fermée à un brouillon de facture pour cet
+    // employé (sous-traitant ou salarié), sans attendre une génération manuelle.
+    if (activeEmployee.role !== 'admin') {
+      generateDraftInvoiceForEmployee(activeEmployee.id);
+    }
+
     // Reset reported materials list
     setReportedMaterials([]);
     setShowPunchOutModal(false);
@@ -1496,7 +1509,7 @@ export default function App() {
                           <div className="text-right space-y-2">
                             <div>
                               <p className="text-[10px] text-gray-400">Brut : {inv.amount.toFixed(2)}$</p>
-                              <p className="text-[10px] text-gray-500">TPS (5%) + TVQ (9.975%) estimées</p>
+                              <p className="text-[10px] text-gray-500">{companyRegion.taxRate1NameFR} + {companyRegion.taxRate2NameFR} estimées</p>
                               <p className="text-base font-black text-green-400 mt-1">
                                 {inv.totalWithTaxes.toFixed(2)}$ <span className="text-[10px] text-gray-400">TTC</span>
                               </p>
@@ -1516,6 +1529,22 @@ export default function App() {
                                   className="px-2 py-1 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[9px] font-bold uppercase rounded border border-green-500/30 cursor-pointer"
                                 >
                                   Payer Interac
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Envoi de la facture à la compagnie par l'employé/sous-traitant lui-même */}
+                            {activeEmployee.role !== 'admin' && inv.employeeId === activeEmployee.id && inv.status === 'draft' && (
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Envoyer la facture ${inv.invoiceNumber} à la compagnie ?`)) {
+                                      updateInvoice({ ...inv, status: 'pending' });
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 text-[9px] font-bold uppercase rounded border border-orange-500/30 cursor-pointer"
+                                >
+                                  📤 Envoyer à la compagnie
                                 </button>
                               </div>
                             )}
@@ -3409,29 +3438,29 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col md:flex-row gap-6">
-                  {/* Left: list of 12 tabs */}
+                  {/* Left: list of settings tabs (réglages de compagnie/équipe réservés à l'admin) */}
                   <div className="w-full md:w-56 flex flex-col gap-1 flex-shrink-0 border-r border-gray-800 pr-2">
                     {[
-                      { name: t.setTabCompagnie, idx: 0 },
-                      { name: t.setTabEmployes, idx: 1 },
-                      { name: t.setTabTheme, idx: 2 },
-                      { name: t.setTabLangue, idx: 3 },
-                      { name: t.setTabPaiement, idx: 4 },
-                      { name: t.setTabRappels, idx: 5 },
-                      { name: t.setTabConditions, idx: 6 },
-                      { name: t.setTabClients, idx: 7 },
-                      { name: t.setTabCatalogue, idx: 8 },
-                      { name: t.setTabComptabilite, idx: 9 },
-                      { name: t.setTabGeofencing, idx: 10 },
-                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length },
-                      { name: t.setTabAI, idx: 12 }
-                    ].map(tab => (
+                      { name: t.setTabCompagnie, idx: 0, adminOnly: true },
+                      { name: t.setTabEmployes, idx: 1, adminOnly: true },
+                      { name: t.setTabTheme, idx: 2, adminOnly: false },
+                      { name: t.setTabLangue, idx: 3, adminOnly: false },
+                      { name: t.setTabPaiement, idx: 4, adminOnly: true },
+                      { name: t.setTabRappels, idx: 5, adminOnly: true },
+                      { name: t.setTabConditions, idx: 6, adminOnly: true },
+                      { name: t.setTabClients, idx: 7, adminOnly: true },
+                      { name: t.setTabCatalogue, idx: 8, adminOnly: true },
+                      { name: t.setTabComptabilite, idx: 9, adminOnly: true },
+                      { name: t.setTabGeofencing, idx: 10, adminOnly: true },
+                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length, adminOnly: true },
+                      { name: t.setTabAI, idx: 12, adminOnly: true }
+                    ].filter(tab => activeEmployee.role === 'admin' || !tab.adminOnly).map(tab => (
                       <button
                         key={tab.idx}
                         onClick={() => setActiveSettingsTab(tab.idx)}
                         className={`text-left text-xs font-semibold px-3 py-2.5 rounded-lg transition-colors flex items-center justify-between cursor-pointer ${
-                          activeSettingsTab === tab.idx 
-                            ? 'bg-orange-600 text-white font-bold' 
+                          visibleSettingsTab === tab.idx
+                            ? 'bg-orange-600 text-white font-bold'
                             : 'hover:bg-gray-800 text-gray-300'
                         }`}
                       >
@@ -3449,7 +3478,7 @@ export default function App() {
                   <div className="flex-1 min-w-0">
                     
                     {/* ONGLET 0: COMPAGNIE */}
-                    {activeSettingsTab === 0 && (
+                    {visibleSettingsTab === 0 && (
                       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
                         <div>
                           <h4 className="text-xs font-black uppercase text-orange-500">🏢 Compagnie & Paramètres Salariaux</h4>
@@ -4264,7 +4293,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 1: EMPLOYÉS */}
-                    {activeSettingsTab === 1 && (
+                    {visibleSettingsTab === 1 && (
                       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 font-sans">
                         <div className="flex justify-between items-center">
                           <div>
@@ -4972,7 +5001,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 2: THÈMES */}
-                    {activeSettingsTab === 2 && (
+                    {visibleSettingsTab === 2 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">Thème Visuel du bouton central ({currentTheme})</h4>
                         
@@ -5003,7 +5032,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 3: LANGUE */}
-                    {activeSettingsTab === 3 && (
+                    {visibleSettingsTab === 3 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">Changer de Langue</h4>
                         <div className="flex gap-4">
@@ -5028,7 +5057,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 4: PAIEMENTS */}
-                    {activeSettingsTab === 4 && (
+                    {visibleSettingsTab === 4 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">💰 Échelonnements par défaut des Factures & Intérêts</h4>
                         
@@ -5085,7 +5114,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 5: RAPPELS VOCAUX */}
-                    {activeSettingsTab === 5 && (
+                    {visibleSettingsTab === 5 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">🔔 Notifications Sonores & Planification</h4>
                         <div>
@@ -5111,7 +5140,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 6 à 12: CONTENU PARAMETRES RAPIDE */}
-                    {activeSettingsTab === 6 && (
+                    {visibleSettingsTab === 6 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                         <h4 className="text-xs font-black uppercase text-orange-500">📋 Clauses Légales pour Devis & Factures</h4>
                         <div>
@@ -5143,7 +5172,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 7 && (
+                    {visibleSettingsTab === 7 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                         <h4 className="text-xs font-black uppercase text-orange-500">👥 Fichier Clients ({clients.length})</h4>
                         
@@ -5221,13 +5250,13 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 8 && (
+                    {visibleSettingsTab === 8 && (
                       <div className="max-h-[600px] overflow-y-auto pr-2">
                         <CatalogueManager />
                       </div>
                     )}
 
-                    {activeSettingsTab === 9 && (
+                    {visibleSettingsTab === 9 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 font-sans text-xs">
                         <div className="flex justify-between items-center bg-gray-950 p-1.5 rounded-lg border border-gray-800">
                           <button 
@@ -5469,7 +5498,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 10 && (
+                    {visibleSettingsTab === 10 && (
                       <div className="space-y-4">
                         <div className="flex justify-between items-center text-left">
                           <h4 className="text-xs font-black uppercase text-orange-500">📍 Barrière GPS de Sécurité (Geofencing)</h4>
@@ -5500,7 +5529,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 11 && (
+                    {visibleSettingsTab === 11 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-xs font-sans">
                         <div className="text-left">
                           <h4 className="text-xs font-black uppercase text-orange-500">Expirations & Sécurité RH</h4>
@@ -5558,7 +5587,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 12 && (
+                    {visibleSettingsTab === 12 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-xs font-sans text-left">
                         <div>
                           <h4 className="text-xs font-black uppercase text-orange-500">🤖 Assistant IA</h4>
