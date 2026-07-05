@@ -2,6 +2,7 @@ import React from 'react';
 import useAppStore from '../store';
 import { translations } from '../translations';
 import { LogOut, Globe, Sparkles, Building2 } from 'lucide-react';
+import EmployeeAvatar from './EmployeeAvatar';
 
 export default function Navbar() {
   const { currentLanguage, setLanguage, activeEmployee, logout, currentTheme } = useAppStore();
@@ -73,12 +74,10 @@ export default function Navbar() {
               </span>
             </div>
             
-            <img 
-              id="user-avatar-top"
-              src={activeEmployee.avatar} 
-              alt={activeEmployee.name} 
-              className="h-8 w-8 rounded-full object-cover border border-white/20"
-              referrerPolicy="no-referrer"
+            <EmployeeAvatar
+              src={activeEmployee.avatar}
+              name={activeEmployee.name}
+              className="h-10 w-10 rounded-full object-cover border border-white/20"
             />
 
             <button

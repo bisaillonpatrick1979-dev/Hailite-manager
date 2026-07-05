@@ -7,6 +7,7 @@ import { useGeofencing } from './hooks/useGeofencing';
 import OnboardingScreen from './components/OnboardingScreen';
 import MotivationTab from './components/MotivationTab';
 import ClientDocumentsManager from './components/ClientDocumentsManager';
+import EmployeeAvatar from './components/EmployeeAvatar';
 import { 
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
@@ -88,6 +89,14 @@ const IMAGE_KEYWORDS: { keywords: string[]; url: string; alt: string }[] = [
     alt: 'Couvreur posant des bardeaux' },
 ];
 
+// Petites icônes-avatars générées localement (SVG en data URI) : aucune
+// dépendance réseau, donc toujours disponibles même hors ligne, en plus des
+// photos ci-dessous pour élargir le choix.
+function makeIconAvatar(emoji: string, bg: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><rect width='150' height='150' rx='75' fill='${bg}'/><text x='75' y='96' font-size='72' text-anchor='middle'>${emoji}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 const EMPLOYEE_PRESET_AVATARS = [
   { url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80', label: 'Marc (Charpentier)' },
   { url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&h=150&fit=crop&q=80', label: 'Jessica (Bureau)' },
@@ -95,6 +104,12 @@ const EMPLOYEE_PRESET_AVATARS = [
   { url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&q=80', label: 'Patrick (Directeur)' },
   { url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&q=80', label: 'Sarah (Apprentie)' },
   { url: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=150&h=150&fit=crop&q=80', label: 'Lucas (Ferblantier)' },
+  { url: makeIconAvatar('👷', '#F97316'), label: 'Icône Casque Orange' },
+  { url: makeIconAvatar('👷‍♀️', '#0EA5E9'), label: 'Icône Casque Bleu' },
+  { url: makeIconAvatar('🦺', '#22C55E'), label: 'Icône Sécurité Verte' },
+  { url: makeIconAvatar('🏗️', '#A855F7'), label: 'Icône Chantier Mauve' },
+  { url: makeIconAvatar('🔨', '#EF4444'), label: 'Icône Marteau Rouge' },
+  { url: makeIconAvatar('🧰', '#EAB308'), label: 'Icône Boîte à Outils Jaune' },
 ];
 
 const TOUR_STEPS = [
@@ -794,10 +809,10 @@ export default function App() {
               <span className="hidden md:inline text-xs font-semibold text-gray-300">
                 {activeEmployee.name} ({activeEmployee.role === 'admin' ? t.roleAdmin : t.roleEmployee})
               </span>
-              <img 
-                src={activeEmployee.avatar} 
-                alt="Avatar" 
-                className="w-8 h-8 rounded-full border border-gray-700 object-cover" 
+              <EmployeeAvatar
+                src={activeEmployee.avatar}
+                name={activeEmployee.name}
+                className="w-10 h-10 rounded-full border border-gray-700 object-cover"
               />
               <button
                 onClick={logout}
@@ -835,10 +850,10 @@ export default function App() {
                     onClick={() => handleSelectProfile(emp.id)}
                     className="p-4 rounded-xl bg-gray-800/50 hover:bg-orange-500/10 border border-gray-800 hover:border-orange-500/40 text-center flex flex-col items-center justify-center gap-3 transition cursor-pointer"
                   >
-                    <img 
-                      src={emp.avatar} 
-                      alt={emp.name} 
-                      className="w-14 h-14 rounded-full object-cover border-2 border-gray-700 shadow" 
+                    <EmployeeAvatar
+                      src={emp.avatar}
+                      name={emp.name}
+                      className="w-20 h-20 rounded-full object-cover border-2 border-gray-700 shadow"
                     />
                     <div className="min-w-0 w-full">
                       <p className="text-xs font-bold text-white truncate text-center mb-1">{emp.name}</p>
@@ -861,10 +876,10 @@ export default function App() {
                 </button>
 
                 <div className="flex items-center gap-3 mb-4">
-                  <img 
-                    src={employees.find(e => e.id === selectedEmpId)?.avatar} 
-                    alt="Active Profile"
-                    className="w-10 h-10 rounded-full object-cover border border-orange-500"
+                  <EmployeeAvatar
+                    src={employees.find(e => e.id === selectedEmpId)?.avatar}
+                    name={employees.find(e => e.id === selectedEmpId)?.name || ''}
+                    className="w-14 h-14 rounded-full object-cover border border-orange-500"
                   />
                   <div className="text-left">
                     <p className="text-xs text-gray-400 font-mono text-left uppercase">Connexion en cours</p>
@@ -1394,10 +1409,10 @@ export default function App() {
                             punchSessions.filter(p => p.endTime === null).map(p => (
                               <div key={p.id} className="flex items-center justify-between pt-3 first:pt-0">
                                 <div className="flex items-center gap-2.5">
-                                  <img 
-                                    src={employees.find(e => e.id === p.employeeId)?.avatar} 
-                                    alt="Worker" 
-                                    className="w-8 h-8 rounded-full object-cover border border-orange-500"
+                                  <EmployeeAvatar
+                                    src={employees.find(e => e.id === p.employeeId)?.avatar}
+                                    name={p.employeeName}
+                                    className="w-10 h-10 rounded-full object-cover border border-orange-500"
                                   />
                                   <div>
                                     <h5 className="text-sm font-extrabold text-white">{p.employeeName}</h5>
@@ -1480,10 +1495,10 @@ export default function App() {
                             {punchSessions.slice(0, 8).map(punch => (
                               <tr key={punch.id} className="hover:bg-gray-800/10">
                                 <td className="py-3 font-semibold text-white flex items-center gap-2">
-                                  <img 
-                                    src={employees.find(e => e.id === punch.employeeId)?.avatar} 
-                                    className="w-5 h-5 rounded-full object-cover" 
-                                    alt=""
+                                  <EmployeeAvatar
+                                    src={employees.find(e => e.id === punch.employeeId)?.avatar}
+                                    name={employees.find(e => e.id === punch.employeeId)?.name || ''}
+                                    className="w-7 h-7 rounded-full object-cover"
                                   />
                                   {punch.employeeName}
                                 </td>
@@ -1777,12 +1792,12 @@ export default function App() {
                         </span>
                         <div className="flex -space-x-1.5 overflow-hidden">
                           {employees.filter(e => proj.assignedEmployees?.includes(e.id)).map((emp) => (
-                            <img 
-                              key={emp.id} 
-                              src={emp.avatar} 
-                              title={emp.name} 
-                              className="w-6 h-6 rounded-full object-cover border border-gray-900" 
-                              alt={emp.name}
+                            <EmployeeAvatar
+                              key={emp.id}
+                              src={emp.avatar}
+                              title={emp.name}
+                              name={emp.name}
+                              className="w-8 h-8 rounded-full object-cover border border-gray-900"
                             />
                           ))}
                           {(!proj.assignedEmployees || proj.assignedEmployees.length === 0) && (
@@ -2596,7 +2611,7 @@ export default function App() {
                     return (
                       <div className="p-5 bg-gradient-to-r from-orange-600/10 to-indigo-600/10 border border-gray-800 rounded-2xl space-y-4">
                         <div className="flex items-center gap-3">
-                          <img src={activeEmployee.avatar} alt="Me" className="w-10 h-10 rounded-full object-cover border-2 border-orange-500" />
+                          <EmployeeAvatar src={activeEmployee.avatar} name={activeEmployee.name} className="w-14 h-14 rounded-full object-cover border-2 border-orange-500" />
                           <div>
                             <h4 className="text-sm font-black text-white">Espace Performance — {activeEmployee.name}</h4>
                             <p className="text-[11px] text-gray-400">Rôle : <span className="font-mono text-orange-400 uppercase font-bold">{activeEmployee.workerType}</span></p>
@@ -2804,7 +2819,7 @@ export default function App() {
                                 className="w-full text-left p-3.5 flex items-center justify-between hover:bg-gray-850 transition cursor-pointer font-sans"
                               >
                                 <div className="flex items-center gap-3">
-                                  <img src={emp.avatar} alt="worker" className="w-8 h-8 rounded-full border border-gray-800 object-cover" />
+                                  <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-10 h-10 rounded-full border border-gray-800 object-cover" />
                                   <div>
                                     <h5 className="text-xs font-bold text-white">{emp.name}</h5>
                                     <p className="text-[10px] text-gray-500">{emp.workerType} — NIP : <span className="font-mono text-white select-all font-bold">{emp.nip}</span></p>
@@ -3173,7 +3188,7 @@ export default function App() {
                           <div className="p-5 bg-gradient-to-r from-orange-600/10 to-indigo-600/10 border border-gray-800 rounded-2xl">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                               <div className="flex items-center gap-3">
-                                <img src={emp.avatar} alt="Me" className="w-12 h-12 rounded-full object-cover border-2 border-orange-500 shadow-md" />
+                                <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-16 h-16 rounded-full object-cover border-2 border-orange-500 shadow-md" />
                                 <div>
                                   <h4 className="text-base font-black text-white">Mon Portail de Paie — {emp.name}</h4>
                                   <div className="flex flex-wrap gap-1.5 mt-1">
@@ -3425,7 +3440,7 @@ export default function App() {
                                   return (
                                     <tr key={emp.id} className="hover:bg-gray-900 border-b border-gray-900 transition-all font-mono">
                                       <td className="py-3 flex items-center gap-2 font-sans text-left">
-                                        <img src={emp.avatar} alt="" className="w-7 h-7 rounded-full object-cover" />
+                                        <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-9 h-9 rounded-full object-cover" />
                                         <div>
                                           <p className="font-bold text-white leading-none text-left">{emp.name}</p>
                                           <p className="text-[9.5px] text-gray-500 mt-0.5 text-left">NAS: {emp.sin || 'Non inscrit'} | CCQ: {emp.asNumber || 'S/O'}</p>
@@ -4493,7 +4508,7 @@ export default function App() {
                                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                                   <div className="space-y-2 flex-1">
                                     <div className="flex items-center gap-3">
-                                      <img src={emp.avatar} alt="Avatar" className="w-9 h-9 rounded-full object-cover border border-gray-800" />
+                                      <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-12 h-12 rounded-full object-cover border border-gray-800" />
                                       <div>
                                         <div className="flex items-center gap-2 flex-wrap text-left">
                                           <h5 className="font-bold text-white text-sm">{emp.name}</h5>
@@ -4756,18 +4771,17 @@ export default function App() {
                                             key={pidx}
                                             type="button"
                                             onClick={() => setEditEmployeeForm({ ...editEmployeeForm, avatar: pav.url })}
-                                            className={`relative rounded-full overflow-hidden w-9 h-9 border-2 transition cursor-pointer ${
-                                              editEmployeeForm.avatar === pav.url 
-                                                ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
+                                            className={`relative rounded-full overflow-hidden w-12 h-12 border-2 transition cursor-pointer ${
+                                              editEmployeeForm.avatar === pav.url
+                                                ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10'
                                                 : 'border-transparent hover:border-gray-700'
                                             }`}
                                             title={pav.label}
                                           >
-                                            <img 
-                                              src={pav.url} 
-                                              alt={pav.label} 
+                                            <EmployeeAvatar
+                                              src={pav.url}
+                                              name={pav.label}
                                               className="w-full h-full object-cover"
-                                              referrerPolicy="no-referrer"
                                             />
                                           </button>
                                         ))}
@@ -5004,18 +5018,17 @@ export default function App() {
                                     setNewEmployeeForm({ ...newEmployeeForm, avatar: pav.url });
                                     setPendingEmployeeAvatar('');
                                   }}
-                                  className={`relative rounded-full overflow-hidden w-[70px] h-[70px] border-2 transition ${
-                                    newEmployeeForm.avatar === pav.url 
-                                      ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10' 
+                                  className={`relative rounded-full overflow-hidden w-20 h-20 border-2 transition ${
+                                    newEmployeeForm.avatar === pav.url
+                                      ? 'border-orange-500 scale-105 shadow-md shadow-orange-500/10'
                                       : 'border-transparent hover:border-gray-700'
                                   }`}
                                   title={pav.label}
                                 >
-                                  <img 
-                                    src={pav.url} 
-                                    alt={pav.label} 
+                                  <EmployeeAvatar
+                                    src={pav.url}
+                                    name={pav.label}
                                     className="w-full h-full object-cover"
-                                    referrerPolicy="no-referrer"
                                   />
                                 </button>
                               ))}
@@ -5052,7 +5065,7 @@ export default function App() {
                                   <img
                                     src={newEmployeeForm.avatar}
                                     alt="Aperçu de la photo sélectionnée"
-                                    className="h-10 w-10 rounded-full border border-orange-500/50 object-cover"
+                                    className="h-14 w-14 rounded-full border border-orange-500/50 object-cover"
                                   />
                                   <span className="text-[9px] font-bold uppercase text-gray-400">Aperçu sélectionné</span>
                                 </div>

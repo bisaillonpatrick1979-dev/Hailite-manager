@@ -3,6 +3,7 @@ import useAppStore, { getXPRequiredForLevel, getLevelFromXP } from '../store';
 import { MotivationTeam, MotivationGoal, Employee, Project } from '../types';
 import { Trophy, Users, PlusCircle, Trash, Award, Flame, UserCheck, CheckSquare, ShieldCheck, Zap, DollarSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import EmployeeAvatar from './EmployeeAvatar';
 
 export default function MotivationTab() {
   const {
@@ -671,7 +672,7 @@ export default function MotivationTab() {
                             key={mId} 
                             className="bg-gray-950 p-1 px-2 rounded-lg border border-gray-850 flex items-center gap-1.5"
                           >
-                            <img src={m.avatar} alt="Avatar" className="w-4 h-4 rounded-full object-cover" />
+                            <EmployeeAvatar src={m.avatar} name={m.name} className="w-6 h-6 rounded-full object-cover" />
                             <span className="text-[10px] text-gray-300 pr-1">{m.name}</span>
                           </div>
                         );
@@ -753,7 +754,7 @@ export default function MotivationTab() {
                     >
                       <div className="flex items-center gap-3">
                         <span className="font-black text-sm text-gray-500 font-mono w-4">{medal || `${index + 1}`}</span>
-                        <img src={row.employee.avatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
+                        <EmployeeAvatar src={row.employee.avatar} name={row.employee.name} className="w-10 h-10 rounded-full object-cover" />
                         <div>
                           <h6 className="font-bold text-white flex items-center gap-1.5">
                             {row.employee.name}
