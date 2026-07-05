@@ -452,8 +452,8 @@ export default function CatalogueManager() {
         </div>
       )}
 
-      {/* Catalogue Items Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+      {/* Catalogue Items List (une ligne par matériau pour rester lisible sur mobile) */}
+      <div className="flex flex-col gap-3">
         {catalogue.map(cat => {
           const isEditing = editingId === cat.id;
           const margin = marginFor(cat);
@@ -489,38 +489,40 @@ export default function CatalogueManager() {
           }
 
           return (
-            <div key={cat.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-2xl flex flex-col justify-between text-xs transition duration-200">
-              <div>
-                <MaterialImage mat={cat} />
-                <div className="text-left mt-2">
-                  <h5 className="font-extrabold text-white text-base flex items-center gap-1.5">
-                    <span>{cat.emoji}</span>
-                    <span className="line-clamp-1">{cat.name}</span>
-                  </h5>
-                  {supplierName(cat.supplierId) && (
-                    <p className="text-[10px] text-gray-500 font-mono mt-0.5">🚚 {supplierName(cat.supplierId)}</p>
-                  )}
-                  <div className="grid grid-cols-3 gap-1.5 mt-2 font-mono text-[10px]">
-                    <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center overflow-hidden">
-                      <div className="text-gray-500 uppercase whitespace-nowrap">Fourn.</div>
-                      <div className="text-white font-bold whitespace-nowrap">{(cat.supplierPrice || 0).toFixed(2)}$</div>
-                    </div>
-                    <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center overflow-hidden">
-                      <div className="text-gray-500 uppercase whitespace-nowrap">Sous-tr.</div>
-                      <div className="text-white font-bold whitespace-nowrap">{cat.pricePerSqFt.toFixed(2)}$</div>
-                    </div>
-                    <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center overflow-hidden">
-                      <div className="text-gray-500 uppercase whitespace-nowrap">Client</div>
-                      <div className="text-white font-bold whitespace-nowrap">{(cat.clientPrice || 0).toFixed(2)}$</div>
-                    </div>
-                  </div>
-                  <p className={`text-[11px] font-black mt-1.5 ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    Marge : {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$ / pi²
-                  </p>
+            <div key={cat.id} className="p-3 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 text-xs transition duration-200">
+              <MaterialImage mat={cat} className="w-full h-24 sm:w-20 sm:h-20 flex-shrink-0" />
+
+              <div className="flex-1 min-w-0 text-left">
+                <h5 className="font-extrabold text-white text-base flex items-center gap-1.5">
+                  <span>{cat.emoji}</span>
+                  <span className="truncate">{cat.name}</span>
+                </h5>
+                {supplierName(cat.supplierId) && (
+                  <p className="text-[10px] text-gray-500 font-mono mt-0.5">🚚 {supplierName(cat.supplierId)}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-3 sm:flex gap-1.5 font-mono text-[10px] flex-shrink-0">
+                <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
+                  <div className="text-gray-500 uppercase whitespace-nowrap">Fourn.</div>
+                  <div className="text-white font-bold whitespace-nowrap">{(cat.supplierPrice || 0).toFixed(2)}$</div>
+                </div>
+                <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
+                  <div className="text-gray-500 uppercase whitespace-nowrap">Sous-tr.</div>
+                  <div className="text-white font-bold whitespace-nowrap">{cat.pricePerSqFt.toFixed(2)}$</div>
+                </div>
+                <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
+                  <div className="text-gray-500 uppercase whitespace-nowrap">Client</div>
+                  <div className="text-white font-bold whitespace-nowrap">{(cat.clientPrice || 0).toFixed(2)}$</div>
                 </div>
               </div>
+
+              <p className={`text-[11px] font-black flex-shrink-0 sm:w-28 text-left sm:text-right ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                Marge : {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$/pi²
+              </p>
+
               {canManage && (
-                <div className="flex justify-end gap-1.5 mt-4 pt-3 border-t border-gray-850">
+                <div className="flex gap-1.5 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-850">
                   <button
                     onClick={() => startEdit(cat)}
                     className="p-1 px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 transition"
