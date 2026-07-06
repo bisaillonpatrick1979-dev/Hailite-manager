@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { translations } from './translations';
-import { Employee, CompanyInfo, EmployeeRole } from './types';
+import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
@@ -14,6 +14,7 @@ import ClientDocumentsManager from './components/ClientDocumentsManager';
 import EmployeeAvatar from './components/EmployeeAvatar';
 import CatalogueManager from './components/CatalogueManager';
 import ProjectTasksAndTools from './components/ProjectTasksAndTools';
+import SignaturePad from './components/SignaturePad';
 import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
@@ -198,7 +199,11 @@ export default function App() {
   // Modals state
   const [showPunchInModal, setShowPunchInModal] = useState<boolean>(false);
   const [showPunchOutModal, setShowPunchOutModal] = useState<boolean>(false);
-  
+
+  // Signature tactile requise avant l'envoi d'une facture sous-traitant à la compagnie
+  const [invoiceToSign, setInvoiceToSign] = useState<Invoice | null>(null);
+  const [invoiceSignatureData, setInvoiceSignatureData] = useState<string | null>(null);
+
   // Punch-Out Surface materials reporting state
   const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string; unit: string }>>([]);
 
@@ -1533,19 +1538,30 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* Envoi de la facture à la compagnie par l'employé/sous-traitant lui-même */}
+                            {/* Envoi de la facture à la compagnie par l'employé/sous-traitant lui-même (signature tactile requise) */}
                             {activeEmployee.role !== 'admin' && inv.employeeId === activeEmployee.id && inv.status === 'draft' && (
                               <div className="flex items-center justify-end gap-2">
                                 <button
                                   onClick={() => {
-                                    if (confirm(`Envoyer la facture ${inv.invoiceNumber} à la compagnie ?`)) {
-                                      updateInvoice({ ...inv, status: 'pending' });
-                                    }
+                                    setInvoiceToSign(inv);
+                                    setInvoiceSignatureData(null);
                                   }}
                                   className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 text-[9px] font-bold uppercase rounded border border-orange-500/30 cursor-pointer"
                                 >
                                   📤 Envoyer à la compagnie
                                 </button>
+                              </div>
+                            )}
+
+                            {/* Aperçu de la signature tactile une fois la facture envoyée */}
+                            {inv.employeeSignature && (
+                              <div className="flex flex-col items-end gap-0.5">
+                                <img src={inv.employeeSignature} alt="Signature" className="h-8 bg-white rounded border border-gray-700 px-1" />
+                                {inv.employeeSignedAt && (
+                                  <span className="text-[8px] text-gray-500 font-mono">
+                                    Signé le {new Date(inv.employeeSignedAt).toLocaleDateString('fr-CA')}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -6178,6 +6194,68 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* -------------------- MODAL: SIGNATURE TACTILE AVANT ENVOI DE FACTURE -------------------- */}
+      {invoiceToSign && activeEmployee && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
+              <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
+                ✍️ Signer et envoyer la facture
+              </h4>
+              <button
+                onClick={() => { setInvoiceToSign(null); setInvoiceSignatureData(null); }}
+                className="text-gray-500 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-gray-300 leading-normal">
+                Veuillez apposer votre signature tactile pour confirmer et envoyer la facture <strong>{invoiceToSign.invoiceNumber}</strong> ({invoiceToSign.totalWithTaxes.toFixed(2)}$ TTC) à {companyInfo.name || 'Hailite Xteriors Inc.'}.
+              </p>
+
+              <SignaturePad
+                label={`Signature de ${activeEmployee.name}`}
+                value={invoiceSignatureData}
+                onChange={setInvoiceSignatureData}
+                required
+                accentClass="text-orange-500"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
+              <button
+                onClick={() => { setInvoiceToSign(null); setInvoiceSignatureData(null); }}
+                className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
+              >
+                {t.modalCancelBtn}
+              </button>
+              <button
+                onClick={() => {
+                  if (!invoiceSignatureData) {
+                    alert("Veuillez signer avec le doigt ou la souris avant d'envoyer la facture.");
+                    return;
+                  }
+                  updateInvoice({
+                    ...invoiceToSign,
+                    status: 'pending',
+                    employeeSignature: invoiceSignatureData,
+                    employeeSignedAt: new Date().toISOString()
+                  });
+                  setInvoiceToSign(null);
+                  setInvoiceSignatureData(null);
+                }}
+                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-orange-950/25"
+              >
+                📤 Signer et envoyer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* -------------------- INTERACTIVE VALIDATION TOUR OVERLAY -------------------- */}
       {tourStep !== null && TOUR_STEPS[tourStep] && (
         <div id="interactive-val-tour" className="fixed bottom-6 right-6 left-6 md:left-auto md:w-[440px] bg-[#16191F]/95 backdrop-blur-md border border-orange-500/30 rounded-2xl p-5 shadow-2xl z-[9999] text-left space-y-4 animate-fade-in font-sans">

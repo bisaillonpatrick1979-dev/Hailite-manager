@@ -109,6 +109,9 @@ export interface Invoice {
   status: 'draft' | 'pending' | 'paid';
   notes?: string;
   taxIncluded: boolean;
+  // Tactile signature required from the employee/sous-traitant before sending to the company
+  employeeSignature?: string; // Base64 signature image data
+  employeeSignedAt?: string;
 }
 
 export interface Supplier {

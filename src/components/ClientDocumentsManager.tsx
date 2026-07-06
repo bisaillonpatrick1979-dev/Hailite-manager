@@ -12,6 +12,7 @@ import {
   CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
 } from 'lucide-react';
 import { CANADIAN_REGIONS, US_REGIONS, regionWithPreposition } from '../regionsData';
+import SignaturePad from './SignaturePad';
 
 export default function ClientDocumentsManager() {
   const {
@@ -85,9 +86,10 @@ export default function ClientDocumentsManager() {
   const [clauseResil, setClauseResil] = useState(clausePresets.resiliation);
   const [clauseWarr, setClauseWarr] = useState(clausePresets.warranty);
 
-  // Signature typing layout
-  const [ownerSignature, setOwnerSignature] = useState(companyInfo.name || 'Hailite Xteriors Inc.');
-  const [clientSignatureTyped, setClientSignatureTyped] = useState('');
+  // Tactile (touch-drawn) electronic signatures
+  const [ownerSignatureData, setOwnerSignatureData] = useState<string | null>(null);
+  const [clientSignatureData, setClientSignatureData] = useState<string | null>(null);
+  const [signaturePadResetKey, setSignaturePadResetKey] = useState(0);
 
   const resetCreateForm = () => {
     setNewDocType('quote');
@@ -112,13 +114,24 @@ export default function ClientDocumentsManager() {
     setClauseChange(clausePresets.changeOrder);
     setClauseResil(clausePresets.resiliation);
     setClauseWarr(clausePresets.warranty);
-    setClientSignatureTyped('');
+    setOwnerSignatureData(null);
+    setClientSignatureData(null);
+    setSignaturePadResetKey(k => k + 1);
   };
 
   const handleCreateDocument = () => {
     const cli = clients.find(c => c.id === newClientId) || clients[0];
     if (!cli) {
       alert("Veuillez sélectionner un client d'abord ou en ajouter un dans les Réglages.");
+      return;
+    }
+
+    if (!ownerSignatureData) {
+      alert("La signature tactile de l'entrepreneur est requise avant de générer ce document.");
+      return;
+    }
+    if (newDocType === 'contract' && !clientSignatureData) {
+      alert("La signature tactile du client est requise pour générer une entente/contrat.");
       return;
     }
 
@@ -209,9 +222,9 @@ export default function ClientDocumentsManager() {
       clauseWarrantyDetails: clauseWarr,
       ownerName: companyInfo.name || 'Hailite Xteriors Inc.',
       paymentsHistory: [],
-      clientSignature: clientSignatureTyped ? `typed://${clientSignatureTyped}` : undefined,
-      ownerSignature: ownerSignature ? `typed://${ownerSignature}` : undefined,
-      signedAt: clientSignatureTyped ? new Date().toISOString() : undefined
+      clientSignature: clientSignatureData || undefined,
+      ownerSignature: ownerSignatureData || undefined,
+      signedAt: new Date().toISOString()
     });
 
     setShowCreateModal(false);
@@ -895,12 +908,16 @@ export default function ClientDocumentsManager() {
                   
                   {/* Signature Entrepreneur */}
                   <div className="space-y-2">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">L'Entrepreneur (Signature légale) :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">L'Entrepreneur (Signature tactile) :</span>
                     <div className="border border-slate-200 rounded p-3 h-14 flex items-center justify-center font-serif text-sm bg-slate-50">
                       {selectedDocForView.ownerSignature ? (
-                        <span className="italic font-bold text-slate-800 select-none">
-                          {selectedDocForView.ownerSignature.replace('typed://', '')}
-                        </span>
+                        selectedDocForView.ownerSignature.startsWith('data:image') ? (
+                          <img src={selectedDocForView.ownerSignature} alt="Signature de l'entrepreneur" className="h-full object-contain" />
+                        ) : (
+                          <span className="italic font-bold text-slate-800 select-none">
+                            {selectedDocForView.ownerSignature.replace('typed://', '')}
+                          </span>
+                        )
                       ) : (
                         <span className="text-gray-400 font-sans text-xs">Non signé numériquement</span>
                       )}
@@ -910,12 +927,16 @@ export default function ClientDocumentsManager() {
 
                   {/* Signature Client */}
                   <div className="space-y-2">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Le Client (Signature légale) :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Le Client (Signature tactile) :</span>
                     <div className="border border-slate-200 rounded p-3 h-14 flex items-center justify-center font-serif text-sm bg-slate-50">
                       {selectedDocForView.clientSignature ? (
-                        <span className="italic font-bold text-orange-600 select-none">
-                          {selectedDocForView.clientSignature.replace('typed://', '')}
-                        </span>
+                        selectedDocForView.clientSignature.startsWith('data:image') ? (
+                          <img src={selectedDocForView.clientSignature} alt="Signature du client" className="h-full object-contain" />
+                        ) : (
+                          <span className="italic font-bold text-orange-600 select-none">
+                            {selectedDocForView.clientSignature.replace('typed://', '')}
+                          </span>
+                        )
                       ) : (
                         <span className="text-gray-400 font-sans text-xs">Non signé numériquement</span>
                       )}
@@ -1320,29 +1341,35 @@ export default function ClientDocumentsManager() {
                 </div>
               )}
 
-              {/* Typographic electronic signatures typing blocks */}
-              <div className="grid grid-cols-2 gap-4 border-t border-gray-800 pt-3">
-                <div className="space-y-1">
-                  <label className="text-gray-400 block">Auteur (Chef de Chantier)</label>
-                  <input
-                    type="text"
-                    value={ownerSignature}
-                    onChange={e => setOwnerSignature(e.target.value)}
-                    className="w-full bg-[#161822] border border-gray-800 text-white rounded p-1.5 font-serif text-xs px-2.5"
+              {/* Signatures tactiles réelles (dessinées au doigt ou à la souris) */}
+              <div className={`grid gap-4 border-t border-gray-800 pt-3 ${newDocType === 'contract' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+                <div key={`owner-${signaturePadResetKey}`}>
+                  <SignaturePad
+                    label="Signature de l'entrepreneur"
+                    value={ownerSignatureData}
+                    onChange={setOwnerSignatureData}
+                    required
+                    accentClass="text-gray-400"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-gray-500 block">Paraphe / Signature du Client</label>
-                  <input
-                    type="text"
-                    value={clientSignatureTyped}
-                    onChange={e => setClientSignatureTyped(e.target.value)}
-                    placeholder="Saisissez son nom pour signer le document"
-                    className="w-full bg-[#161822] border border-gray-800 text-orange-500 font-serif text-xs px-2.5 placeholder-gray-600 focus:border-orange-500"
-                  />
-                </div>
+                {newDocType === 'contract' && (
+                  <div key={`client-${signaturePadResetKey}`}>
+                    <SignaturePad
+                      label="Signature du client"
+                      value={clientSignatureData}
+                      onChange={setClientSignatureData}
+                      required
+                      accentClass="text-orange-500"
+                    />
+                  </div>
+                )}
               </div>
+              {newDocType !== 'contract' && (
+                <p className="text-[10px] text-gray-500 -mt-2">
+                  Ce type de document n'est signé que par l'entrepreneur. Seule une entente/contrat requiert aussi la signature tactile du client.
+                </p>
+              )}
 
               {/* Submit trigger button */}
               <button
