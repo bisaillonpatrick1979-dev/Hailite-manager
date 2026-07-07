@@ -353,6 +353,7 @@ const initialPunchSessions: PunchSession[] = [
     pausedAt: null,
     totalPauseMinutes: 30,
     withinGeofence: true,
+    totalWorkedHours: 8.0,
     revenue: 228.00 // 8 hours paid * 28.5
   },
   {
@@ -371,6 +372,7 @@ const initialPunchSessions: PunchSession[] = [
     surfaceMaterials: [
       { name: 'Revêtement d\'acier Hailite Rustique', quantity: 50, unitPrice: 12.50, emoji: '🧱' }
     ],
+    totalWorkedHours: 8.75,
     revenue: 625.00 // 50 pi² * 12.50
   },
   {
@@ -386,6 +388,7 @@ const initialPunchSessions: PunchSession[] = [
     pausedAt: null,
     totalPauseMinutes: 45,
     withinGeofence: true,
+    totalWorkedHours: 8.25,
     revenue: 235.13 // 8.25 worked hours * 28.5 $
   },
   {
@@ -401,6 +404,7 @@ const initialPunchSessions: PunchSession[] = [
     pausedAt: null,
     totalPauseMinutes: 60,
     withinGeofence: true,
+    totalWorkedHours: 8.0,
     revenue: 450.00
   }
 ];
@@ -644,6 +648,21 @@ const initialWeeklyGoals: WeeklyGoal[] = [
 ];
 
 // Helper to load state from localStorage or use defaults
+// Prochain numéro séquentiel basé sur le plus grand numéro déjà émis parmi une
+// liste de numéros existants (et non sur le nombre d'éléments restants), pour
+// éviter des collisions après la suppression d'un document/d'une facture.
+const nextSequentialNumber = (existingNumbers: string[], prefix: string): string => {
+  const maxSeq = existingNumbers.reduce((max, num) => {
+    const match = num.match(/-(\d+)$/);
+    const seq = match ? parseInt(match[1], 10) : 0;
+    return Math.max(max, seq);
+  }, 0);
+  return `${prefix}-${new Date().getFullYear()}-${String(maxSeq + 1).padStart(4, '0')}`;
+};
+
+const getNextDocNumber = (documents: GCPDocument[], type: GCPDocument['type'], prefix: string): string =>
+  nextSequentialNumber(documents.filter(d => d.type === type).map(d => d.number), prefix);
+
 const getSavedState = <T>(key: string, defaultValue: T): T => {
   try {
     const saved = localStorage.getItem(key);
@@ -787,10 +806,36 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   deleteEmployee: (id) => {
-    const { employees } = get();
+    const { employees, activeEmployee, projects, motivationTeams, weeklyGoals } = get();
     const updated = employees.filter(e => e.id !== id);
     set({ employees: updated });
     saveState('gcp_employees', updated);
+
+    // Nettoie les références à l'employé supprimé pour éviter des données fantômes
+    const updatedProjects = projects.map(p => ({
+      ...p,
+      assignedEmployees: p.assignedEmployees.filter(empId => empId !== id)
+    }));
+    set({ projects: updatedProjects });
+    saveState('gcp_projects', updatedProjects);
+
+    const updatedTeams = motivationTeams.map(team => ({
+      ...team,
+      memberIds: team.memberIds.filter(empId => empId !== id),
+      leaderId: team.leaderId === id ? undefined : team.leaderId
+    }));
+    set({ motivationTeams: updatedTeams });
+    saveState('gcp_motivationTeams', updatedTeams);
+
+    const updatedWeeklyGoals = weeklyGoals.filter(wg => wg.employeeId !== id);
+    set({ weeklyGoals: updatedWeeklyGoals });
+    saveState('gcp_weeklyGoals', updatedWeeklyGoals);
+
+    // Déconnecte la session active si l'employé supprimé était celui connecté
+    if (activeEmployee && activeEmployee.id === id) {
+      set({ activeEmployee: null });
+      saveState('gcp_activeEmployee', null);
+    }
   },
 
   addXP: (employeeId, amount) => {
@@ -923,8 +968,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         wgIdx = updatedWeeklyGoals.length - 1;
       }
       
-      const wg = updatedWeeklyGoals[wgIdx];
-      
+      // Clone avant mutation : l'entrée peut être la même référence que dans
+      // l'état précédent (weeklyGoals), la muter directement corromprait l'ancien snapshot.
+      const wg = { ...updatedWeeklyGoals[wgIdx] };
+      updatedWeeklyGoals[wgIdx] = wg;
+
       // Reset on new week
       if (wg.weekStart !== currentMonday) {
         wg.weekStart = currentMonday;
@@ -1060,10 +1108,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   deleteProject: (id) => {
-    const { projects } = get();
+    const { projects, motivationTeams } = get();
     const updated = projects.filter(p => p.id !== id);
     set({ projects: updated });
     saveState('gcp_projects', updated);
+
+    // Retire toute référence au chantier supprimé dans les équipes de motivation
+    const updatedTeams = motivationTeams.map(team => ({
+      ...team,
+      projectIds: team.projectIds?.filter(projId => projId !== id)
+    }));
+    set({ motivationTeams: updatedTeams });
+    saveState('gcp_motivationTeams', updatedTeams);
   },
 
   // Catalogue CRUD
@@ -1342,11 +1398,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         const endTime = new Date().toISOString();
         const start = new Date(p.startTime).getTime();
         const end = new Date(endTime).getTime();
-        
+
+        // Si la session est toujours en pause au moment de l'arrêt, on compte
+        // le temps de pause en cours pour ne pas le facturer comme du travail.
+        let totalPauseMinutes = p.totalPauseMinutes;
+        if (p.pausedAt) {
+          const pauseStart = new Date(p.pausedAt).getTime();
+          totalPauseMinutes += Math.floor((end - pauseStart) / 60000);
+        }
+
         let totalWorkedHours = (end - start) / 3600000; // hours in decimal
         // Subtract pause minutes
-        totalWorkedHours = Math.max(0, totalWorkedHours - (p.totalPauseMinutes / 60));
-        
+        totalWorkedHours = Math.max(0, totalWorkedHours - (totalPauseMinutes / 60));
+
         let revenue = 0;
         if (p.payMode === 'horaire') {
           revenue = Number((totalWorkedHours * p.rate).toFixed(2));
@@ -1361,6 +1425,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         return {
           ...p,
           endTime,
+          pausedAt: null,
+          totalPauseMinutes,
           totalWorkedHours: Number(totalWorkedHours.toFixed(2)),
           surfaceMaterials,
           revenue
@@ -1401,7 +1467,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newInvoice: Invoice = {
       ...inv,
       id: `inv-${Date.now()}`,
-      invoiceNumber: `INV-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(4, '0')}`
+      invoiceNumber: nextSequentialNumber(invoices.map(i => i.invoiceNumber), 'INV')
     };
     const updated = [newInvoice, ...invoices];
     set({ invoices: updated });
@@ -1444,7 +1510,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       id: `inv-${Date.now()}`,
       employeeId,
       employeeName: emp.name,
-      invoiceNumber: `INV-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(4, '0')}`,
+      invoiceNumber: nextSequentialNumber(invoices.map(i => i.invoiceNumber), 'INV'),
       date: new Date().toISOString().split('T')[0],
       sessionIds: unInvoicedPunches.map(p => p.id),
       totalHours: Number(totalHours.toFixed(2)),
@@ -1465,10 +1531,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // System A: Client Documents actions implementation with auto-calculations
   addGCPDocument: (doc) => {
     const { documents } = get();
-    const count = documents.filter(d => d.type === doc.type).length + 1;
     const prefix = doc.type === 'invoice' ? 'FAC' : doc.type === 'quote' ? 'DEV' : 'CON';
-    const number = `${prefix}-${new Date().getFullYear()}-${String(count).padStart(4, '0')}`;
-    
+    const number = getNextDocNumber(documents, doc.type, prefix);
+
     // Auto-calculate financial variables
     let subtotal = 0;
     if (doc.isSimpleLayout) {
@@ -1556,8 +1621,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const quote = documents.find(d => d.id === quoteId && d.type === 'quote');
     if (!quote) return;
 
-    const count = documents.filter(d => d.type === 'invoice').length + 1;
-    const number = `FAC-${new Date().getFullYear()}-${String(count).padStart(4, '0')}`;
+    const number = getNextDocNumber(documents, 'invoice', 'FAC');
 
     const invoice: GCPDocument = {
       ...quote,

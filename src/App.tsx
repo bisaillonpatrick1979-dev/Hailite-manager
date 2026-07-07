@@ -3636,29 +3636,32 @@ export default function App() {
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro Institution (3 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="006" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                value={companyInfo.bankDetails?.institution || ''}
                                 placeholder="Ex: 006 (Desjardins)"
+                                onChange={(e) => updateCompanyInfo({ bankDetails: { ...companyInfo.bankDetails, institution: e.target.value } })}
                               />
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro Transit / Succ. (5 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="92204" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                value={companyInfo.bankDetails?.transit || ''}
                                 placeholder="Ex: 92204"
+                                onChange={(e) => updateCompanyInfo({ bankDetails: { ...companyInfo.bankDetails, transit: e.target.value } })}
                               />
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro de Compte (7-12 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="4122589" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                value={companyInfo.bankDetails?.account || ''}
                                 placeholder="Ex: 4122589"
+                                onChange={(e) => updateCompanyInfo({ bankDetails: { ...companyInfo.bankDetails, account: e.target.value } })}
                               />
                             </div>
                           </div>
@@ -5109,10 +5112,11 @@ export default function App() {
 
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Taux d'intérêt annuel appliqué aux factures en retard (%)</label>
-                          <input 
-                            type="number" 
-                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                            defaultValue={18}
+                          <input
+                            type="number"
+                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                            value={companyInfo.defaultLateInterestPct ?? 18}
+                            onChange={(e) => updateCompanyInfo({ defaultLateInterestPct: Number(e.target.value) })}
                           />
                         </div>
 
@@ -5161,27 +5165,30 @@ export default function App() {
                         <h4 className="text-xs font-black uppercase text-orange-500">📋 Clauses Légales pour Devis & Factures</h4>
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Garantie standards appliquée par Hailite Xteriors (années)</label>
-                          <input 
-                            type="number" 
-                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                            defaultValue={10} 
+                          <input
+                            type="number"
+                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                            value={companyInfo.defaultWarrantyYears ?? 10}
+                            onChange={(e) => updateCompanyInfo({ defaultWarrantyYears: Number(e.target.value) })}
                           />
                         </div>
 
                         <div className="space-y-3">
                           <div>
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Clause de Modification / Extra Chantiers (Avenant)</label>
-                            <textarea 
+                            <textarea
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
-                              defaultValue={`Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable${isQuebec ? ' CCQ' : ''} de 120$/h.`}
+                              value={companyInfo.defaultClauseChangeOrder ?? `Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable${isQuebec ? ' CCQ' : ''} de 120$/h.`}
+                              onChange={(e) => updateCompanyInfo({ defaultClauseChangeOrder: e.target.value })}
                             />
                           </div>
 
                           <div>
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Droit de Résiliation du Client de Construction</label>
-                            <textarea 
+                            <textarea
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
-                              defaultValue="Le client peut résilier unilatéralement le contrat avant le début des travaux moyennant des frais administratifs fixes de 10% correspondant aux réservations logistiques."
+                              value={companyInfo.defaultClauseResiliation ?? "Le client peut résilier unilatéralement le contrat avant le début des travaux moyennant des frais administratifs fixes de 10% correspondant aux réservations logistiques."}
+                              onChange={(e) => updateCompanyInfo({ defaultClauseResiliation: e.target.value })}
                             />
                           </div>
                         </div>
@@ -5954,6 +5961,31 @@ export default function App() {
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navEmpInvoices}</span>
                 </button>
 
+                {/* La secrétaire a des droits de gestion sur l'inventaire et les commandes :
+                    elle doit donc pouvoir naviguer vers ces vues, sinon ces droits sont inaccessibles. */}
+                {activeEmployee.role === 'secretary' && (
+                  <>
+                    <button
+                      onClick={() => setActiveTab('inventory')}
+                      className={`flex flex-col items-center gap-1 cursor-pointer transition ${
+                        activeTab === 'inventory' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-2xl">📦</span>
+                      <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminInventory}</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('commandes')}
+                      className={`flex flex-col items-center gap-1 cursor-pointer transition ${
+                        activeTab === 'commandes' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-2xl">🚚</span>
+                      <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminOrders}</span>
+                    </button>
+                  </>
+                )}
+
                 <button
                   onClick={() => setActiveTab('stats')}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
@@ -6024,7 +6056,7 @@ export default function App() {
                   className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs text-white"
                 >
                   <option value="">-- Sélectionnez un chantier --</option>
-                  {projects.map(p => (
+                  {(activeEmployee.role === 'admin' ? projects : projects.filter(p => p.assignedEmployees.includes(activeEmployee.id))).map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>

@@ -77,13 +77,13 @@ export default function ClientDocumentsManager() {
   const [finalPct, setFinalPct] = useState(50);
 
   // Warranty
-  const [warrantyYears, setWarrantyYears] = useState(2);
+  const [warrantyYears, setWarrantyYears] = useState(companyInfo.defaultWarrantyYears ?? 2);
   const [hasInsurance, setHasInsurance] = useState(true);
   const [subcontractAuthorized, setSubcontractAuthorized] = useState(true);
 
   // Contract specific clauses
-  const [clauseChange, setClauseChange] = useState(clausePresets.changeOrder);
-  const [clauseResil, setClauseResil] = useState(clausePresets.resiliation);
+  const [clauseChange, setClauseChange] = useState(companyInfo.defaultClauseChangeOrder ?? clausePresets.changeOrder);
+  const [clauseResil, setClauseResil] = useState(companyInfo.defaultClauseResiliation ?? clausePresets.resiliation);
   const [clauseWarr, setClauseWarr] = useState(clausePresets.warranty);
 
   // Tactile (touch-drawn) electronic signatures
@@ -108,11 +108,11 @@ export default function ClientDocumentsManager() {
     setDepositPct(25);
     setMidPct(25);
     setFinalPct(50);
-    setWarrantyYears(2);
+    setWarrantyYears(companyInfo.defaultWarrantyYears ?? 2);
     setHasInsurance(true);
     setSubcontractAuthorized(true);
-    setClauseChange(clausePresets.changeOrder);
-    setClauseResil(clausePresets.resiliation);
+    setClauseChange(companyInfo.defaultClauseChangeOrder ?? clausePresets.changeOrder);
+    setClauseResil(companyInfo.defaultClauseResiliation ?? clausePresets.resiliation);
     setClauseWarr(clausePresets.warranty);
     setOwnerSignatureData(null);
     setClientSignatureData(null);
@@ -199,7 +199,7 @@ export default function ClientDocumentsManager() {
       subcontractLines,
       subtotal: 0, // Auto calculated in store
       discountPct: Number(discountPct) || 0,
-      taxRate: Number((((companyInfo.taxRate1 || 0) + (companyInfo.taxRate2 || 0)) * 100).toFixed(4)) || 14.975,
+      taxRate: Number((((companyInfo.taxRate1 !== undefined ? companyInfo.taxRate1 : 0.05) + (companyInfo.taxRate2 !== undefined ? companyInfo.taxRate2 : 0.09975)) * 100).toFixed(4)),
       taxAmount: 0, // Auto calculated
       total: 0, // Auto calculated
       holdbackPct: Number(holdbackPct) || 0,
@@ -222,7 +222,7 @@ export default function ClientDocumentsManager() {
       clauseWarrantyDetails: clauseWarr,
       ownerName: companyInfo.name || 'Hailite Xteriors Inc.',
       paymentsHistory: [],
-      clientSignature: clientSignatureData || undefined,
+      clientSignature: newDocType === 'contract' ? (clientSignatureData || undefined) : undefined,
       ownerSignature: ownerSignatureData || undefined,
       signedAt: new Date().toISOString()
     });

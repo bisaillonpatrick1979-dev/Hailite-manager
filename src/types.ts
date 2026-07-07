@@ -196,7 +196,13 @@ export interface CompanyInfo {
   voiceReminderVolume: number; // 0-100
   voiceReminderSchedule: string; // hours e.g., "08:00, 12:00, 17:00"
   paymentTerms: string; // conditions de paiement
-  
+
+  // Conditions par défaut appliquées aux nouveaux devis/contrats/factures
+  defaultLateInterestPct?: number;
+  defaultWarrantyYears?: number;
+  defaultClauseChangeOrder?: string;
+  defaultClauseResiliation?: string;
+
   // Salaried Payroll Settings
   payrollVacationRate?: number;
   payrollHealthInsurance?: number;
