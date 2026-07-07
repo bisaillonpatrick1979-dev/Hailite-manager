@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { translations } from './translations';
@@ -8,12 +8,14 @@ import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
-import OnboardingScreen from './components/OnboardingScreen';
-import MotivationTab from './components/MotivationTab';
-import ClientDocumentsManager from './components/ClientDocumentsManager';
+// Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
+// que sur un onglet précis, inutile de les inclure dans le bundle initial.
+const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
+const MotivationTab = lazy(() => import('./components/MotivationTab'));
+const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
+const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
+const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
 import EmployeeAvatar from './components/EmployeeAvatar';
-import CatalogueManager from './components/CatalogueManager';
-import ProjectTasksAndTools from './components/ProjectTasksAndTools';
 import SignaturePad from './components/SignaturePad';
 import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
@@ -35,6 +37,15 @@ function makeIconAvatar(emoji: string, bg: string): string {
 const CATALOGUE_UNIT_LABELS: Record<string, string> = {
   pi2: 'pi²', pi_lin: 'pi lin.', boite: 'boîte', rouleau: 'rouleau', unite: 'unité', lot: 'lot'
 };
+
+// Repli affiché brièvement pendant le chargement à la demande d'un composant
+function LazySectionFallback() {
+  return (
+    <div className="flex items-center justify-center p-10 text-gray-500 text-xs font-mono uppercase tracking-wider">
+      Chargement...
+    </div>
+  );
+}
 
 const EMPLOYEE_PRESET_AVATARS = [
   { url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80', label: 'Marc (Charpentier)' },
@@ -357,7 +368,7 @@ export default function App() {
 
   // If the company is not onboarded, redirect to the custom onboarding flow
   if (!isOnboarded) {
-    return <OnboardingScreen />;
+    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
   }
 
   const handleSelectProfile = (empId: string) => {
@@ -1037,7 +1048,9 @@ export default function App() {
                       const activeProject = projects.find(p => p.id === activePunchSession.projectId);
                       return activeProject ? (
                         <div className="w-full max-w-md mb-8 -mt-4 bg-gray-950/60 border border-gray-800 rounded-2xl p-3">
-                          <ProjectTasksAndTools project={activeProject} defaultOpen bordered={false} />
+                          <Suspense fallback={<LazySectionFallback />}>
+                            <ProjectTasksAndTools project={activeProject} defaultOpen bordered={false} />
+                          </Suspense>
                         </div>
                       ) : null;
                     })()}
@@ -1832,7 +1845,9 @@ export default function App() {
                         </div>
                       )}
 
-                      <ProjectTasksAndTools project={proj} />
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <ProjectTasksAndTools project={proj} />
+                      </Suspense>
                     </div>
                   ))}
                 </div>
@@ -1851,7 +1866,9 @@ export default function App() {
                   </p>
                 </div>
 
-                <ClientDocumentsManager />
+                <Suspense fallback={<LazySectionFallback />}>
+                  <ClientDocumentsManager />
+                </Suspense>
               </div>
             )}
 
@@ -2057,7 +2074,9 @@ export default function App() {
                     </div>
                   </>
                 ) : (
-                  <CatalogueManager />
+                  <Suspense fallback={<LazySectionFallback />}>
+                    <CatalogueManager />
+                  </Suspense>
                 )}
               </div>
             )}
@@ -3438,7 +3457,9 @@ export default function App() {
 
             {/* -------------------- VIEW CONTAINER : MOTIVATION -------------------- */}
             {activeTab === 'motivation' && (
-              <MotivationTab />
+              <Suspense fallback={<LazySectionFallback />}>
+                <MotivationTab />
+              </Suspense>
             )}
 
             {/* -------------------- VIEW CONTAINER : REGLAGES (12 ONGLETS) -------------------- */}
@@ -5275,7 +5296,9 @@ export default function App() {
 
                     {visibleSettingsTab === 8 && (
                       <div className="max-h-[600px] overflow-y-auto pr-2">
-                        <CatalogueManager />
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <CatalogueManager />
+                        </Suspense>
                       </div>
                     )}
 
@@ -5987,9 +6010,9 @@ export default function App() {
                 )}
 
                 <button
-                  onClick={() => setActiveTab('stats')}
+                  onClick={() => { setActiveTab('stats'); setStatsSubTab('analytics'); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                    activeTab === 'stats' && statsSubTab === 'analytics' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
                   <span className="text-2xl">🏆</span>
@@ -5997,9 +6020,9 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('stats')} // mapped into Stats/Payroll section
+                  onClick={() => { setActiveTab('stats'); setStatsSubTab('payroll'); }} // ouvre directement le décompte de paie, pas le sous-onglet rendement/XP
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400'
+                    activeTab === 'stats' && statsSubTab === 'payroll' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
                   <span className="text-2xl">💵</span>

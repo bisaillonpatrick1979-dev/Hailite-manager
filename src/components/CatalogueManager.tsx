@@ -335,28 +335,28 @@ export default function CatalogueManager() {
         <div className="space-y-1">
           <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Fournisseur ({`$${u}`})</label>
           <input
-            type="number" step="0.05"
+            type="number" step="0.05" min="0"
             className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
             value={form.supplierPrice}
-            onChange={(e) => setForm({ ...form, supplierPrice: Number(e.target.value) })}
+            onChange={(e) => setForm({ ...form, supplierPrice: Math.max(0, Number(e.target.value) || 0) })}
           />
         </div>
         <div className="space-y-1">
           <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Sous-traitant ({`$${u}`})</label>
           <input
-            type="number" step="0.05"
+            type="number" step="0.05" min="0"
             className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
             value={form.pricePerSqFt}
-            onChange={(e) => setForm({ ...form, pricePerSqFt: Number(e.target.value) })}
+            onChange={(e) => setForm({ ...form, pricePerSqFt: Math.max(0, Number(e.target.value) || 0) })}
           />
         </div>
         <div className="space-y-1">
           <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Client ({`$${u}`})</label>
           <input
-            type="number" step="0.05"
+            type="number" step="0.05" min="0"
             className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
             value={form.clientPrice}
-            onChange={(e) => setForm({ ...form, clientPrice: Number(e.target.value) })}
+            onChange={(e) => setForm({ ...form, clientPrice: Math.max(0, Number(e.target.value) || 0) })}
           />
         </div>
       </div>

@@ -974,6 +974,7 @@ export default function ClientDocumentsManager() {
                   <span className="absolute left-3 top-2 text-white font-mono">$</span>
                   <input
                     type="number"
+                    min="0"
                     value={payAmount}
                     onChange={e => setPayAmount(e.target.value)}
                     placeholder="ex: 2500"
@@ -1123,10 +1124,11 @@ export default function ClientDocumentsManager() {
                       />
                       <input
                         type="number"
+                        min="0"
                         value={l.qty}
                         onChange={e => {
                           const dup = [...simpleLines];
-                          dup[idx].qty = parseFloat(e.target.value) || 0;
+                          dup[idx].qty = Math.max(0, parseFloat(e.target.value) || 0);
                           setSimpleLines(dup);
                         }}
                         placeholder="Qty"
@@ -1145,10 +1147,11 @@ export default function ClientDocumentsManager() {
                       />
                       <input
                         type="number"
+                        min="0"
                         value={l.price}
                         onChange={e => {
                           const dup = [...simpleLines];
-                          dup[idx].price = parseFloat(e.target.value) || 0;
+                          dup[idx].price = Math.max(0, parseFloat(e.target.value) || 0);
                           setSimpleLines(dup);
                         }}
                         placeholder="$/unit"
@@ -1196,13 +1199,13 @@ export default function ClientDocumentsManager() {
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded font-mono"
                         />
                         <input
-                          type="number" value={m.qtySqft} placeholder="Sqrft"
-                          onChange={e => { const d = [...richMaterials]; d[idx].qtySqft = parseFloat(e.target.value) || 0; setRichMaterials(d); }}
+                          type="number" min="0" value={m.qtySqft} placeholder="Sqrft"
+                          onChange={e => { const d = [...richMaterials]; d[idx].qtySqft = Math.max(0, parseFloat(e.target.value) || 0); setRichMaterials(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-center font-mono"
                         />
                         <input
-                          type="number" value={m.price} placeholder="$/pi²"
-                          onChange={e => { const d = [...richMaterials]; d[idx].price = parseFloat(e.target.value) || 0; setRichMaterials(d); }}
+                          type="number" min="0" value={m.price} placeholder="$/pi²"
+                          onChange={e => { const d = [...richMaterials]; d[idx].price = Math.max(0, parseFloat(e.target.value) || 0); setRichMaterials(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-right font-mono col-span-1"
                         />
                         <button
@@ -1238,13 +1241,13 @@ export default function ClientDocumentsManager() {
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded col-span-2"
                         />
                         <input
-                          type="number" value={lb.hours} placeholder="Heures"
-                          onChange={e => { const d = [...richLabours]; d[idx].hours = parseFloat(e.target.value) || 0; setRichLabours(d); }}
+                          type="number" min="0" value={lb.hours} placeholder="Heures"
+                          onChange={e => { const d = [...richLabours]; d[idx].hours = Math.max(0, parseFloat(e.target.value) || 0); setRichLabours(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-center font-mono"
                         />
                         <input
-                          type="number" value={lb.rate} placeholder="$/heure"
-                          onChange={e => { const d = [...richLabours]; d[idx].rate = parseFloat(e.target.value) || 0; setRichLabours(d); }}
+                          type="number" min="0" value={lb.rate} placeholder="$/heure"
+                          onChange={e => { const d = [...richLabours]; d[idx].rate = Math.max(0, parseFloat(e.target.value) || 0); setRichLabours(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-right font-mono col-span-2 text-orange-400"
                         />
                         <button
@@ -1266,19 +1269,23 @@ export default function ClientDocumentsManager() {
                   <label className="text-gray-400 block">Escompte (%)</label>
                   <input
                     type="number"
+                    min="0"
+                    max="100"
                     value={discountPct}
-                    onChange={e => setDiscountPct(parseFloat(e.target.value) || 0)}
+                    onChange={e => setDiscountPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                     placeholder="ex: 5"
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono"
                   />
                 </div>
-                
+
                 <div className="space-y-1">
                   <label className="text-gray-400 block">Retenue Garantie (%)</label>
                   <input
                     type="number"
+                    min="0"
+                    max="100"
                     value={holdbackPct}
-                    onChange={e => setHoldbackPct(parseFloat(e.target.value) || 0)}
+                    onChange={e => setHoldbackPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                     placeholder={isQuebec ? 'ex: 10 pour la CCQ' : 'ex: 10'}
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono text-amber-400"
                   />
@@ -1288,8 +1295,9 @@ export default function ClientDocumentsManager() {
                   <label className="text-gray-400 block">Acompte demandé ($)</label>
                   <input
                     type="number"
+                    min="0"
                     value={depositAmount}
-                    onChange={e => setDepositAmount(parseFloat(e.target.value) || 0)}
+                    onChange={e => setDepositAmount(Math.max(0, parseFloat(e.target.value) || 0))}
                     placeholder="ex: 2500"
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono text-green-400"
                   />
