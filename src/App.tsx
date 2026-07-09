@@ -1,14 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { translations } from './translations';
-import { Employee, CompanyInfo, EmployeeRole } from './types';
+import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
-import OnboardingScreen from './components/OnboardingScreen';
-import MotivationTab from './components/MotivationTab';
-import ClientDocumentsManager from './components/ClientDocumentsManager';
+import {
+  CANADIAN_REGIONS, US_REGIONS, TaxRegion,
+  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
+} from './regionsData';
+// Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
+// que sur un onglet précis, inutile de les inclure dans le bundle initial.
+const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
+const MotivationTab = lazy(() => import('./components/MotivationTab'));
+const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
+const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
+const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
 import EmployeeAvatar from './components/EmployeeAvatar';
-import { 
+import SignaturePad from './components/SignaturePad';
+import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
@@ -16,85 +25,26 @@ import {
   Play, Pause, Award, HelpCircle, Phone, Mail, Coins
 } from 'lucide-react';
 
-const IMAGE_KEYWORDS: { keywords: string[]; url: string; alt: string }[] = [
-  // Toiture
-  { keywords: ['bardeau','shingle','asphalte','architectural'],
-    url: 'https://images.unsplash.com/photo-1625756975-c71c4ff88df1?w=400&q=80',
-    alt: 'Bardeaux d\'asphalte sur toiture' },
-  { keywords: ['sous-couche','feltex','synthétique'],
-    url: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80',
-    alt: 'Rouleau de sous-couche pour toiture' },
-  { keywords: ['ice','water','shield','membrane'],
-    url: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=400&q=80',
-    alt: 'Membrane ice and water shield' },
-  { keywords: ['ventilation','faîte','ridge'],
-    url: 'https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=400&q=80',
-    alt: 'Ventilation de faîte de toiture' },
-  // Siding
-  { keywords: ['hardie','fibrociment','fibre de ciment','cement'],
-    url: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&q=80',
-    alt: 'Revêtement en fibre de ciment' },
-  { keywords: ['vinyle','vinyl','clapboard','siding'],
-    url: 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=400&q=80',
-    alt: 'Siding en vinyle blanc' },
-  { keywords: ['lp','smartside','bois composite'],
-    url: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80',
-    alt: 'LP SmartSide revêtement composite' },
-  { keywords: ['tyvek','pare-air','housewrap'],
-    url: 'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=400&q=80',
-    alt: 'Membrane pare-air Tyvek' },
-  { keywords: ['osb','panneau','contreplaqué','plywood'],
-    url: 'https://images.unsplash.com/photo-1565008576549-57569a49371d?w=400&q=80',
-    alt: 'Panneaux OSB empilés' },
-  // Soffit / Fascia
-  { keywords: ['soffite','soffit'],
-    url: 'https://images.unsplash.com/photo-1503174971373-b1f69850bded?w=400&q=80',
-    alt: 'Soffite en vinyle ventilé' },
-  { keywords: ['fascia'],
-    url: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=400&q=80',
-    alt: 'Fascia aluminium blanc' },
-  // Fixations
-  { keywords: ['clou','nail'],
-    url: 'https://images.unsplash.com/photo-1590598016683-c8e8b8e6c99a?w=400&q=80',
-    alt: 'Clous galvanisés pour construction' },
-  { keywords: ['vis','screw','inox'],
-    url: 'https://images.unsplash.com/photo-1609220136736-443140cffec6?w=400&q=80',
-    alt: 'Vis en acier inoxydable' },
-  { keywords: ['agrafe','staple'],
-    url: 'https://images.unsplash.com/photo-1590041794748-2d8eb73a571c?w=400&q=80',
-    alt: 'Agrafes métalliques' },
-  // Étanchéité
-  { keywords: ['calfeutrant','caulk','silicone'],
-    url: 'https://images.unsplash.com/photo-1565008576549-57569a49371d?w=400&q=80',
-    alt: 'Tube de calfeutrant extérieur' },
-  { keywords: ['mousse','foam'],
-    url: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&q=80',
-    alt: 'Mousse polyuréthane expansive' },
-  { keywords: ['ruban','tape'],
-    url: 'https://images.unsplash.com/photo-1530587191325-3db32d826c18?w=400&q=80',
-    alt: 'Ruban adhésif pour membrane' },
-  // Structure
-  { keywords: ['planche','board','2x4','2x6','2x8','bois'],
-    url: 'https://images.unsplash.com/photo-1541123437800-1bb1317badc2?w=400&q=80',
-    alt: 'Planches de bois SPF empilées' },
-  // Main-d'oeuvre
-  { keywords: ['installation','pose','install'],
-    url: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80',
-    alt: 'Ouvrier installant du revêtement' },
-  { keywords: ['dépose','removal','enlèvement'],
-    url: 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=400&q=80',
-    alt: 'Dépose de l\'ancien revêtement' },
-  { keywords: ['toiture','roofing','couvreur'],
-    url: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=400&q=80',
-    alt: 'Couvreur posant des bardeaux' },
-];
-
 // Petites icônes-avatars générées localement (SVG en data URI) : aucune
 // dépendance réseau, donc toujours disponibles même hors ligne, en plus des
 // photos ci-dessous pour élargir le choix.
 function makeIconAvatar(emoji: string, bg: string): string {
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='150' height='150'><rect width='150' height='150' rx='75' fill='${bg}'/><text x='75' y='96' font-size='72' text-anchor='middle'>${emoji}</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+// Libellés courts pour les unités de vente du catalogue (voir CatalogueManager)
+const CATALOGUE_UNIT_LABELS: Record<string, string> = {
+  pi2: 'pi²', pi_lin: 'pi lin.', boite: 'boîte', rouleau: 'rouleau', unite: 'unité', lot: 'lot'
+};
+
+// Repli affiché brièvement pendant le chargement à la demande d'un composant
+function LazySectionFallback() {
+  return (
+    <div className="flex items-center justify-center p-10 text-gray-500 text-xs font-mono uppercase tracking-wider">
+      Chargement...
+    </div>
+  );
 }
 
 const EMPLOYEE_PRESET_AVATARS = [
@@ -178,46 +128,14 @@ const TOUR_STEPS = [
   }
 ];
 
-function suggestImageUrl(name: string): { url: string; alt: string } | null {
-  const n = name.toLowerCase();
-  const match = IMAGE_KEYWORDS.find(entry =>
-    entry.keywords.some(k => n.includes(k))
-  );
-  return match ? { url: match.url, alt: match.alt } : null;
-}
-
-function suggestEmoji(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes('bardeau') || n.includes('shingle') || n.includes('asphalte') || n.includes('toiture')) return '🏠';
-  if (n.includes('siding') || n.includes('vinyle') || n.includes('revêtement')) return '🧱';
-  if (n.includes('clou') || n.includes('vis') || n.includes('screw') || n.includes('nail')) return '🔩';
-  if (n.includes('membrane') || n.includes('tyvek') || n.includes('pare-air')) return '💨';
-  if (n.includes('soffite') || n.includes('fascia')) return '🧇';
-  if (n.includes('planche') || n.includes('bois') || n.includes('osb')) return '🪵';
-  if (n.includes('installation') || n.includes('pose') || n.includes('poseur') || n.includes('couvreur') || n.includes('travail')) return '👷';
-  return '📦';
-}
-
-function MaterialImage({ mat }: { mat: { name: string; emoji?: string; imageUrl?: string; imageAlt?: string } }) {
-  const [error, setError] = useState(false);
-
-  if (mat.imageUrl && !error) {
-    return (
-      <img
-        src={mat.imageUrl}
-        alt={mat.imageAlt || mat.name}
-        onError={() => setError(true)}
-        className="w-full h-[90px] object-cover rounded-lg mb-2 block border border-gray-800"
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
-  // Fallback : grand emoji centré
-  return (
-    <div className="w-full h-[90px] flex items-center justify-center text-4xl rounded-lg bg-gray-950 mb-2 border border-gray-850">
-      {mat.emoji || '📦'}
-    </div>
-  );
+// Résout la province/état de la compagnie (fixé au Québec seulement si rien n'a
+// été configuré), pour que les libellés et calculs de paie s'adaptent au bon
+// endroit au lieu de présumer le Québec partout.
+function getCompanyRegion(companyInfo: CompanyInfo): { country: 'CA' | 'US'; region: TaxRegion } {
+  const country = companyInfo.country || 'CA';
+  const list = country === 'US' ? US_REGIONS : CANADIAN_REGIONS;
+  const region = list.find(r => r.code === companyInfo.region) || list[0];
+  return { country, region };
 }
 
 export default function App() {
@@ -225,22 +143,60 @@ export default function App() {
     employees, projects, punchSessions, invoices, catalogue, inventory,
     orders, clients, companyInfo, hrAlerts, activeEmployee, currentLanguage,
     currentTheme, login, logout, setTheme, setLanguage, addEmployee, updateEmployee,
-    deleteEmployee, addProject, updateProject, deleteProject, addCatalogueMaterial,
-    updateCatalogueMaterial, deleteCatalogueMaterial, addInventoryItem, updateInventoryItem,
+    deleteEmployee, addProject, updateProject, deleteProject,
+    addInventoryItem, updateInventoryItem,
     deleteInventoryItem, addSupplierOrder, updateSupplierOrder, addClient, updateClient,
     deleteClient, updateCompanyInfo, resolveHRAlert, startPunchSession, pausePunchSession,
     resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
-    documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment
+    documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
+    hydrateCloud
   } = useAppStore();
+
+  // Hydratation depuis Supabase au démarrage (best effort, non bloquant : l'app
+  // fonctionne déjà avec les données LocalStorage chargées de façon synchrone ci-dessus),
+  // puis rafraîchissement périodique et au retour sur l'onglet pour approcher du
+  // temps réel sans dépendre de connexions persistantes (compatible hébergement serverless).
+  const [cloudSyncing, setCloudSyncing] = useState(true);
+  useEffect(() => {
+    hydrateCloud().finally(() => setCloudSyncing(false));
+
+    const interval = setInterval(() => { hydrateCloud(); }, 45000);
+    const onFocus = () => hydrateCloud();
+    const onVisibility = () => { if (!document.hidden) hydrateCloud(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   const dragControls = useDragControls();
   const t = translations[currentLanguage];
+  const { country: companyCountry, region: companyRegion } = getCompanyRegion(companyInfo);
+  const payrollMeta = getRegionPayrollMeta(companyRegion, companyCountry);
+  const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
+  const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
+  const pensionName = currentLanguage === 'FR' ? payrollMeta.pensionNameFR : payrollMeta.pensionNameEN;
+  const secondaryDeductionName = currentLanguage === 'FR' ? payrollMeta.secondaryDeductionNameFR : payrollMeta.secondaryDeductionNameEN;
+  const workersCompName = currentLanguage === 'FR' ? payrollMeta.workersCompNameFR : payrollMeta.workersCompNameEN;
+  const breakRuleText = currentLanguage === 'FR' ? payrollMeta.breakRuleFR : payrollMeta.breakRuleEN;
+  const businessNumberLabel = currentLanguage === 'FR' ? payrollMeta.businessNumberLabelFR : payrollMeta.businessNumberLabelEN;
   const { coords, gpsError, isChecking, checkLocation, evaluateProjectGeofence } = useGeofencing();
 
   // App Navigation state
   const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
+  // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
+  // réglages personnels (Thème, Langue) — jamais les réglages de compagnie,
+  // paie ou d'équipe. On limite l'onglet affiché sans toucher à l'état réel,
+  // pour ne jamais rendre un onglet réservé même si activeSettingsTab dérive.
+  const visibleSettingsTab = (activeEmployee && activeEmployee.role !== 'admin' && ![2, 3].includes(activeSettingsTab))
+    ? 2
+    : activeSettingsTab;
   const [statsMonth, setStatsMonth] = useState<string>('2026-06');
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [statsSubTab, setStatsSubTab] = useState<'analytics' | 'payroll'>('analytics');
@@ -276,9 +232,13 @@ export default function App() {
   // Modals state
   const [showPunchInModal, setShowPunchInModal] = useState<boolean>(false);
   const [showPunchOutModal, setShowPunchOutModal] = useState<boolean>(false);
-  
+
+  // Signature tactile requise avant l'envoi d'une facture sous-traitant à la compagnie
+  const [invoiceToSign, setInvoiceToSign] = useState<Invoice | null>(null);
+  const [invoiceSignatureData, setInvoiceSignatureData] = useState<string | null>(null);
+
   // Punch-Out Surface materials reporting state
-  const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string }>>([]);
+  const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string; unit: string }>>([]);
 
   // Admin CRUD wizard states
   const [pendingEmployeeAvatar, setPendingEmployeeAvatar] = useState<string>('');
@@ -321,13 +281,11 @@ export default function App() {
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
   const [newClientForm, setNewClientForm] = useState({ name: '', company: '', email: '', phone: '', address: '' });
   const [newInventoryForm, setNewInventoryForm] = useState({ name: '', quantity: 10, unit: 'pqt', emoji: '📦', minThreshold: 5 });
-  const [newCatalogueForm, setNewCatalogueForm] = useState({ name: '', emoji: '🪵', pricePerSqFt: 5.0, imageUrl: '', imageAlt: '' });
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
 
   // Custom states for Inventory, Catalogue, Supplier Orders & App Tour
   const [inventorySubTab, setInventorySubTab] = useState<'stock' | 'catalogue'>('stock');
   const [showAddInventoryForm, setShowAddInventoryForm] = useState(false);
-  const [showAddCatalogueForm, setShowAddCatalogueForm] = useState(false);
   const [showAddOrderForm, setShowAddOrderForm] = useState(false);
   const [orderSupplier, setOrderSupplier] = useState('');
   const [orderItems, setOrderItems] = useState<Array<{ name: string; quantity: number; price: number }>>([{ name: '', quantity: 20, price: 5.5 }]);
@@ -340,6 +298,8 @@ export default function App() {
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiKeyDraft, setAiKeyDraft] = useState<string>(companyInfo.aiApiKey || '');
+  const [showAiKey, setShowAiKey] = useState<boolean>(false);
 
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
@@ -430,7 +390,7 @@ export default function App() {
 
   // If the company is not onboarded, redirect to the custom onboarding flow
   if (!isOnboarded) {
-    return <OnboardingScreen />;
+    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
   }
 
   const handleSelectProfile = (empId: string) => {
@@ -552,30 +512,36 @@ export default function App() {
 
   const handlePunchOutConfirm = () => {
     if (!activeEmployee || !activePunchSession) return;
-    
+
     // Stop session and output reported materials
     stopPunchSession(activePunchSession.id, reportedMaterials);
     playSoundCue('out');
-    
+
+    // Ajoute la session tout juste fermée à un brouillon de facture pour cet
+    // employé (sous-traitant ou salarié), sans attendre une génération manuelle.
+    if (activeEmployee.role !== 'admin') {
+      generateDraftInvoiceForEmployee(activeEmployee.id);
+    }
+
     // Reset reported materials list
     setReportedMaterials([]);
     setShowPunchOutModal(false);
   };
 
-  const handleAddMaterialToReport = (materialName: string, quantity: number, unitPrice: number, emoji: string) => {
+  const handleAddMaterialToReport = (materialName: string, quantity: number, unitPrice: number, emoji: string, unit: string) => {
     if (quantity <= 0) return;
     const existing = reportedMaterials.find(m => m.name === materialName);
     if (existing) {
       setReportedMaterials(reportedMaterials.map(m => m.name === materialName ? { ...m, quantity: m.quantity + quantity } : m));
     } else {
-      setReportedMaterials([...reportedMaterials, { name: materialName, quantity, unitPrice, emoji }]);
+      setReportedMaterials([...reportedMaterials, { name: materialName, quantity, unitPrice, emoji, unit }]);
     }
   };
 
-  // Send message to Gemini server API
+  // Send message to the selected AI provider (Gemini / Anthropic / OpenAI) via the server proxy
   const handleSendAiMessage = async () => {
     if (!aiMessage.trim()) return;
-    
+
     const userText = aiMessage;
     setAiHistory(prev => [...prev, { role: 'user', text: userText }]);
     setAiMessage('');
@@ -585,20 +551,25 @@ export default function App() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText })
+        body: JSON.stringify({
+          message: userText,
+          provider: companyInfo.aiProvider || 'gemini',
+          apiKey: companyInfo.aiApiKey || '',
+          regionLabel: `${companyRegion.nameFR} (${companyCountry === 'US' ? 'États-Unis' : 'Canada'})`
+        })
       });
       const data = await res.json();
-      
-      setAiHistory(prev => [...prev, { 
-        role: 'assistant', 
-        text: data.reply,
-        simulated: data.simulated 
+
+      setAiHistory(prev => [...prev, {
+        role: 'assistant',
+        text: res.ok ? data.reply : (data.error || "Désolé, l'agent IA a rencontré une erreur. Veuillez réessayer."),
+        simulated: data.simulated
       }]);
     } catch (err: any) {
       console.error(err);
-      setAiHistory(prev => [...prev, { 
-        role: 'assistant', 
-        text: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer." 
+      setAiHistory(prev => [...prev, {
+        role: 'assistant',
+        text: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer."
       }]);
     } finally {
       setIsAiLoading(false);
@@ -617,30 +588,18 @@ export default function App() {
     };
   };
 
-  // Progressive Tax Bracket Estimator (Quebec / Canada)
+  // Progressive Tax Bracket Estimator — s'adapte au pays/province de la compagnie
+  // au lieu de présumer le Québec. Pour les États-Unis, l'impôt fédéral/état n'est
+  // pas modélisé en détail (affiché avec une mention "à valider" dans l'UI).
   const calculateProgressiveTax = (annualGross: number, isFederal: boolean) => {
-    if (isFederal) {
-      if (annualGross <= 55867) {
-        return annualGross * 0.15;
-      } else if (annualGross <= 111733) {
-        return (55867 * 0.15) + (annualGross - 55867) * 0.205;
-      } else if (annualGross <= 173205) {
-        return (55867 * 0.15) + ((111733 - 55867) * 0.205) + (annualGross - 111733) * 0.26;
-      } else {
-        return (55867 * 0.15) + ((111733 - 55867) * 0.205) + ((173205 - 111733) * 0.26) + (annualGross - 173205) * 0.29;
-      }
-    } else {
-      // Québec provincial progressive
-      if (annualGross <= 51780) {
-        return annualGross * 0.14;
-      } else if (annualGross <= 103545) {
-        return (51780 * 0.14) + (annualGross - 51780) * 0.19;
-      } else if (annualGross <= 126285) {
-        return (51780 * 0.14) + ((103545 - 51780) * 0.19) + (annualGross - 103545) * 0.24;
-      } else {
-        return (51780 * 0.14) + ((103545 - 51780) * 0.19) + ((126285 - 103545) * 0.24) + (annualGross - 126285) * 0.2575;
-      }
+    if (companyCountry === 'US') {
+      return 0;
     }
+    if (isFederal) {
+      return computeBracketTax(annualGross, CA_FEDERAL_BRACKETS);
+    }
+    const brackets = CA_PROVINCIAL_BRACKETS[companyRegion.code];
+    return brackets ? computeBracketTax(annualGross, brackets) : annualGross * CA_PROVINCIAL_FALLBACK_RATE;
   };
 
   const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number) => {
@@ -648,10 +607,10 @@ export default function App() {
     const isContractor = emp.workerType === 'contractor';
 
     if (isContractor) {
-      // Contractors (no source deductions or benefits, add GST / QST if they have GST registered)
+      // Contractors (no source deductions or benefits, add sales taxes of the company's region if registered)
       const hasGst = !!emp.gstNumber;
-      const gst = hasGst ? gross * 0.05 : 0;
-      const qst = hasGst ? gross * 0.09975 : 0;
+      const gst = hasGst ? gross * companyRegion.taxRate1 : 0;
+      const qst = hasGst ? gross * companyRegion.taxRate2 : 0;
       const totalTaxes = gst + qst;
       const net = gross + totalTaxes;
 
@@ -696,9 +655,9 @@ export default function App() {
       : (company.payrollVacationRate !== undefined ? company.payrollVacationRate : 6);
     const vacationAmount = gross * (vacRate / 100);
 
-    // Source deductions
-    const cpp = gross * 0.0595; // RRQ / CPP: 5.95%
-    const ei = gross * 0.0166;  // EI / AE: 1.66%
+    // Source deductions (pension + secondary deduction rates adapt to the company's province/state)
+    const cpp = gross * payrollMeta.pensionRate;
+    const ei = gross * payrollMeta.secondaryDeductionRate;
     
     // Income taxes
     const annualGross = gross * periods;
@@ -744,12 +703,14 @@ export default function App() {
     };
   };
 
-  // Under Quebec / Canada structures, simulate simple gross vs net deductions
+  // Simule les déductions à la source pour un salaire brut ponctuel, avec les
+  // taux et le régime de retraite adaptés à la province/état de la compagnie.
   const calculateSimulatedDeductions = (gross: number) => {
-    const fedTax = gross * 0.15; // 15% Federal
-    const provTax = gross * 0.15; // 15% Provincial (Quebec)
-    const rrq = gross * 0.064; // 6.4% Régime de rentes du Québec (RRQ)
-    const ae = gross * 0.0127; // 1.27% Assurance Emploi
+    const provRate = companyCountry === 'US' ? 0 : (CA_PROVINCIAL_BRACKETS[companyRegion.code]?.[0].rate ?? CA_PROVINCIAL_FALLBACK_RATE);
+    const fedTax = companyCountry === 'US' ? 0 : gross * CA_FEDERAL_BRACKETS[0].rate;
+    const provTax = gross * provRate;
+    const rrq = gross * payrollMeta.pensionRate;
+    const ae = gross * payrollMeta.secondaryDeductionRate;
     const net = gross - fedTax - provTax - rrq - ae;
     return {
       fedTax,
@@ -765,6 +726,11 @@ export default function App() {
       id="main-scaffold-container"
       className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 pt-16 flex flex-col relative select-none"
     >
+      {cloudSyncing && (
+        <div className="fixed top-1 right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
+          ☁️ Synchronisation...
+        </div>
+      )}
       {/* Top Navbar */}
       <nav id="navbar-scaffold" className="fixed top-0 left-0 right-0 h-16 border-b border-gray-800 bg-[#16191F] px-4 flex items-center justify-between z-40">
         <div className="flex items-center gap-3">
@@ -1103,6 +1069,18 @@ export default function App() {
                         </>
                       )}
                     </div>
+
+                    {/* Checklist Tâches & Outils du chantier actif */}
+                    {activePunchSession && (() => {
+                      const activeProject = projects.find(p => p.id === activePunchSession.projectId);
+                      return activeProject ? (
+                        <div className="w-full max-w-md mb-8 -mt-4 bg-gray-950/60 border border-gray-800 rounded-2xl p-3">
+                          <Suspense fallback={<LazySectionFallback />}>
+                            <ProjectTasksAndTools project={activeProject} defaultOpen bordered={false} />
+                          </Suspense>
+                        </div>
+                      ) : null;
+                    })()}
 
                     {/* CENTRAL PUNCH BUTTON with Theme Styles */}
                     <div className="relative w-[230px] h-[230px] flex items-center justify-center mb-8">
@@ -1576,7 +1554,7 @@ export default function App() {
                           <div className="text-right space-y-2">
                             <div>
                               <p className="text-[10px] text-gray-400">Brut : {inv.amount.toFixed(2)}$</p>
-                              <p className="text-[10px] text-gray-500">TPS (5%) + TVQ (9.975%) estimées</p>
+                              <p className="text-[10px] text-gray-500">{companyRegion.taxRate1NameFR} + {companyRegion.taxRate2NameFR} estimées</p>
                               <p className="text-base font-black text-green-400 mt-1">
                                 {inv.totalWithTaxes.toFixed(2)}$ <span className="text-[10px] text-gray-400">TTC</span>
                               </p>
@@ -1597,6 +1575,33 @@ export default function App() {
                                 >
                                   Payer Interac
                                 </button>
+                              </div>
+                            )}
+
+                            {/* Envoi de la facture à la compagnie par l'employé/sous-traitant lui-même (signature tactile requise) */}
+                            {activeEmployee.role !== 'admin' && inv.employeeId === activeEmployee.id && inv.status === 'draft' && (
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => {
+                                    setInvoiceToSign(inv);
+                                    setInvoiceSignatureData(null);
+                                  }}
+                                  className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 text-[9px] font-bold uppercase rounded border border-orange-500/30 cursor-pointer"
+                                >
+                                  📤 Envoyer à la compagnie
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Aperçu de la signature tactile une fois la facture envoyée */}
+                            {inv.employeeSignature && (
+                              <div className="flex flex-col items-end gap-0.5">
+                                <img src={inv.employeeSignature} alt="Signature" className="h-8 bg-white rounded border border-gray-700 px-1" />
+                                {inv.employeeSignedAt && (
+                                  <span className="text-[8px] text-gray-500 font-mono">
+                                    Signé le {new Date(inv.employeeSignedAt).toLocaleDateString('fr-CA')}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1866,6 +1871,10 @@ export default function App() {
                           </div>
                         </div>
                       )}
+
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <ProjectTasksAndTools project={proj} />
+                      </Suspense>
                     </div>
                   ))}
                 </div>
@@ -1884,7 +1893,9 @@ export default function App() {
                   </p>
                 </div>
 
-                <ClientDocumentsManager />
+                <Suspense fallback={<LazySectionFallback />}>
+                  <ClientDocumentsManager />
+                </Suspense>
               </div>
             )}
 
@@ -2024,10 +2035,10 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Grid items */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Liste linéaire : un matériau par ligne, pleine largeur */}
+                    <div className="flex flex-col gap-3">
                       {inventory.map(item => (
-                        <div key={item.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-xl flex items-center justify-between gap-4 transition duration-200">
+                        <div key={item.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition duration-200">
                           <div className="flex items-center gap-3">
                             <span className="text-3xl filter drop-shadow">{item.emoji}</span>
                             <div>
@@ -2090,153 +2101,9 @@ export default function App() {
                     </div>
                   </>
                 ) : (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-4 pb-2">
-                      <div>
-                        <h3 className="text-xl font-black text-white">
-                          Catalogue Unitaires pour Devis & Soumissions
-                        </h3>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Calculateur de tarifs de soumission client au pied carré ($/pi²). Utilisé pour estimer les coûts de revêtements extérieurs et toitures.
-                        </p>
-                      </div>
-
-                      {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                        <button 
-                          onClick={() => {
-                            setShowAddCatalogueForm(!showAddCatalogueForm);
-                            setNewCatalogueForm({ name: '', emoji: '🪵', pricePerSqFt: 5.5, imageUrl: '', imageAlt: '' });
-                          }}
-                          className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-xs font-black rounded-xl transition shadow-lg cursor-pointer flex items-center gap-1.5"
-                        >
-                          <span>{showAddCatalogueForm ? 'Fermer le formulaire' : '+ Nouveau Matériau Catalogue'}</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Inline Catalogue Add Form */}
-                    {showAddCatalogueForm && (
-                      <div className="p-5 bg-gray-900 border border-gray-800 rounded-2xl text-left space-y-4 max-w-2xl animate-fade-in">
-                        <h4 className="text-sm font-extrabold text-white uppercase tracking-wider text-orange-400 flex items-center gap-1.5">
-                          <span>📦</span> Créer un modèle de produit standard de catalogue
-                        </h4>
-                        
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Émoji</label>
-                            <input 
-                              type="text"
-                              className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-center"
-                              value={newCatalogueForm.emoji}
-                              onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, emoji: e.target.value })}
-                            />
-                          </div>
-
-                          <div className="col-span-2 space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Nom de l'élément standard / Brevet</label>
-                            <input 
-                              type="text"
-                              className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-left"
-                              placeholder="Ex: Bardeau architectural premium"
-                              value={newCatalogueForm.name}
-                              onChange={(e) => {
-                                const name = e.target.value;
-                                let updated = { ...newCatalogueForm, name };
-                                if (!updated.imageUrl || updated.imageUrl === '') {
-                                  const suggestion = suggestImageUrl(name);
-                                  if (suggestion) {
-                                    updated.imageUrl = suggestion.url;
-                                    updated.imageAlt = suggestion.alt;
-                                  }
-                                }
-                                if (updated.emoji === '🪵' || !updated.emoji) {
-                                  updated.emoji = suggestEmoji(name);
-                                }
-                                setNewCatalogueForm(updated);
-                              }}
-                            />
-                          </div>
-
-                          <div className="col-span-2 space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">🖼️ URL de l'image (optionnel - suggestions automatiques incluses)</label>
-                            <input 
-                              type="text"
-                              className="w-full p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850 text-left"
-                              placeholder="https://images.unsplash.com/..."
-                              value={newCatalogueForm.imageUrl}
-                              onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, imageUrl: e.target.value })}
-                            />
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Valeur au pi² ($)</label>
-                            <input 
-                              type="number"
-                              step="0.05"
-                              className="w-full p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850 text-left"
-                              value={newCatalogueForm.pricePerSqFt}
-                              onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, pricePerSqFt: Number(e.target.value) })}
-                            />
-                          </div>
-
-                          <div className="col-span-3 flex justify-end gap-2 pt-2">
-                            <button
-                              disabled={!newCatalogueForm.name}
-                              onClick={() => {
-                                addCatalogueMaterial({
-                                  name: newCatalogueForm.name,
-                                  emoji: newCatalogueForm.emoji || '🪵',
-                                  pricePerSqFt: Number(newCatalogueForm.pricePerSqFt),
-                                  imageUrl: newCatalogueForm.imageUrl || undefined,
-                                  imageAlt: newCatalogueForm.imageAlt || newCatalogueForm.name || undefined
-                                });
-                                setShowAddCatalogueForm(false);
-                                alert("Enregistré et synchronisé avec le configurateur de devis !");
-                              }}
-                              className="px-6 py-2 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-black text-xs rounded-xl"
-                            >
-                              Ajouter au Catalogue
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Catalogue Items Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                      {catalogue.map(cat => (
-                        <div key={cat.id} className="p-4 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-2xl flex flex-col justify-between text-xs transition duration-200">
-                          <div>
-                            <MaterialImage mat={cat} />
-                            <div className="text-left mt-2">
-                              <h5 className="font-extrabold text-white text-base flex items-center gap-1.5">
-                                <span>{cat.emoji}</span>
-                                <span className="line-clamp-1">{cat.name}</span>
-                              </h5>
-                              <p className="text-xs text-gray-400 font-mono mt-1.5">
-                                Calcul unitaire : <span className="text-orange-400 font-black text-sm">{cat.pricePerSqFt.toFixed(2)}$ / pi²</span>
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex justify-end mt-4 pt-3 border-t border-gray-850">
-                            {(activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (
-                              <button 
-                                onClick={() => {
-                                  if (confirm(`Supprimer "${cat.name}" du catalogue de soumission ?`)) {
-                                    deleteCatalogueMaterial(cat.id);
-                                  }
-                                }}
-                                className="p-1 px-3 bg-red-950/45 hover:bg-red-900 text-red-300 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 transition"
-                              >
-                                <Trash className="w-3.5 h-3.5" />
-                                <span>Retirer du catalogue</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
+                  <Suspense fallback={<LazySectionFallback />}>
+                    <CatalogueManager />
+                  </Suspense>
                 )}
               </div>
             )}
@@ -2573,7 +2440,7 @@ export default function App() {
                             : 'text-gray-400 hover:text-white border border-transparent'
                         }`}
                       >
-                        🧾 Calcul Paie Québec
+                        🧾 Calcul Paie {regionName}
                       </button>
                     </div>
                   </div>
@@ -3059,7 +2926,7 @@ export default function App() {
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
                             <span className="text-[10px] text-gray-500 uppercase block font-sans">Masse Salariale</span>
                             <p className="text-base text-white font-black">{totalPayrollPaid.toFixed(2)} $</p>
-                            <p className="text-[11px] text-cyan-400">Prov. CNESST (5.5%) : {cnesstProvision.toFixed(2)} $</p>
+                            <p className="text-[11px] text-cyan-400">Prov. {workersCompName} (5.5%) : {cnesstProvision.toFixed(2)} $</p>
                             <p className="text-[10px] text-gray-500 font-sans">Gens de métier</p>
                           </div>
 
@@ -3086,10 +2953,10 @@ export default function App() {
                       </div>
                       <div>
                         <h4 className="text-sm font-black text-white uppercase tracking-tight">
-                          {t.payCalculatorTitle}
+                          {currentLanguage === 'FR' ? `Simulateur de Fiche de Paie (${regionName} - Déductions)` : `Pay Slip Simulator (${regionName} - Deductions)`}
                         </h4>
                         <p className="text-xs text-gray-400">
-                          Visualisez les déductions provinciales du Québec (RRQ) et de l'assurance-emploi.
+                          Visualisez les déductions {regionWithPreposition(companyRegion, companyCountry)} ({payrollMeta.pensionNameFR.split(' ')[0]}) et de {payrollMeta.secondaryDeductionNameFR.toLowerCase()}.
                         </p>
                       </div>
                     </div>
@@ -3123,7 +2990,7 @@ export default function App() {
                           />
                         </div>
                         <p className="text-[11px] text-gray-400 leading-normal font-sans">
-                          Ce simulateur correspond aux barèmes de déductions à la source moyennes pour un travailleur du bâtiment (sous-traitant ou salarié) enregistré au Québec.
+                          Ce simulateur correspond aux barèmes de déductions à la source estimés pour un travailleur du bâtiment (sous-traitant ou salarié) enregistré en {companyRegion.nameFR}.
                         </p>
                       </div>
 
@@ -3137,15 +3004,15 @@ export default function App() {
                           <span className="font-mono animate-none" id="fed_sim_output">150.00$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-red-400">
-                          <span>{t.provincialTax}</span>
+                          <span>{currentLanguage === 'FR' ? `Impôt Provincial (${regionName}) estimé` : `Estimated Provincial Tax (${regionName})`}</span>
                           <span className="font-mono animate-none" id="prov_sim_output">150.00$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
-                          <span>{t.cppRate}</span>
+                          <span>{pensionName} estimé ({(payrollMeta.pensionRate * 100).toFixed(2)}%)</span>
                           <span className="font-mono animate-none" id="rrq_sim_output">64.00$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
-                          <span>{t.eiRate}</span>
+                          <span>{secondaryDeductionName} ({(payrollMeta.secondaryDeductionRate * 100).toFixed(2)}%)</span>
                           <span className="font-mono animate-none" id="ae_sim_output">12.70$</span>
                         </div>
                         
@@ -3197,7 +3064,7 @@ export default function App() {
                                     ) : (
                                       <span className="p-0.5 px-2 text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 font-black uppercase rounded">💼 Salarié régulier (T4)</span>
                                     )}
-                                    <span className="p-0.5 px-2 text-[9px] bg-gray-500/10 text-gray-400 border border-gray-500/15 font-mono uppercase rounded font-mono">AS/CCQ: {emp.asNumber || 'S/O'}</span>
+                                    <span className="p-0.5 px-2 text-[9px] bg-gray-500/10 text-gray-400 border border-gray-500/15 font-mono uppercase rounded font-mono">{isQuebec ? 'AS/CCQ' : 'Certification'}: {emp.asNumber || 'S/O'}</span>
                                   </div>
                                 </div>
                               </div>
@@ -3248,10 +3115,10 @@ export default function App() {
                                 <div className="space-y-4 font-mono text-xs">
                                   <div className="p-4 bg-emerald-950/10 border border-emerald-900/20 text-emerald-300 rounded-xl space-y-1.5 leading-relaxed">
                                     <p className="font-black text-[10px] text-emerald-400 uppercase tracking-wider">📋 STATUT CONTRACTUEL / SOUS-TRAITANT</p>
-                                    <p className="text-[10px] text-gray-400 font-sans leading-relaxed">Régime de facturation autonome. Sans retenues d'impôt ou d'assurance-emploi à la source. Assujetti aux acomptes provisionnels auprès de REVENU QUÉBEC.</p>
+                                    <p className="text-[10px] text-gray-400 font-sans leading-relaxed">Régime de facturation autonome. Sans retenues d'impôt ou d'assurance-emploi à la source. Assujetti aux acomptes provisionnels de {regionName}.</p>
                                     {emp.businessName && <p className="text-[11px] text-white pt-1">🏢 <strong>Société :</strong> {emp.businessName}</p>}
                                     {emp.gstNumber ? (
-                                      <p className="text-[11px] text-white">⚙️ <strong>TPS/TVQ :</strong> {emp.gstNumber}</p>
+                                      <p className="text-[11px] text-white">⚙️ <strong>{companyRegion.taxRate1NameFR}/{companyRegion.taxRate2NameFR} :</strong> {emp.gstNumber}</p>
                                     ) : (
                                       <p className="text-[11px] text-yellow-500 font-bold font-sans">⚠️ Sans numéros de taxes saisis (Chiffre d'affaires global &lt; 30k$). Prestation non taxée.</p>
                                     )}
@@ -3265,11 +3132,11 @@ export default function App() {
                                     {emp.gstNumber && (
                                       <>
                                         <div className="flex justify-between text-emerald-500">
-                                          <span>TPS facturée (5%) :</span>
+                                          <span>{companyRegion.taxRate1NameFR} facturée :</span>
                                           <span>+{pay.gst.toFixed(2)} $</span>
                                         </div>
                                         <div className="flex justify-between text-emerald-500">
-                                          <span>TVQ facturée (9.975%) :</span>
+                                          <span>{companyRegion.taxRate2NameFR} facturée :</span>
                                           <span>+{pay.qst.toFixed(2)} $</span>
                                         </div>
                                       </>
@@ -3303,11 +3170,11 @@ export default function App() {
                                     <div className="space-y-2 p-3 bg-gray-950 rounded-xl border border-gray-850">
                                       <span className="text-[9px] text-gray-500 block uppercase font-sans font-bold">Sécurité sociale</span>
                                       <div className="flex justify-between text-red-500 text-xs font-mono">
-                                        <span className="font-sans">RRQ / Cotisation Retraite:</span>
+                                        <span className="font-sans">{pensionName} / Cotisation Retraite:</span>
                                         <span>-{pay.cpp.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500 text-xs font-mono">
-                                        <span className="font-sans">Assurance Emploi (AE):</span>
+                                        <span className="font-sans">{secondaryDeductionName}:</span>
                                         <span>-{pay.ei.toFixed(2)} $</span>
                                       </div>
                                     </div>
@@ -3316,7 +3183,7 @@ export default function App() {
                                   <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-1.5 text-left">
                                     <span className="text-[9px] text-gray-500 block uppercase font-sans font-bold">Retenues d’impôt provinciales & fédérales</span>
                                     <div className="flex justify-between text-red-500 font-mono">
-                                      <span className="font-sans">Impôt Provincial (Revenu Québec):</span>
+                                      <span className="font-sans">Impôt Provincial ({regionName}):</span>
                                       <span>-{pay.provTax.toFixed(2)} $</span>
                                     </div>
                                     <div className="flex justify-between text-red-500 font-mono">
@@ -3387,7 +3254,7 @@ export default function App() {
                           </div>
 
                           <div className="p-4 bg-gray-950 border border-gray-850 rounded-xl text-left space-y-1">
-                            <span className="text-[9.5px] text-gray-400 uppercase font-mono block">Charges CNESST / Provisions</span>
+                            <span className="text-[9.5px] text-gray-400 uppercase font-mono block">Charges {workersCompName} / Provisions</span>
                             <p className="text-lg font-mono text-white font-black">
                               {(employees.reduce((sum, e) => {
                                 if (e.workerType === 'contractor') return sum;
@@ -3397,7 +3264,7 @@ export default function App() {
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).gross;
                               }, 0) * 0.055).toFixed(2)} $
                             </p>
-                            <span className="text-[9px] text-gray-500 block font-sans">Assurance CCQ / CSST (5.5% des bruts)</span>
+                            <span className="text-[9px] text-gray-500 block font-sans">Assurance {workersCompName} (5.5% des bruts)</span>
                           </div>
 
                           <div className="p-4 bg-gray-950 border border-gray-850 rounded-xl text-left space-y-1">
@@ -3411,7 +3278,7 @@ export default function App() {
 
                         {/* Grand Ledger Table */}
                         <div className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
-                          <h4 className="text-xs font-black uppercase text-gray-300 block tracking-wider font-sans">📋 Grand Livre de Paie CCQ & Contracteurs ({statsMonth})</h4>
+                          <h4 className="text-xs font-black uppercase text-gray-300 block tracking-wider font-sans">📋 Grand Livre de Paie{isQuebec ? ' CCQ' : ''} & Contracteurs ({statsMonth})</h4>
                           
                           <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse text-xs">
@@ -3443,7 +3310,7 @@ export default function App() {
                                         <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-9 h-9 rounded-full object-cover" />
                                         <div>
                                           <p className="font-bold text-white leading-none text-left">{emp.name}</p>
-                                          <p className="text-[9.5px] text-gray-500 mt-0.5 text-left">NAS: {emp.sin || 'Non inscrit'} | CCQ: {emp.asNumber || 'S/O'}</p>
+                                          <p className="text-[9.5px] text-gray-500 mt-0.5 text-left">NAS: {emp.sin || 'Non inscrit'} | {isQuebec ? 'CCQ' : 'Cert.'}: {emp.asNumber || 'S/O'}</p>
                                         </div>
                                       </td>
                                       <td className="py-3 font-sans text-left">
@@ -3460,7 +3327,7 @@ export default function App() {
                                       <td className="py-3 text-right text-gray-300">{pay.gross.toFixed(2)} $</td>
                                       <td className="py-3 text-right">
                                         {isContractor ? (
-                                          <span className="text-emerald-400">+{pay.totalTaxes.toFixed(2)} $ TPS/TVQ</span>
+                                          <span className="text-emerald-400">+{pay.totalTaxes.toFixed(2)} $ {companyRegion.taxRate1NameFR}/{companyRegion.taxRate2NameFR}</span>
                                         ) : (
                                           <span className="text-red-400">-{pay.totalDeductions.toFixed(2)} $ retenues</span>
                                         )}
@@ -3518,16 +3385,16 @@ export default function App() {
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 leading-relaxed">
                                 <div className="space-y-2.5 p-4 bg-gray-950 rounded-xl border border-gray-850 text-left">
                                   <span className="text-[10px] text-gray-500 font-bold block uppercase font-sans">Dossier de l'ouvrier</span>
-                                  <p className="text-gray-400 font-sans">Profil fiscal : <span className="text-white font-black">{isContractor ? 'CO-CONTRACTANT INDÉPENDANT' : 'SALARIÉ CCQ/T4'}</span></p>
+                                  <p className="text-gray-400 font-sans">Profil fiscal : <span className="text-white font-black">{isContractor ? 'CO-CONTRACTANT INDÉPENDANT' : `SALARIÉ${isQuebec ? ' CCQ' : ''}/T4`}</span></p>
                                   {isContractor ? (
                                     <>
                                       <p className="text-gray-400 font-sans">Raison Sociale : <span className="text-white font-bold">{emp.businessName || 'S/O'}</span></p>
-                                      <p className="text-gray-400 font-sans">GST/TVQ Enregistrée : <span className="text-white font-bold">{emp.gstNumber || 'Aucun no. de taxes saisi'}</span></p>
+                                      <p className="text-gray-400 font-sans">{companyRegion.taxRate1NameFR}/{companyRegion.taxRate2NameFR} Enregistrée : <span className="text-white font-bold">{emp.gstNumber || 'Aucun no. de taxes saisi'}</span></p>
                                     </>
                                   ) : (
                                     <>
                                       <p className="text-gray-400 font-sans">Fréquence de versements: <span className="text-white font-bold">{emp.payFrequency || 'Hebdomadaire'}</span></p>
-                                      <p className="text-gray-400 font-sans">Province fiscale : <span className="text-white font-bold">{emp.employeeProvince || 'QC'}</span></p>
+                                      <p className="text-gray-400 font-sans">Province fiscale : <span className="text-white font-bold">{emp.employeeProvince || companyRegion.code}</span></p>
                                       {emp.annualSalary ? <p className="text-gray-400 font-sans">Base salaire annuel: <span className="text-white font-bold">{emp.annualSalary.toLocaleString()} $</span></p> : null}
                                     </>
                                   )}
@@ -3547,11 +3414,11 @@ export default function App() {
                                   {isContractor ? (
                                     <>
                                       <div className="flex justify-between text-emerald-400">
-                                        <span>TPS facturée (5.0%) :</span>
+                                        <span>{companyRegion.taxRate1NameFR} facturée :</span>
                                         <span>+{pay.gst.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-emerald-400">
-                                        <span>TVQ facturée (9.975%) :</span>
+                                        <span>{companyRegion.taxRate2NameFR} facturée :</span>
                                         <span>+{pay.qst.toFixed(2)} $</span>
                                       </div>
                                     </>
@@ -3562,15 +3429,15 @@ export default function App() {
                                         <span>+{pay.vacationAmount.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500">
-                                        <span>Impût Fédéral (Canada) :</span>
+                                        <span>Impôt Fédéral (Canada) :</span>
                                         <span>-{pay.fedTax.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500">
-                                        <span>Impût Provincial (Revenu QC) :</span>
+                                        <span>Impôt Provincial ({regionName}) :</span>
                                         <span>-{pay.provTax.toFixed(2)} $</span>
                                       </div>
                                       <div className="flex justify-between text-red-500">
-                                        <span>Cotisation Retraite (RRQ) :</span>
+                                        <span>Cotisation Retraite ({pensionName}) :</span>
                                         <span>-{pay.cpp.toFixed(2)} $</span>
                                       </div>
                                     </>
@@ -3617,7 +3484,9 @@ export default function App() {
 
             {/* -------------------- VIEW CONTAINER : MOTIVATION -------------------- */}
             {activeTab === 'motivation' && (
-              <MotivationTab />
+              <Suspense fallback={<LazySectionFallback />}>
+                <MotivationTab />
+              </Suspense>
             )}
 
             {/* -------------------- VIEW CONTAINER : REGLAGES (12 ONGLETS) -------------------- */}
@@ -3633,28 +3502,29 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col md:flex-row gap-6">
-                  {/* Left: list of 12 tabs */}
+                  {/* Left: list of settings tabs (réglages de compagnie/équipe réservés à l'admin) */}
                   <div className="w-full md:w-56 flex flex-col gap-1 flex-shrink-0 border-r border-gray-800 pr-2">
                     {[
-                      { name: t.setTabCompagnie, idx: 0 },
-                      { name: t.setTabEmployes, idx: 1 },
-                      { name: t.setTabTheme, idx: 2 },
-                      { name: t.setTabLangue, idx: 3 },
-                      { name: t.setTabPaiement, idx: 4 },
-                      { name: t.setTabRappels, idx: 5 },
-                      { name: t.setTabConditions, idx: 6 },
-                      { name: t.setTabClients, idx: 7 },
-                      { name: t.setTabCatalogue, idx: 8 },
-                      { name: t.setTabComptabilite, idx: 9 },
-                      { name: t.setTabGeofencing, idx: 10 },
-                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length }
-                    ].map(tab => (
+                      { name: t.setTabCompagnie, idx: 0, adminOnly: true },
+                      { name: t.setTabEmployes, idx: 1, adminOnly: true },
+                      { name: t.setTabTheme, idx: 2, adminOnly: false },
+                      { name: t.setTabLangue, idx: 3, adminOnly: false },
+                      { name: t.setTabPaiement, idx: 4, adminOnly: true },
+                      { name: t.setTabRappels, idx: 5, adminOnly: true },
+                      { name: t.setTabConditions, idx: 6, adminOnly: true },
+                      { name: t.setTabClients, idx: 7, adminOnly: true },
+                      { name: t.setTabCatalogue, idx: 8, adminOnly: true },
+                      { name: t.setTabComptabilite, idx: 9, adminOnly: true },
+                      { name: t.setTabGeofencing, idx: 10, adminOnly: true },
+                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length, adminOnly: true },
+                      { name: t.setTabAI, idx: 12, adminOnly: true }
+                    ].filter(tab => activeEmployee.role === 'admin' || !tab.adminOnly).map(tab => (
                       <button
                         key={tab.idx}
                         onClick={() => setActiveSettingsTab(tab.idx)}
                         className={`text-left text-xs font-semibold px-3 py-2.5 rounded-lg transition-colors flex items-center justify-between cursor-pointer ${
-                          activeSettingsTab === tab.idx 
-                            ? 'bg-orange-600 text-white font-bold' 
+                          visibleSettingsTab === tab.idx
+                            ? 'bg-orange-600 text-white font-bold'
                             : 'hover:bg-gray-800 text-gray-300'
                         }`}
                       >
@@ -3672,19 +3542,70 @@ export default function App() {
                   <div className="flex-1 min-w-0">
                     
                     {/* ONGLET 0: COMPAGNIE */}
-                    {activeSettingsTab === 0 && (
+                    {visibleSettingsTab === 0 && (
                       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
                         <div>
                           <h4 className="text-xs font-black uppercase text-orange-500">🏢 Compagnie & Paramètres Salariaux</h4>
-                          <p className="text-[10px] text-gray-400 mt-0.5">Configurez l'adresse légale, les identifiants fiscaux québécois et les coordonnées bancaires.</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">Configurez l'adresse légale, les identifiants fiscaux de {regionName} et les coordonnées bancaires.</p>
+                        </div>
+
+                        {/* Pays / Province ou État — pilote tous les libellés et calculs de paie de l'application */}
+                        <div className="p-3 bg-gray-950 border border-orange-500/20 rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Pays</label>
+                            <select
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
+                              value={companyCountry}
+                              onChange={(e) => {
+                                const nextCountry = e.target.value as 'CA' | 'US';
+                                const nextRegion = (nextCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS)[0];
+                                updateCompanyInfo({
+                                  country: nextCountry,
+                                  region: nextRegion.code,
+                                  taxRate1: nextRegion.taxRate1,
+                                  taxRate2: nextRegion.taxRate2,
+                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
+                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
+                                });
+                              }}
+                            >
+                              <option value="CA">Canada</option>
+                              <option value="US">États-Unis / United States</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Province / État</label>
+                            <select
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
+                              value={companyRegion.code}
+                              onChange={(e) => {
+                                const nextRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === e.target.value);
+                                if (!nextRegion) return;
+                                updateCompanyInfo({
+                                  region: nextRegion.code,
+                                  taxRate1: nextRegion.taxRate1,
+                                  taxRate2: nextRegion.taxRate2,
+                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
+                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
+                                });
+                              }}
+                            >
+                              {(companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).map(r => (
+                                <option key={r.code} value={r.code}>{currentLanguage === 'FR' ? r.nameFR : r.nameEN}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <p className="sm:col-span-2 text-[9px] text-gray-500">
+                            Détermine les taxes, le régime de retraite, {workersCompName} et les rappels réglementaires affichés dans toute l'application.
+                          </p>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Nom légal</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.name}
                               onChange={(e) => updateCompanyInfo({ name: e.target.value })}
                             />
@@ -3692,72 +3613,67 @@ export default function App() {
 
                           <div>
                             <label className="text-[10px] text-gray-500 uppercase font-mono">Logo / Bannière (Émoji ou texte)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left" 
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.logo || "📐 Hailite Xteriors Pro"}
                               onChange={(e) => updateCompanyInfo({ logo: e.target.value })}
                             />
                           </div>
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">No. d'entreprise du Canada (BN/NE)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                              defaultValue={companyInfo.bnNumber || "NE 80234-5122"}
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">{businessNumberLabel}</label>
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                              defaultValue={companyInfo.bnNumber || ''}
                               onChange={(e) => updateCompanyInfo({ bnNumber: e.target.value })}
                             />
                           </div>
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">NEQ (Numéro d'entreprise du Québec)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed" 
-                              defaultValue="NEQ 1178224591"
-                              disabled
-                              title="Fixé par le registre des entreprises du Québec"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de TPS / GST</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de {companyRegion.taxRate1NameFR}</label>
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
                               defaultValue={companyInfo.gstNumber}
                               onChange={(e) => updateCompanyInfo({ gstNumber: e.target.value })}
                             />
                           </div>
 
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de TVQ / QST</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                              defaultValue={companyInfo.qstNumber}
-                              onChange={(e) => updateCompanyInfo({ qstNumber: e.target.value })}
-                            />
-                          </div>
+                          {companyRegion.taxRate2 > 0 && (
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de {companyRegion.taxRate2NameFR}</label>
+                              <input
+                                type="text"
+                                className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue={companyInfo.qstNumber}
+                                onChange={(e) => updateCompanyInfo({ qstNumber: e.target.value })}
+                              />
+                            </div>
+                          )}
+
+                          {isQuebec && (
+                            <div>
+                              <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de Permis RBQ</label>
+                              <input
+                                type="text"
+                                className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                defaultValue={companyInfo.constructionLicenseNumber || ''}
+                                placeholder="RBQ 5683-1044-02"
+                                onChange={(e) => updateCompanyInfo({ constructionLicenseNumber: e.target.value })}
+                              />
+                            </div>
+                          )}
 
                           <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">Numéro de Permis RBQ</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950" 
-                              defaultValue="RBQ 5683-1044-02"
-                              disabled
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">No. d’adhésion CNESST (ex-CSST)</label>
-                            <input 
-                              type="text" 
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left cursor-not-allowed text-gray-500 bg-gray-950" 
-                              defaultValue="CNESST-774021-Q"
-                              disabled
+                            <label className="text-[10px] text-gray-500 uppercase font-mono">No. d'adhésion {workersCompName}</label>
+                            <input
+                              type="text"
+                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                              defaultValue={companyInfo.wcbNumber || ''}
+                              placeholder={`${workersCompName}-000000`}
+                              onChange={(e) => updateCompanyInfo({ wcbNumber: e.target.value })}
                             />
                           </div>
                         </div>
@@ -3768,29 +3684,32 @@ export default function App() {
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro Institution (3 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="006" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                value={companyInfo.bankDetails?.institution || ''}
                                 placeholder="Ex: 006 (Desjardins)"
+                                onChange={(e) => updateCompanyInfo({ bankDetails: { ...companyInfo.bankDetails, institution: e.target.value } })}
                               />
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro Transit / Succ. (5 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="92204" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                value={companyInfo.bankDetails?.transit || ''}
                                 placeholder="Ex: 92204"
+                                onChange={(e) => updateCompanyInfo({ bankDetails: { ...companyInfo.bankDetails, transit: e.target.value } })}
                               />
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">Numéro de Compte (7-12 ch.)</label>
-                              <input 
-                                type="text" 
-                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                                defaultValue="4122589" 
+                              <input
+                                type="text"
+                                className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                                value={companyInfo.bankDetails?.account || ''}
                                 placeholder="Ex: 4122589"
+                                onChange={(e) => updateCompanyInfo({ bankDetails: { ...companyInfo.bankDetails, account: e.target.value } })}
                               />
                             </div>
                           </div>
@@ -3866,7 +3785,7 @@ export default function App() {
                                 <span className="text-xl">🔒</span>
                                 <div>
                                   <h5 className="text-xs font-black text-red-400 uppercase tracking-wider">Déductions Source Obligatoires de Droit Commun</h5>
-                                  <p className="text-[9.5px] text-gray-400">Ces retenues à la source canadiennes et québécoises sont dictées par l'impôt progressif et les taux officiels de la CNESST & de Revenu Québec. Elles ne peuvent être modifiées ou retirées par l'administration.</p>
+                                  <p className="text-[9.5px] text-gray-400">Ces retenues à la source sont dictées par l'impôt progressif et les taux officiels de {workersCompName} & de l'agence du revenu de {regionName}. Elles ne peuvent être modifiées ou retirées par l'administration.</p>
                                 </div>
                               </div>
 
@@ -3883,8 +3802,14 @@ export default function App() {
 
                                 <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
                                   <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Impôt sur le revenu Provincial (Québec)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Calculé avec barèmes progressive Revenu Québec (de 14% à 25.75%)</span>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Impôt sur le revenu Provincial ({regionName})</span>
+                                    <span className="text-[9px] text-gray-500 italic block">
+                                      {companyCountry === 'US'
+                                        ? "À valider avec un comptable local (non modélisé)"
+                                        : (CA_PROVINCIAL_BRACKETS[companyRegion.code]
+                                          ? `Calculé avec barèmes progressifs ${regionWithPreposition(companyRegion, companyCountry)}`
+                                          : `Estimation forfaitaire (${(CA_PROVINCIAL_FALLBACK_RATE * 100).toFixed(0)}%) — barème détaillé non disponible`)}
+                                    </span>
                                   </div>
                                   <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
                                     <span>Bloqué</span> 🔒
@@ -3893,43 +3818,49 @@ export default function App() {
 
                                 <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
                                   <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">RRQ (Régime de Rentes du Québec)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Taux de cotisation de base appliqué sur le gain admissible (5.95%)</span>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{pensionName}</span>
+                                    <span className="text-[9px] text-gray-500 italic block">Taux de cotisation de base appliqué sur le gain admissible ({(payrollMeta.pensionRate * 100).toFixed(2)}%)</span>
                                   </div>
                                   <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>5.95 %</span> 🔒
+                                    <span>{(payrollMeta.pensionRate * 100).toFixed(2)} %</span> 🔒
                                   </span>
                                 </div>
 
                                 <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
                                   <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Assurance-Emploi (AE / EI)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Taux légal d'assurance-emploi réduit appliqué au Québec (1.25%)</span>
+                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{secondaryDeductionName}</span>
+                                    <span className="text-[9px] text-gray-500 italic block">
+                                      {isQuebec ? 'Taux légal réduit appliqué au Québec' : 'Taux légal appliqué sur le gain admissible'} ({(payrollMeta.secondaryDeductionRate * 100).toFixed(2)}%)
+                                    </span>
                                   </div>
                                   <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>1.25 %</span> 🔒
+                                    <span>{(payrollMeta.secondaryDeductionRate * 100).toFixed(2)} %</span> 🔒
                                   </span>
                                 </div>
 
-                                <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
-                                  <div className="space-y-0.5">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">RQAP (Régime assurance parentale)</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Cotisation assurance parentale pour congés maternité (0.49%)</span>
+                                {isQuebec && (
+                                  <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between">
+                                    <div className="space-y-0.5">
+                                      <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">RQAP (Régime assurance parentale)</span>
+                                      <span className="text-[9px] text-gray-500 italic block">Cotisation assurance parentale pour congés maternité (0.49%)</span>
+                                    </div>
+                                    <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
+                                      <span>0.49 %</span> 🔒
+                                    </span>
                                   </div>
-                                  <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>0.49 %</span> 🔒
-                                  </span>
-                                </div>
+                                )}
 
-                                <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between font-mono">
-                                  <div className="space-y-0.5 font-sans">
-                                    <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Permis CCQ & Cotisation Syndicales</span>
-                                    <span className="text-[9px] text-gray-500 italic block">Retenue sectorielle réglementaire de type construction</span>
+                                {isQuebec && (
+                                  <div className="p-3 bg-gray-900/50 border border-gray-850 rounded-xl flex items-center justify-between font-mono">
+                                    <div className="space-y-0.5 font-sans">
+                                      <span className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Permis CCQ & Cotisation Syndicales</span>
+                                      <span className="text-[9px] text-gray-500 italic block">Retenue sectorielle réglementaire de type construction</span>
+                                    </div>
+                                    <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
+                                      <span>Déd. Fixe</span> 🔒
+                                    </span>
                                   </div>
-                                  <span className="p-1 px-2.5 bg-red-950 text-red-400 font-mono text-[9px] border border-red-900/35 rounded-lg uppercase font-bold tracking-wider flex items-center gap-1">
-                                    <span>Déd. Fixe</span> 🔒
-                                  </span>
-                                </div>
+                                )}
                               </div>
 
                               <div className="p-3 bg-blue-950/40 border border-blue-900/20 text-[9.5px] text-blue-300 rounded-lg">
@@ -4381,11 +4312,11 @@ export default function App() {
                                     
                                     <div className="space-y-2 text-[11px]">
                                       <div className="flex justify-between items-center text-gray-400">
-                                        <span>Régime de Rentes du Québec (RRQ) :</span>
+                                        <span>{pensionName} :</span>
                                         <span className="font-mono text-gray-300">-{cpp.toFixed(2)}$</span>
                                       </div>
                                       <div className="flex justify-between items-center text-gray-400">
-                                        <span>Assurance-Emploi (AE) :</span>
+                                        <span>{secondaryDeductionName} :</span>
                                         <span className="font-mono text-gray-300">-{ei.toFixed(2)}$</span>
                                       </div>
                                       <div className="flex justify-between items-center text-gray-400">
@@ -4429,7 +4360,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 1: EMPLOYÉS */}
-                    {activeSettingsTab === 1 && (
+                    {visibleSettingsTab === 1 && (
                       <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 font-sans">
                         <div className="flex justify-between items-center">
                           <div>
@@ -4797,7 +4728,7 @@ export default function App() {
 
                                     <div className="flex justify-between items-center pt-2">
                                       <div className="text-[10px] text-gray-500 font-mono">
-                                        AS/CCQ : <input 
+                                        {isQuebec ? 'AS/CCQ' : 'Certification'} : <input
                                           type="text" 
                                           className="p-1 bg-gray-900 text-white border border-gray-800 rounded font-mono text-[10px] w-28"
                                           value={editEmployeeForm.asNumber}
@@ -4905,11 +4836,11 @@ export default function App() {
                               </select>
                             </div>
                             <div>
-                              <label className="text-[9px] text-gray-500 uppercase font-mono">No. Certificat CCQ / AS</label>
-                              <input 
+                              <label className="text-[9px] text-gray-500 uppercase font-mono">{isQuebec ? 'No. Certificat CCQ / AS' : 'No. de Certification'}</label>
+                              <input
                                 type="text"
                                 className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
-                                placeholder="CCQ-14220-41"
+                                placeholder={isQuebec ? 'CCQ-14220-41' : ''}
                                 value={newEmployeeForm.asNumber}
                                 onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, asNumber: e.target.value })}
                               />
@@ -5098,9 +5029,9 @@ export default function App() {
                                 workerType: newEmployeeForm.workerType || 'salaried',
                                 avatar: newEmployeeForm.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
                                 hireDate: newEmployeeForm.hireDate || '2026-06-03',
-                                asNumber: newEmployeeForm.asNumber || 'CCQ-14220-41',
+                                asNumber: newEmployeeForm.asNumber || '',
                                 phone: newEmployeeForm.phone || '(418) 555-0199',
-                                address: newEmployeeForm.address || 'Québec, QC',
+                                address: newEmployeeForm.address || `${companyRegion.nameFR}, ${companyRegion.code}`,
                                 businessName: newEmployeeForm.businessName,
                                 gstNumber: newEmployeeForm.gstNumber,
                                 sin: newEmployeeForm.sin,
@@ -5137,7 +5068,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 2: THÈMES */}
-                    {activeSettingsTab === 2 && (
+                    {visibleSettingsTab === 2 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">Thème Visuel du bouton central ({currentTheme})</h4>
                         
@@ -5168,7 +5099,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 3: LANGUE */}
-                    {activeSettingsTab === 3 && (
+                    {visibleSettingsTab === 3 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">Changer de Langue</h4>
                         <div className="flex gap-4">
@@ -5193,7 +5124,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 4: PAIEMENTS */}
-                    {activeSettingsTab === 4 && (
+                    {visibleSettingsTab === 4 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">💰 Échelonnements par défaut des Factures & Intérêts</h4>
                         
@@ -5229,10 +5160,11 @@ export default function App() {
 
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Taux d'intérêt annuel appliqué aux factures en retard (%)</label>
-                          <input 
-                            type="number" 
-                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                            defaultValue={18}
+                          <input
+                            type="number"
+                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                            value={companyInfo.defaultLateInterestPct ?? 18}
+                            onChange={(e) => updateCompanyInfo({ defaultLateInterestPct: Number(e.target.value) })}
                           />
                         </div>
 
@@ -5250,7 +5182,7 @@ export default function App() {
                     )}
 
                     {/* ONGLET 5: RAPPELS VOCAUX */}
-                    {activeSettingsTab === 5 && (
+                    {visibleSettingsTab === 5 && (
                       <div className="space-y-4">
                         <h4 className="text-xs font-black uppercase text-orange-500">🔔 Notifications Sonores & Planification</h4>
                         <div>
@@ -5276,39 +5208,42 @@ export default function App() {
                     )}
 
                     {/* ONGLET 6 à 12: CONTENU PARAMETRES RAPIDE */}
-                    {activeSettingsTab === 6 && (
+                    {visibleSettingsTab === 6 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                         <h4 className="text-xs font-black uppercase text-orange-500">📋 Clauses Légales pour Devis & Factures</h4>
                         <div>
                           <label className="text-[10px] text-gray-400 uppercase">Garantie standards appliquée par Hailite Xteriors (années)</label>
-                          <input 
-                            type="number" 
-                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left" 
-                            defaultValue={10} 
+                          <input
+                            type="number"
+                            className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-mono text-left"
+                            value={companyInfo.defaultWarrantyYears ?? 10}
+                            onChange={(e) => updateCompanyInfo({ defaultWarrantyYears: Number(e.target.value) })}
                           />
                         </div>
 
                         <div className="space-y-3">
                           <div>
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Clause de Modification / Extra Chantiers (Avenant)</label>
-                            <textarea 
+                            <textarea
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
-                              defaultValue="Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable CCQ de 120$/h."
+                              value={companyInfo.defaultClauseChangeOrder ?? `Toute modification apportée aux plans d’origine ou extra de quincaillerie fera l'objet d'un avenant écrit signé et sera facturée au taux horaire applicable${isQuebec ? ' CCQ' : ''} de 120$/h.`}
+                              onChange={(e) => updateCompanyInfo({ defaultClauseChangeOrder: e.target.value })}
                             />
                           </div>
 
                           <div>
                             <label className="text-[10px] text-gray-400 uppercase block mb-1">Droit de Résiliation du Client de Construction</label>
-                            <textarea 
+                            <textarea
                               className="w-full p-2 h-20 bg-gray-900 border border-gray-850 rounded text-left text-xs font-sans text-gray-300"
-                              defaultValue="Le client peut résilier unilatéralement le contrat avant le début des travaux moyennant des frais administratifs fixes de 10% correspondant aux réservations logistiques."
+                              value={companyInfo.defaultClauseResiliation ?? "Le client peut résilier unilatéralement le contrat avant le début des travaux moyennant des frais administratifs fixes de 10% correspondant aux réservations logistiques."}
+                              onChange={(e) => updateCompanyInfo({ defaultClauseResiliation: e.target.value })}
                             />
                           </div>
                         </div>
                       </div>
                     )}
 
-                    {activeSettingsTab === 7 && (
+                    {visibleSettingsTab === 7 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                         <h4 className="text-xs font-black uppercase text-orange-500">👥 Fichier Clients ({clients.length})</h4>
                         
@@ -5386,140 +5321,15 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 8 && (
-                      <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-                        <h4 className="text-xs font-black uppercase text-orange-500">📦 Catalogue Unitaire de Soumission ({catalogue.length})</h4>
-                        
-                        {/* Add to catalog */}
-                        <div className="p-3 bg-gray-950 rounded-xl border border-gray-850 space-y-3 text-left">
-                          <span className="text-[10px] font-bold text-white uppercase block">Créer un Matériau / Service standard</span>
-                          
-                          {/* Image Preview inside form if present */}
-                          {newCatalogueForm.imageUrl && (
-                            <div className="relative group rounded-lg overflow-hidden border border-gray-800">
-                              <img 
-                                src={newCatalogueForm.imageUrl} 
-                                alt={newCatalogueForm.imageAlt || "Aperçu"} 
-                                className="w-full h-20 object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition duration-155">
-                                <span className="text-[9px] text-white/80 font-mono bg-gray-900/80 px-1.5 py-0.5 rounded">
-                                  Aperçu de l'image suggérée
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="space-y-1">
-                              <label className="text-[9px] text-gray-500 font-semibold block uppercase">Émoji</label>
-                              <input 
-                                type="text" 
-                                placeholder="Émoji" 
-                                className="w-full p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-center animate-none"
-                                value={newCatalogueForm.emoji}
-                                onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, emoji: e.target.value })}
-                              />
-                            </div>
-                            <div className="col-span-2 space-y-1">
-                              <label className="text-[9px] text-gray-500 font-semibold block uppercase">Nom du Produit</label>
-                              <input 
-                                type="text" 
-                                placeholder="Ex: Bardeau d'Asphalte" 
-                                className="w-full p-1.5 bg-gray-900 text-xs text-white rounded border border-gray-800 text-left"
-                                value={newCatalogueForm.name}
-                                onChange={(e) => {
-                                  const name = e.target.value;
-                                  let updated = { ...newCatalogueForm, name };
-                                  if (!updated.imageUrl || updated.imageUrl === '') {
-                                    const suggestion = suggestImageUrl(name);
-                                    if (suggestion) {
-                                      updated.imageUrl = suggestion.url;
-                                      updated.imageAlt = suggestion.alt;
-                                    }
-                                  }
-                                  if (updated.emoji === '🪵' || updated.emoji === '📦' || !updated.emoji) {
-                                    updated.emoji = suggestEmoji(name);
-                                  }
-                                  setNewCatalogueForm(updated);
-                                }}
-                              />
-                            </div>
-
-                            <div className="col-span-3 space-y-1">
-                              <label className="text-[9px] text-gray-400 font-semibold block uppercase">🖼️ URL image (optionnel)</label>
-                              <input 
-                                type="text"
-                                className="w-full p-1.5 bg-gray-900 text-xs font-mono text-white rounded border border-gray-800 text-left"
-                                placeholder="https://images.unsplash.com/..." 
-                                value={newCatalogueForm.imageUrl}
-                                onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, imageUrl: e.target.value })}
-                              />
-                            </div>
-
-                            <div className="col-span-3 flex items-center justify-between bg-gray-900 p-1.5 rounded border border-gray-800">
-                              <span className="text-[10px] font-mono text-gray-400 uppercase">Prix estimatif ($/pi²)</span>
-                              <input 
-                                type="number" 
-                                step="0.1"
-                                className="w-24 bg-transparent border-0 text-white text-xs font-mono font-bold text-right outline-none"
-                                value={newCatalogueForm.pricePerSqFt}
-                                onChange={(e) => setNewCatalogueForm({ ...newCatalogueForm, pricePerSqFt: Number(e.target.value) })}
-                              />
-                            </div>
-                          </div>
-                          
-                          <button 
-                            disabled={!newCatalogueForm.name}
-                            onClick={() => {
-                              addCatalogueMaterial({
-                                name: newCatalogueForm.name,
-                                emoji: newCatalogueForm.emoji || '🪵',
-                                pricePerSqFt: Number(newCatalogueForm.pricePerSqFt),
-                                imageUrl: newCatalogueForm.imageUrl || undefined,
-                                imageAlt: newCatalogueForm.imageAlt || newCatalogueForm.name || undefined
-                              });
-                              setNewCatalogueForm({ name: '', emoji: '🪵', pricePerSqFt: 5.0, imageUrl: '', imageAlt: '' });
-                              alert("Enregistré dans le catalogue de devis !");
-                            }}
-                            className="w-full py-1.5 bg-orange-600 hover:bg-orange-500 text-white font-black text-[11px] rounded transition disabled:opacity-45 cursor-pointer"
-                          >
-                            Ajouter au Catalogue
-                          </button>
-                        </div>
-
-                        {/* List catalogue */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {catalogue.map(cat => (
-                            <div key={cat.id} className="p-3 bg-gray-900 rounded-xl border border-gray-850 flex flex-col justify-between text-xs transition hover:border-orange-500/30">
-                              <div>
-                                <MaterialImage mat={cat} />
-                                <div className="text-left mt-1">
-                                  <h5 className="font-bold text-white text-sm line-clamp-1">{cat.name}</h5>
-                                  <p className="text-[11px] text-gray-500 font-mono mt-1">
-                                    Valeur de calcul : <span className="text-orange-400 font-bold">{cat.pricePerSqFt.toFixed(2)}$ / pi²</span>
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex justify-end mt-2 pt-2 border-t border-gray-850">
-                                <button 
-                                  onClick={() => {
-                                    if (confirm("Supprimer ce matériel du catalogue?")) deleteCatalogueMaterial(cat.id);
-                                  }}
-                                  className="p-1 px-2.5 bg-red-950/45 hover:bg-red-900 text-red-300 rounded font-bold text-[10px] cursor-pointer flex items-center gap-1 transition"
-                                >
-                                  <Trash className="w-3 h-3" />
-                                  <span>Supprimer</span>
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                    {visibleSettingsTab === 8 && (
+                      <div className="max-h-[600px] overflow-y-auto pr-2">
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <CatalogueManager />
+                        </Suspense>
                       </div>
                     )}
 
-                    {activeSettingsTab === 9 && (
+                    {visibleSettingsTab === 9 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 font-sans text-xs">
                         <div className="flex justify-between items-center bg-gray-950 p-1.5 rounded-lg border border-gray-800">
                           <button 
@@ -5761,7 +5571,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 10 && (
+                    {visibleSettingsTab === 10 && (
                       <div className="space-y-4">
                         <div className="flex justify-between items-center text-left">
                           <h4 className="text-xs font-black uppercase text-orange-500">📍 Barrière GPS de Sécurité (Geofencing)</h4>
@@ -5792,11 +5602,11 @@ export default function App() {
                       </div>
                     )}
 
-                    {activeSettingsTab === 11 && (
+                    {visibleSettingsTab === 11 && (
                       <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-xs font-sans">
                         <div className="text-left">
                           <h4 className="text-xs font-black uppercase text-orange-500">Expirations & Sécurité RH</h4>
-                          <p className="text-[10px] text-gray-400 mt-0.5">Suivi de la carte ASP et certificats de compétences CCQ.</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">{isQuebec ? 'Suivi de la carte ASP et certificats de compétences CCQ.' : 'Suivi des certifications de sécurité et de compétence des employés.'}</p>
                         </div>
 
                         {/* Active alert boxes */}
@@ -5832,10 +5642,10 @@ export default function App() {
 
                         {/* Calendar View representation */}
                         <div className="pt-3 border-t border-gray-850 space-y-2 text-left">
-                          <span className="text-[9px] uppercase font-mono text-gray-500 block">📅 Calendrier CCQ & CNESST</span>
+                          <span className="text-[9px] uppercase font-mono text-gray-500 block">📅 Calendrier {isQuebec ? 'CCQ & CNESST' : `Conformité & ${workersCompName}`}</span>
                           <div className="space-y-1.5">
                             {[
-                              { date: "15 Juin 2026", label: "Renouvellement assurance collective CCQ", type: "administrative" },
+                              { date: "15 Juin 2026", label: isQuebec ? "Renouvellement assurance collective CCQ" : "Renouvellement assurance collective", type: "administrative" },
                               { date: "01 Juillet 2026", label: "Audits annuels des harnais antichute", type: "safeguard" },
                               { date: "18 Juillet 2026", label: "Anniversaire d'embauche — Jean-Guy (7e année)", type: "anniversary" },
                               { date: "10 Août 2026", label: "Renouvellement Certification Chariot Élévateur", type: "safeguard" }
@@ -5846,6 +5656,74 @@ export default function App() {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {visibleSettingsTab === 12 && (
+                      <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 text-xs font-sans text-left">
+                        <div>
+                          <h4 className="text-xs font-black uppercase text-orange-500">🤖 Assistant IA</h4>
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            Choisissez le fournisseur d'intelligence artificielle et entrez votre propre clé API. Elle est enregistrée uniquement dans ce navigateur (LocalStorage) et sert uniquement à connecter l'assistant.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Fournisseur IA</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            {([
+                              { id: 'anthropic', label: 'Anthropic Claude' },
+                              { id: 'gemini', label: 'Google Gemini' },
+                              { id: 'openai', label: 'OpenAI ChatGPT' }
+                            ] as const).map(p => (
+                              <button
+                                key={p.id}
+                                onClick={() => updateCompanyInfo({ aiProvider: p.id })}
+                                className={`p-3 rounded-xl border text-xs font-black transition cursor-pointer ${
+                                  (companyInfo.aiProvider || 'gemini') === p.id
+                                    ? 'bg-orange-600 border-orange-500 text-white'
+                                    : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-700'
+                                }`}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Clé API</span>
+                          <div className="flex gap-2">
+                            <input
+                              type={showAiKey ? 'text' : 'password'}
+                              placeholder="Collez votre clé API ici..."
+                              className="flex-1 p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850"
+                              value={aiKeyDraft}
+                              onChange={(e) => setAiKeyDraft(e.target.value)}
+                            />
+                            <button
+                              onClick={() => setShowAiKey(!showAiKey)}
+                              className="px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg transition cursor-pointer"
+                              title={showAiKey ? 'Masquer' : 'Afficher'}
+                            >
+                              {showAiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => {
+                              updateCompanyInfo({ aiApiKey: aiKeyDraft });
+                              alert('Clé API enregistrée !');
+                            }}
+                            className="w-full py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded-xl transition cursor-pointer"
+                          >
+                            Enregistrer la clé
+                          </button>
+                          <p className="text-[10px] text-gray-500">
+                            {companyInfo.aiApiKey
+                              ? `Clé actuellement enregistrée pour ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI' : 'Google Gemini'} (••••${companyInfo.aiApiKey.slice(-4)}).`
+                              : "Aucune clé enregistrée : l'assistant répond en mode simulation locale."}
+                          </p>
                         </div>
                       </div>
                     )}
@@ -5897,11 +5775,13 @@ export default function App() {
               </div>
             </div>
 
-            {/* CCQ Rules reminder card */}
+            {/* Rappel des normes du travail — s'adapte à la province/état de la compagnie */}
             <div className="p-4 bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-800 rounded-2xl">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">Rappel CCQ Convention</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500">
+                {isQuebec ? 'Rappel CCQ Convention' : (currentLanguage === 'FR' ? `Rappel Normes du Travail (${regionName})` : `Labor Standards Reminder (${regionName})`)}
+              </span>
               <p className="text-xs text-gray-300 mt-1.5 leading-normal">
-                Les pauses réglementaires québécoises de construction (15 mins de pause à 10h et 15h) ne sont pas déductibles des heures de paie finales.
+                {breakRuleText}
               </p>
             </div>
 
@@ -6131,10 +6011,35 @@ export default function App() {
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navEmpInvoices}</span>
                 </button>
 
+                {/* La secrétaire a des droits de gestion sur l'inventaire et les commandes :
+                    elle doit donc pouvoir naviguer vers ces vues, sinon ces droits sont inaccessibles. */}
+                {activeEmployee.role === 'secretary' && (
+                  <>
+                    <button
+                      onClick={() => setActiveTab('inventory')}
+                      className={`flex flex-col items-center gap-1 cursor-pointer transition ${
+                        activeTab === 'inventory' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-2xl">📦</span>
+                      <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminInventory}</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('commandes')}
+                      className={`flex flex-col items-center gap-1 cursor-pointer transition ${
+                        activeTab === 'commandes' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-2xl">🚚</span>
+                      <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminOrders}</span>
+                    </button>
+                  </>
+                )}
+
                 <button
-                  onClick={() => setActiveTab('stats')}
+                  onClick={() => { setActiveTab('stats'); setStatsSubTab('analytics'); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                    activeTab === 'stats' && statsSubTab === 'analytics' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
                   <span className="text-2xl">🏆</span>
@@ -6142,9 +6047,9 @@ export default function App() {
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('stats')} // mapped into Stats/Payroll section
+                  onClick={() => { setActiveTab('stats'); setStatsSubTab('payroll'); }} // ouvre directement le décompte de paie, pas le sous-onglet rendement/XP
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400'
+                    activeTab === 'stats' && statsSubTab === 'payroll' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
                   <span className="text-2xl">💵</span>
@@ -6201,7 +6106,7 @@ export default function App() {
                   className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs text-white"
                 >
                   <option value="">-- Sélectionnez un chantier --</option>
-                  {projects.map(p => (
+                  {(activeEmployee.role === 'admin' ? projects : projects.filter(p => p.assignedEmployees.includes(activeEmployee.id))).map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
@@ -6310,17 +6215,20 @@ export default function App() {
                   <div className="space-y-2">
                     {/* Catalog Material choices quick click */}
                     <div className="grid grid-cols-2 gap-2">
-                      {catalogue.slice(0, 4).map(catItem => (
-                        <button
-                          key={catItem.id}
-                          type="button"
-                          onClick={() => handleAddMaterialToReport(catItem.name, 10, catItem.pricePerSqFt, catItem.emoji)}
-                          className="p-1 px-2.5 bg-gray-800 hover:bg-gray-750 text-white rounded text-[10px] text-left transition truncate cursor-pointer flex items-center gap-1.5"
-                        >
-                          <span className="text-sm">{catItem.emoji}</span>
-                          <span>+10 pi² {catItem.name} ({catItem.pricePerSqFt}$/pi²)</span>
-                        </button>
-                      ))}
+                      {catalogue.slice(0, 4).map(catItem => {
+                        const unitLabel = CATALOGUE_UNIT_LABELS[catItem.unit || 'pi2'];
+                        return (
+                          <button
+                            key={catItem.id}
+                            type="button"
+                            onClick={() => handleAddMaterialToReport(catItem.name, 10, catItem.pricePerSqFt, catItem.emoji, unitLabel)}
+                            className="p-1 px-2.5 bg-gray-800 hover:bg-gray-750 text-white rounded text-[10px] text-left transition truncate cursor-pointer flex items-center gap-1.5"
+                          >
+                            <span className="text-sm">{catItem.emoji}</span>
+                            <span>+10 {unitLabel} {catItem.name} ({catItem.pricePerSqFt}$/{unitLabel})</span>
+                          </button>
+                        );
+                      })}
                     </div>
 
                       {/* Reported list items */}
@@ -6330,7 +6238,7 @@ export default function App() {
                         ) : (
                           reportedMaterials.map((m, idx) => (
                             <div key={idx} className="flex justify-between items-center text-gray-300 font-mono">
-                              <span className="font-sans">{m.emoji} {m.name} ({m.quantity} pi²)</span>
+                              <span className="font-sans">{m.emoji} {m.name} ({m.quantity} {m.unit || 'pi²'})</span>
                               <span className="font-bold">{(m.quantity * m.unitPrice).toFixed(2)}$</span>
                             </div>
                           ))
@@ -6368,6 +6276,68 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* -------------------- MODAL: SIGNATURE TACTILE AVANT ENVOI DE FACTURE -------------------- */}
+      {invoiceToSign && activeEmployee && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
+              <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
+                ✍️ Signer et envoyer la facture
+              </h4>
+              <button
+                onClick={() => { setInvoiceToSign(null); setInvoiceSignatureData(null); }}
+                className="text-gray-500 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-gray-300 leading-normal">
+                Veuillez apposer votre signature tactile pour confirmer et envoyer la facture <strong>{invoiceToSign.invoiceNumber}</strong> ({invoiceToSign.totalWithTaxes.toFixed(2)}$ TTC) à {companyInfo.name || 'Hailite Xteriors Inc.'}.
+              </p>
+
+              <SignaturePad
+                label={`Signature de ${activeEmployee.name}`}
+                value={invoiceSignatureData}
+                onChange={setInvoiceSignatureData}
+                required
+                accentClass="text-orange-500"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
+              <button
+                onClick={() => { setInvoiceToSign(null); setInvoiceSignatureData(null); }}
+                className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
+              >
+                {t.modalCancelBtn}
+              </button>
+              <button
+                onClick={() => {
+                  if (!invoiceSignatureData) {
+                    alert("Veuillez signer avec le doigt ou la souris avant d'envoyer la facture.");
+                    return;
+                  }
+                  updateInvoice({
+                    ...invoiceToSign,
+                    status: 'pending',
+                    employeeSignature: invoiceSignatureData,
+                    employeeSignedAt: new Date().toISOString()
+                  });
+                  setInvoiceToSign(null);
+                  setInvoiceSignatureData(null);
+                }}
+                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-orange-950/25"
+              >
+                📤 Signer et envoyer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* -------------------- INTERACTIVE VALIDATION TOUR OVERLAY -------------------- */}
       {tourStep !== null && TOUR_STEPS[tourStep] && (
         <div id="interactive-val-tour" className="fixed bottom-6 right-6 left-6 md:left-auto md:w-[440px] bg-[#16191F]/95 backdrop-blur-md border border-orange-500/30 rounded-2xl p-5 shadow-2xl z-[9999] text-left space-y-4 animate-fade-in font-sans">

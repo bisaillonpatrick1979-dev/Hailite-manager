@@ -1,9 +1,13 @@
+// Serveur Node traditionnel : utilisé en développement local (npm run dev) et
+// pour tout hébergement Node persistant (Railway, Render, VM, etc.). Sur
+// Vercel, c'est api/index.ts qui sert les mêmes routes en fonction serverless
+// (voir apiRoutes.ts, partagé entre les deux entrées) — server.ts n'y tourne pas.
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { registerApiRoutes } from './apiRoutes';
 
 dotenv.config();
 
@@ -12,54 +16,9 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '15mb' })); // signatures tactiles encodées en base64
 
-  // API Route for Gemini Agent chat
-  app.post('/api/chat', async (req, res) => {
-    try {
-      const { message } = req.body;
-      const apiKey = process.env.GEMINI_API_KEY;
-
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
-        return res.json({
-          reply: "🤖 L'assistant IA fonctionne en mode simulation locale car la clé GEMINI_API_KEY n'est pas encore configurée dans vos Variables d'Environnement / Secrets. Pour l'activer, ajoutez la clé de l'API Gemini dans le panneau latérale de configuration.",
-          simulated: true
-        });
-      }
-
-      const ai = new GoogleGenAI({
-        apiKey: apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
-      // Prepare system instruction
-      const systemInstruction = `
-        Tu es l'assistant d'IA intelligent d'une entreprise québécoise de pose de toiture et parement extérieur appelée "Hailite Xteriors".
-        L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
-        Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
-        Tu connais la CCQ (Commission de la construction du Québec) et les réglementations CNESST.
-        Donne des conseils professionnels, clairs et utilise des termes québécois quand approprié (ex: "Chantier", "Pièce", "Bardeaux", "Soufflage").
-        Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: [
-          { role: 'user', parts: [{ text: `Système: ${systemInstruction}\n\nClient message: ${message}` }] }
-        ],
-      });
-
-      const text = response.text;
-      return res.json({ reply: text });
-    } catch (error: any) {
-      console.error('Error on /api/chat:', error);
-      return res.status(500).json({ error: error.message || 'Error occurred while calling Gemini API' });
-    }
-  });
+  registerApiRoutes(app);
 
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -69,7 +28,7 @@ async function startServer() {
       appType: 'custom',
     });
     app.use(vite.middlewares);
-    
+
     // Serve index.html dynamically
     app.get('*', async (req, res, next) => {
       const url = req.originalUrl;

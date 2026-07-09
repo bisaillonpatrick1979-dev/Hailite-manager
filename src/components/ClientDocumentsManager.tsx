@@ -5,19 +5,26 @@ import {
   GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine,
   GCPDocumentPaymentHistoryEntry
 } from '../types';
-import { 
-  Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar, 
-  DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck, 
-  FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin, 
+import {
+  Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar,
+  DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck,
+  FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin,
   CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
 } from 'lucide-react';
+import { CANADIAN_REGIONS, US_REGIONS, regionWithPreposition } from '../regionsData';
+import SignaturePad from './SignaturePad';
 
 export default function ClientDocumentsManager() {
-  const { 
-    documents, addGCPDocument, updateGCPDocument, deleteGCPDocument, 
+  const {
+    documents, addGCPDocument, updateGCPDocument, deleteGCPDocument,
     convertQuoteToInvoice, addPartialPayment, clients, projects, companyInfo,
     currentTheme, currentLanguage
   } = useAppStore();
+
+  const companyCountry = companyInfo.country || 'CA';
+  const companyRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === companyInfo.region) || CANADIAN_REGIONS[0];
+  const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
+  const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
 
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'invoice' | 'quote' | 'contract'>('all');
   const [activeStatusTab, setActiveStatusTab] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'paid' | 'overdue'>('all');
@@ -70,18 +77,19 @@ export default function ClientDocumentsManager() {
   const [finalPct, setFinalPct] = useState(50);
 
   // Warranty
-  const [warrantyYears, setWarrantyYears] = useState(2);
+  const [warrantyYears, setWarrantyYears] = useState(companyInfo.defaultWarrantyYears ?? 2);
   const [hasInsurance, setHasInsurance] = useState(true);
   const [subcontractAuthorized, setSubcontractAuthorized] = useState(true);
 
   // Contract specific clauses
-  const [clauseChange, setClauseChange] = useState(clausePresets.changeOrder);
-  const [clauseResil, setClauseResil] = useState(clausePresets.resiliation);
+  const [clauseChange, setClauseChange] = useState(companyInfo.defaultClauseChangeOrder ?? clausePresets.changeOrder);
+  const [clauseResil, setClauseResil] = useState(companyInfo.defaultClauseResiliation ?? clausePresets.resiliation);
   const [clauseWarr, setClauseWarr] = useState(clausePresets.warranty);
 
-  // Signature typing layout
-  const [ownerSignature, setOwnerSignature] = useState(companyInfo.name || 'Hailite Xteriors Inc.');
-  const [clientSignatureTyped, setClientSignatureTyped] = useState('');
+  // Tactile (touch-drawn) electronic signatures
+  const [ownerSignatureData, setOwnerSignatureData] = useState<string | null>(null);
+  const [clientSignatureData, setClientSignatureData] = useState<string | null>(null);
+  const [signaturePadResetKey, setSignaturePadResetKey] = useState(0);
 
   const resetCreateForm = () => {
     setNewDocType('quote');
@@ -100,19 +108,30 @@ export default function ClientDocumentsManager() {
     setDepositPct(25);
     setMidPct(25);
     setFinalPct(50);
-    setWarrantyYears(2);
+    setWarrantyYears(companyInfo.defaultWarrantyYears ?? 2);
     setHasInsurance(true);
     setSubcontractAuthorized(true);
-    setClauseChange(clausePresets.changeOrder);
-    setClauseResil(clausePresets.resiliation);
+    setClauseChange(companyInfo.defaultClauseChangeOrder ?? clausePresets.changeOrder);
+    setClauseResil(companyInfo.defaultClauseResiliation ?? clausePresets.resiliation);
     setClauseWarr(clausePresets.warranty);
-    setClientSignatureTyped('');
+    setOwnerSignatureData(null);
+    setClientSignatureData(null);
+    setSignaturePadResetKey(k => k + 1);
   };
 
   const handleCreateDocument = () => {
     const cli = clients.find(c => c.id === newClientId) || clients[0];
     if (!cli) {
       alert("Veuillez sélectionner un client d'abord ou en ajouter un dans les Réglages.");
+      return;
+    }
+
+    if (!ownerSignatureData) {
+      alert("La signature tactile de l'entrepreneur est requise avant de générer ce document.");
+      return;
+    }
+    if (newDocType === 'contract' && !clientSignatureData) {
+      alert("La signature tactile du client est requise pour générer une entente/contrat.");
       return;
     }
 
@@ -180,7 +199,7 @@ export default function ClientDocumentsManager() {
       subcontractLines,
       subtotal: 0, // Auto calculated in store
       discountPct: Number(discountPct) || 0,
-      taxRate: Number((((companyInfo.taxRate1 || 0) + (companyInfo.taxRate2 || 0)) * 100).toFixed(4)) || 14.975,
+      taxRate: Number((((companyInfo.taxRate1 !== undefined ? companyInfo.taxRate1 : 0.05) + (companyInfo.taxRate2 !== undefined ? companyInfo.taxRate2 : 0.09975)) * 100).toFixed(4)),
       taxAmount: 0, // Auto calculated
       total: 0, // Auto calculated
       holdbackPct: Number(holdbackPct) || 0,
@@ -203,9 +222,9 @@ export default function ClientDocumentsManager() {
       clauseWarrantyDetails: clauseWarr,
       ownerName: companyInfo.name || 'Hailite Xteriors Inc.',
       paymentsHistory: [],
-      clientSignature: clientSignatureTyped ? `typed://${clientSignatureTyped}` : undefined,
-      ownerSignature: ownerSignature ? `typed://${ownerSignature}` : undefined,
-      signedAt: clientSignatureTyped ? new Date().toISOString() : undefined
+      clientSignature: newDocType === 'contract' ? (clientSignatureData || undefined) : undefined,
+      ownerSignature: ownerSignatureData || undefined,
+      signedAt: new Date().toISOString()
     });
 
     setShowCreateModal(false);
@@ -332,10 +351,12 @@ export default function ClientDocumentsManager() {
         <div className="bg-[#12131A] border border-gray-850 p-4 rounded-xl relative overflow-hidden col-span-2">
           <div className="flex items-center gap-2 mb-2">
             <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-            <span className="text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">Numérotation Automatique CCQ</span>
+            <span className="text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">Numérotation Automatique{isQuebec ? ' CCQ' : ''}</span>
           </div>
           <p className="text-xs text-gray-300 leading-relaxed max-w-sm">
-            Numérotation séquentielle québécoise homologuée pour l\'assurance qualité et le suivi diligent des inspections APCHQ/CCQ.
+            {isQuebec
+              ? "Numérotation séquentielle québécoise homologuée pour l'assurance qualité et le suivi diligent des inspections APCHQ/CCQ."
+              : `Numérotation séquentielle homologuée pour l'assurance qualité et le suivi diligent des documents ${regionWithPreposition(companyRegion, companyCountry)}.`}
           </p>
         </div>
 
@@ -667,7 +688,7 @@ export default function ClientDocumentsManager() {
                     <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Adresse du Chantier :</span>
                     <p className="text-xs text-slate-800 font-semibold">{selectedDocForView.siteAddress || selectedDocForView.clientAddress}</p>
                     <div className="pt-2 text-[10px] text-slate-500">
-                      <p>Règlement : Québec CCQ de Pose</p>
+                      <p>Règlement : {isQuebec ? 'Québec CCQ de Pose' : `Normes de construction — ${regionName}`}</p>
                       <p>Retenue légale admissible : {selectedDocForView.holdbackPct}%</p>
                     </div>
                   </div>
@@ -744,7 +765,7 @@ export default function ClientDocumentsManager() {
                       {/* Labor */}
                       {selectedDocForView.labourLines && selectedDocForView.labourLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
-                          <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">Catégorie B : Main-d\'œuvre spécialisée CCQ</h5>
+                          <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">Catégorie B : Main-d'œuvre spécialisée{isQuebec ? ' CCQ' : ''}</h5>
                           <table className="w-full text-left text-[11px] border-collapse">
                             <thead>
                               <tr className="border-b border-amber-100 text-slate-400 font-mono">
@@ -847,7 +868,7 @@ export default function ClientDocumentsManager() {
 
                     {selectedDocForView.holdbackPct > 0 && (
                       <div className="flex justify-between items-center text-amber-800">
-                        <span>Retenue légale CCQ ({selectedDocForView.holdbackPct}%) :</span>
+                        <span>Retenue légale{isQuebec ? ' CCQ' : ''} ({selectedDocForView.holdbackPct}%) :</span>
                         <span className="font-mono font-semibold">-{selectedDocForView.holdbackAmount.toFixed(2)}$</span>
                       </div>
                     )}
@@ -887,12 +908,16 @@ export default function ClientDocumentsManager() {
                   
                   {/* Signature Entrepreneur */}
                   <div className="space-y-2">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">L'Entrepreneur (Signature légale) :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">L'Entrepreneur (Signature tactile) :</span>
                     <div className="border border-slate-200 rounded p-3 h-14 flex items-center justify-center font-serif text-sm bg-slate-50">
                       {selectedDocForView.ownerSignature ? (
-                        <span className="italic font-bold text-slate-800 select-none">
-                          {selectedDocForView.ownerSignature.replace('typed://', '')}
-                        </span>
+                        selectedDocForView.ownerSignature.startsWith('data:image') ? (
+                          <img src={selectedDocForView.ownerSignature} alt="Signature de l'entrepreneur" className="h-full object-contain" />
+                        ) : (
+                          <span className="italic font-bold text-slate-800 select-none">
+                            {selectedDocForView.ownerSignature.replace('typed://', '')}
+                          </span>
+                        )
                       ) : (
                         <span className="text-gray-400 font-sans text-xs">Non signé numériquement</span>
                       )}
@@ -902,12 +927,16 @@ export default function ClientDocumentsManager() {
 
                   {/* Signature Client */}
                   <div className="space-y-2">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Le Client (Signature légale) :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Le Client (Signature tactile) :</span>
                     <div className="border border-slate-200 rounded p-3 h-14 flex items-center justify-center font-serif text-sm bg-slate-50">
                       {selectedDocForView.clientSignature ? (
-                        <span className="italic font-bold text-orange-600 select-none">
-                          {selectedDocForView.clientSignature.replace('typed://', '')}
-                        </span>
+                        selectedDocForView.clientSignature.startsWith('data:image') ? (
+                          <img src={selectedDocForView.clientSignature} alt="Signature du client" className="h-full object-contain" />
+                        ) : (
+                          <span className="italic font-bold text-orange-600 select-none">
+                            {selectedDocForView.clientSignature.replace('typed://', '')}
+                          </span>
+                        )
                       ) : (
                         <span className="text-gray-400 font-sans text-xs">Non signé numériquement</span>
                       )}
@@ -945,6 +974,7 @@ export default function ClientDocumentsManager() {
                   <span className="absolute left-3 top-2 text-white font-mono">$</span>
                   <input
                     type="number"
+                    min="0"
                     value={payAmount}
                     onChange={e => setPayAmount(e.target.value)}
                     placeholder="ex: 2500"
@@ -1094,10 +1124,11 @@ export default function ClientDocumentsManager() {
                       />
                       <input
                         type="number"
+                        min="0"
                         value={l.qty}
                         onChange={e => {
                           const dup = [...simpleLines];
-                          dup[idx].qty = parseFloat(e.target.value) || 0;
+                          dup[idx].qty = Math.max(0, parseFloat(e.target.value) || 0);
                           setSimpleLines(dup);
                         }}
                         placeholder="Qty"
@@ -1116,10 +1147,11 @@ export default function ClientDocumentsManager() {
                       />
                       <input
                         type="number"
+                        min="0"
                         value={l.price}
                         onChange={e => {
                           const dup = [...simpleLines];
-                          dup[idx].price = parseFloat(e.target.value) || 0;
+                          dup[idx].price = Math.max(0, parseFloat(e.target.value) || 0);
                           setSimpleLines(dup);
                         }}
                         placeholder="$/unit"
@@ -1167,13 +1199,13 @@ export default function ClientDocumentsManager() {
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded font-mono"
                         />
                         <input
-                          type="number" value={m.qtySqft} placeholder="Sqrft"
-                          onChange={e => { const d = [...richMaterials]; d[idx].qtySqft = parseFloat(e.target.value) || 0; setRichMaterials(d); }}
+                          type="number" min="0" value={m.qtySqft} placeholder="Sqrft"
+                          onChange={e => { const d = [...richMaterials]; d[idx].qtySqft = Math.max(0, parseFloat(e.target.value) || 0); setRichMaterials(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-center font-mono"
                         />
                         <input
-                          type="number" value={m.price} placeholder="$/pi²"
-                          onChange={e => { const d = [...richMaterials]; d[idx].price = parseFloat(e.target.value) || 0; setRichMaterials(d); }}
+                          type="number" min="0" value={m.price} placeholder="$/pi²"
+                          onChange={e => { const d = [...richMaterials]; d[idx].price = Math.max(0, parseFloat(e.target.value) || 0); setRichMaterials(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-right font-mono col-span-1"
                         />
                         <button
@@ -1209,13 +1241,13 @@ export default function ClientDocumentsManager() {
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded col-span-2"
                         />
                         <input
-                          type="number" value={lb.hours} placeholder="Heures"
-                          onChange={e => { const d = [...richLabours]; d[idx].hours = parseFloat(e.target.value) || 0; setRichLabours(d); }}
+                          type="number" min="0" value={lb.hours} placeholder="Heures"
+                          onChange={e => { const d = [...richLabours]; d[idx].hours = Math.max(0, parseFloat(e.target.value) || 0); setRichLabours(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-center font-mono"
                         />
                         <input
-                          type="number" value={lb.rate} placeholder="$/heure"
-                          onChange={e => { const d = [...richLabours]; d[idx].rate = parseFloat(e.target.value) || 0; setRichLabours(d); }}
+                          type="number" min="0" value={lb.rate} placeholder="$/heure"
+                          onChange={e => { const d = [...richLabours]; d[idx].rate = Math.max(0, parseFloat(e.target.value) || 0); setRichLabours(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-right font-mono col-span-2 text-orange-400"
                         />
                         <button
@@ -1237,20 +1269,24 @@ export default function ClientDocumentsManager() {
                   <label className="text-gray-400 block">Escompte (%)</label>
                   <input
                     type="number"
+                    min="0"
+                    max="100"
                     value={discountPct}
-                    onChange={e => setDiscountPct(parseFloat(e.target.value) || 0)}
+                    onChange={e => setDiscountPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
                     placeholder="ex: 5"
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono"
                   />
                 </div>
-                
+
                 <div className="space-y-1">
                   <label className="text-gray-400 block">Retenue Garantie (%)</label>
                   <input
                     type="number"
+                    min="0"
+                    max="100"
                     value={holdbackPct}
-                    onChange={e => setHoldbackPct(parseFloat(e.target.value) || 0)}
-                    placeholder="ex: 10 pour la CCQ"
+                    onChange={e => setHoldbackPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
+                    placeholder={isQuebec ? 'ex: 10 pour la CCQ' : 'ex: 10'}
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono text-amber-400"
                   />
                 </div>
@@ -1259,8 +1295,9 @@ export default function ClientDocumentsManager() {
                   <label className="text-gray-400 block">Acompte demandé ($)</label>
                   <input
                     type="number"
+                    min="0"
                     value={depositAmount}
-                    onChange={e => setDepositAmount(parseFloat(e.target.value) || 0)}
+                    onChange={e => setDepositAmount(Math.max(0, parseFloat(e.target.value) || 0))}
                     placeholder="ex: 2500"
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono text-green-400"
                   />
@@ -1312,29 +1349,35 @@ export default function ClientDocumentsManager() {
                 </div>
               )}
 
-              {/* Typographic electronic signatures typing blocks */}
-              <div className="grid grid-cols-2 gap-4 border-t border-gray-800 pt-3">
-                <div className="space-y-1">
-                  <label className="text-gray-400 block">Auteur (Chef de Chantier)</label>
-                  <input
-                    type="text"
-                    value={ownerSignature}
-                    onChange={e => setOwnerSignature(e.target.value)}
-                    className="w-full bg-[#161822] border border-gray-800 text-white rounded p-1.5 font-serif text-xs px-2.5"
+              {/* Signatures tactiles réelles (dessinées au doigt ou à la souris) */}
+              <div className={`grid gap-4 border-t border-gray-800 pt-3 ${newDocType === 'contract' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+                <div key={`owner-${signaturePadResetKey}`}>
+                  <SignaturePad
+                    label="Signature de l'entrepreneur"
+                    value={ownerSignatureData}
+                    onChange={setOwnerSignatureData}
+                    required
+                    accentClass="text-gray-400"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-gray-500 block">Paraphe / Signature du Client</label>
-                  <input
-                    type="text"
-                    value={clientSignatureTyped}
-                    onChange={e => setClientSignatureTyped(e.target.value)}
-                    placeholder="Saisissez son nom pour signer le document"
-                    className="w-full bg-[#161822] border border-gray-800 text-orange-500 font-serif text-xs px-2.5 placeholder-gray-600 focus:border-orange-500"
-                  />
-                </div>
+                {newDocType === 'contract' && (
+                  <div key={`client-${signaturePadResetKey}`}>
+                    <SignaturePad
+                      label="Signature du client"
+                      value={clientSignatureData}
+                      onChange={setClientSignatureData}
+                      required
+                      accentClass="text-orange-500"
+                    />
+                  </div>
+                )}
               </div>
+              {newDocType !== 'contract' && (
+                <p className="text-[10px] text-gray-500 -mt-2">
+                  Ce type de document n'est signé que par l'entrepreneur. Seule une entente/contrat requiert aussi la signature tactile du client.
+                </p>
+              )}
 
               {/* Submit trigger button */}
               <button

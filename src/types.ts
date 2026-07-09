@@ -39,6 +39,20 @@ export interface Employee {
   annualSalary?: number;
 }
 
+export interface ProjectTask {
+  id: string;
+  text: string; // ex: "Refaire le revêtement côté gauche"
+  done: boolean;
+  priority: 'normal' | 'critique';
+  createdAt: string;
+}
+
+export interface ProjectTool {
+  id: string;
+  name: string; // ex: "Cloueuse pneumatique"
+  brought: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -49,6 +63,8 @@ export interface Project {
   radius: number; // default: 100 meters
   assignedEmployees: string[]; // Employee IDs
   status: 'active' | 'completed' | 'on-hold';
+  tasks?: ProjectTask[]; // Liste de tâches à cocher pour ce chantier
+  tools?: ProjectTool[]; // Outils à apporter sur le chantier
 }
 
 export interface SurfaceMaterialInput {
@@ -93,13 +109,32 @@ export interface Invoice {
   status: 'draft' | 'pending' | 'paid';
   notes?: string;
   taxIncluded: boolean;
+  // Tactile signature required from the employee/sous-traitant before sending to the company
+  employeeSignature?: string; // Base64 signature image data
+  employeeSignedAt?: string;
 }
+
+export interface Supplier {
+  id: string;
+  name: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+}
+
+export type CatalogueUnit = 'pi2' | 'pi_lin' | 'boite' | 'rouleau' | 'unite' | 'lot';
 
 export interface CatalogueMaterial {
   id: string;
   name: string;
   emoji: string;
-  pricePerSqFt: number; // Price per square foot / unit
+  pricePerSqFt: number; // Prix payé au sous-traitant / unité (utilisé pour calculer la paie en mode Surface)
+  supplierPrice?: number; // Coût payé au fournisseur / unité
+  clientPrice?: number; // Prix chargé au client / unité
+  supplierId?: string; // Référence vers Supplier.id
+  unit?: CatalogueUnit; // Unité de vente : pi², pi linéaire, boîte, rouleau, unité, lot (défaut : pi2)
+  unitNote?: string; // Précision libre, ex: "≈340 pièces/boîte"
   imageUrl?: string;
   imageAlt?: string;
 }
@@ -144,8 +179,9 @@ export interface CompanyInfo {
   email: string;
   gstNumber: string; // TPS
   qstNumber: string; // TVQ
-  wcbNumber: string; // CNESST / WCB
+  wcbNumber: string; // CNESST / WCB / Workers' Comp registration
   bnNumber: string; // NEQ / BN
+  constructionLicenseNumber?: string; // ex: Permis RBQ (Québec) ou licence d'entrepreneur locale
   logo: string;
   interacEmail: string;
   bankDetails: {
@@ -160,7 +196,13 @@ export interface CompanyInfo {
   voiceReminderVolume: number; // 0-100
   voiceReminderSchedule: string; // hours e.g., "08:00, 12:00, 17:00"
   paymentTerms: string; // conditions de paiement
-  
+
+  // Conditions par défaut appliquées aux nouveaux devis/contrats/factures
+  defaultLateInterestPct?: number;
+  defaultWarrantyYears?: number;
+  defaultClauseChangeOrder?: string;
+  defaultClauseResiliation?: string;
+
   // Salaried Payroll Settings
   payrollVacationRate?: number;
   payrollHealthInsurance?: number;
@@ -185,6 +227,10 @@ export interface CompanyInfo {
   paymentDepositPct?: number;
   paymentMidPct?: number;
   paymentFinalPct?: number;
+
+  // Assistant IA
+  aiProvider?: 'gemini' | 'anthropic' | 'openai';
+  aiApiKey?: string;
 }
 
 export interface WeeklyGoal {
