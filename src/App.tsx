@@ -154,10 +154,24 @@ export default function App() {
   } = useAppStore();
 
   // Hydratation depuis Supabase au démarrage (best effort, non bloquant : l'app
-  // fonctionne déjà avec les données LocalStorage chargées de façon synchrone ci-dessus).
+  // fonctionne déjà avec les données LocalStorage chargées de façon synchrone ci-dessus),
+  // puis rafraîchissement périodique et au retour sur l'onglet pour approcher du
+  // temps réel sans dépendre de connexions persistantes (compatible hébergement serverless).
   const [cloudSyncing, setCloudSyncing] = useState(true);
   useEffect(() => {
     hydrateCloud().finally(() => setCloudSyncing(false));
+
+    const interval = setInterval(() => { hydrateCloud(); }, 45000);
+    const onFocus = () => hydrateCloud();
+    const onVisibility = () => { if (!document.hidden) hydrateCloud(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   const dragControls = useDragControls();

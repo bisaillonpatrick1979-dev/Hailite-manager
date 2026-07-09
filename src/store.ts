@@ -693,6 +693,16 @@ const saveState = (key: string, value: any) => {
   }
 };
 
+// Fusionne l'état cloud (source de vérité) avec l'état local par clé, en conservant
+// les entrées locales absentes du cloud (créations pas encore synchronisées) au lieu
+// de les écraser. Nécessaire car l'hydratation peut se répéter périodiquement
+// (voir hydrateCloud) et une écrasement pur perdrait toute mutation locale en vol.
+const mergeByKey = <T>(local: T[], cloud: T[], keyOf: (item: T) => string): T[] => {
+  const cloudKeys = new Set(cloud.map(keyOf));
+  const localOnly = local.filter(item => !cloudKeys.has(keyOf(item)));
+  return [...cloud, ...localOnly];
+};
+
 export const getXPRequiredForLevel = (level: number): number => {
   if (level <= 1) return 0;
   let total = 0;
@@ -1836,23 +1846,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     const companyRow = (t.companies || [])[0];
 
     set(state => {
-      const next: Partial<AppState> = { offlineSyncStatus: 'synced' };
-      if (employees.length) next.employees = employees;
-      if (projects.length) next.projects = projects;
-      if (punchSessions.length) next.punchSessions = punchSessions;
-      if (invoices.length) next.invoices = invoices;
-      if (catalogue.length) next.catalogue = catalogue;
-      if (suppliers.length) next.suppliers = suppliers;
-      if (inventory.length) next.inventory = inventory;
-      if (orders.length) next.orders = orders;
-      if (clients.length) next.clients = clients;
-      if (hrAlerts.length) next.hrAlerts = hrAlerts;
-      if (documents.length) next.documents = documents;
-      if (expenses.length) next.expenses = expenses;
-      if (payrollPayments.length) next.payrollPayments = payrollPayments;
-      if (motivationTeams.length) next.motivationTeams = motivationTeams;
-      if (motivationGoals.length) next.motivationGoals = motivationGoals;
-      if (weeklyGoals.length) next.weeklyGoals = weeklyGoals;
+      const next: Partial<AppState> = {
+        offlineSyncStatus: 'synced',
+        employees: mergeByKey(state.employees, employees, e => e.id),
+        projects: mergeByKey(state.projects, projects, p => p.id),
+        punchSessions: mergeByKey(state.punchSessions, punchSessions, p => p.id),
+        invoices: mergeByKey(state.invoices, invoices, i => i.id),
+        catalogue: mergeByKey(state.catalogue, catalogue, c => c.id),
+        suppliers: mergeByKey(state.suppliers, suppliers, s => s.id),
+        inventory: mergeByKey(state.inventory, inventory, i => i.id),
+        orders: mergeByKey(state.orders, orders, o => o.id),
+        clients: mergeByKey(state.clients, clients, c => c.id),
+        hrAlerts: mergeByKey(state.hrAlerts, hrAlerts, h => h.id),
+        documents: mergeByKey(state.documents, documents, d => d.id),
+        expenses: mergeByKey(state.expenses, expenses, e => e.id),
+        payrollPayments: mergeByKey(state.payrollPayments, payrollPayments, p => p.id),
+        motivationTeams: mergeByKey(state.motivationTeams, motivationTeams, m => m.id),
+        motivationGoals: mergeByKey(state.motivationGoals, motivationGoals, g => g.id),
+        weeklyGoals: mergeByKey(state.weeklyGoals, weeklyGoals, w => w.employeeId)
+      };
       if (companyRow) next.companyInfo = { ...state.companyInfo, ...rowToCompanyInfo(companyRow) };
       return next as AppState;
     });
