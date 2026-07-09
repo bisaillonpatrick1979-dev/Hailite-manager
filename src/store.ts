@@ -8,6 +8,7 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId,
+  syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
   hrAlertToRow, expenseToRow, payrollPaymentToRow, documentToRow, documentPaymentToRow,
@@ -833,6 +834,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
     set({ projects: updatedProjects });
     saveState('gcp_projects', updatedProjects);
+    updatedProjects.forEach((p, idx) => {
+      if (p.assignedEmployees.length !== projects[idx].assignedEmployees.length) syncProjectChildren(p);
+    });
 
     const updatedTeams = motivationTeams.map(team => ({
       ...team,
@@ -841,10 +845,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
     set({ motivationTeams: updatedTeams });
     saveState('gcp_motivationTeams', updatedTeams);
+    updatedTeams.forEach((team, idx) => {
+      if (team.memberIds.length !== motivationTeams[idx].memberIds.length || team.leaderId !== motivationTeams[idx].leaderId) {
+        syncUpdate('motivation_teams', team.id, motivationTeamToRow(team));
+      }
+    });
 
     const updatedWeeklyGoals = weeklyGoals.filter(wg => wg.employeeId !== id);
     set({ weeklyGoals: updatedWeeklyGoals });
     saveState('gcp_weeklyGoals', updatedWeeklyGoals);
+    syncDelete('weekly_goals', id);
 
     // Déconnecte la session active si l'employé supprimé était celui connecté
     if (activeEmployee && activeEmployee.id === id) {
@@ -869,6 +879,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     set({ employees: updated });
     saveState('gcp_employees', updated);
+    const changedEmp = updated.find(e => e.id === employeeId);
+    if (changedEmp) syncUpdate('app_users', employeeId, { xp: changedEmp.xp, level: changedEmp.level });
 
     // Sync active session if this is the active employee
     if (activeEmployee && activeEmployee.id === employeeId) {
@@ -1123,7 +1135,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [...projects, newProj];
     set({ projects: updated });
     saveState('gcp_projects', updated);
-    syncInsert('projects', projectToRow(newProj));
+    syncProjectInsert(newProj);
   },
 
   updateProject: (proj) => {
@@ -1132,6 +1144,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ projects: updated });
     saveState('gcp_projects', updated);
     syncUpdate('projects', proj.id, projectToRow(proj));
+    syncProjectChildren(proj);
   },
 
   deleteProject: (id) => {
@@ -1139,7 +1152,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = projects.filter(p => p.id !== id);
     set({ projects: updated });
     saveState('gcp_projects', updated);
-    syncDelete('projects', id);
+    syncDeleteProjectChildren(id).then(() => syncDelete('projects', id));
 
     // Retire toute référence au chantier supprimé dans les équipes de motivation
     const updatedTeams = motivationTeams.map(team => ({
@@ -1698,7 +1711,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       status: 'draft',
       refQuote: quote.number,
       date: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0]
+      dueDate: new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0],
+      // Régénère les identifiants des lignes copiées du devis : elles gardaient sinon
+      // les mêmes id que les lignes du devis, ce qui provoquait une collision de clé
+      // primaire lors de la synchronisation cloud (document_items.id est unique).
+      lineItems: quote.lineItems.map(l => ({ ...l, id: genId() })),
+      materialLines: quote.materialLines.map(l => ({ ...l, id: genId() })),
+      labourLines: quote.labourLines.map(l => ({ ...l, id: genId() })),
+      otherLines: quote.otherLines.map(l => ({ ...l, id: genId() })),
+      subcontractLines: quote.subcontractLines.map(l => ({ ...l, id: genId() }))
     };
 
     const updated = [invoice, ...documents];

@@ -133,6 +133,70 @@ export function rowToProject(r: any, tasks: any[], tools: any[], assignments: an
   };
 }
 
+export function projectTasksToRows(p: Project) {
+  return (p.tasks || []).map(t => ({ id: t.id, project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
+}
+export function projectToolsToRows(p: Project) {
+  return (p.tools || []).map(t => ({ id: t.id, project_id: p.id, name: t.name, brought: t.brought }));
+}
+export function projectAssignmentsToRows(p: Project) {
+  return p.assignedEmployees.map(empId => ({ project_id: p.id, user_id: empId }));
+}
+
+// Remplace toutes les tâches/outils/assignations distants d'un chantier par son état
+// courant (même stratégie "delete puis reinsert" que syncDocumentLines : ces
+// sous-listes n'ont pas d'identité stable côté UI, un diff fin serait fragile).
+export async function syncProjectChildren(project: Project) {
+  try {
+    const [existingTasks, existingTools, existingAssignments] = await Promise.all([
+      dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
+    ]);
+    const staleTasks = existingTasks.filter((r: any) => r.project_id === project.id);
+    const staleTools = existingTools.filter((r: any) => r.project_id === project.id);
+    const staleAssignments = existingAssignments.filter((r: any) => r.project_id === project.id);
+    await Promise.all([
+      ...staleTasks.map((r: any) => dbDelete('project_tasks', r.id)),
+      ...staleTools.map((r: any) => dbDelete('project_tools', r.id)),
+      ...staleAssignments.map((r: any) => dbDelete('project_assignments', r.id))
+    ]);
+    await Promise.all([
+      ...projectTasksToRows(project).map(r => dbInsert('project_tasks', r)),
+      ...projectToolsToRows(project).map(r => dbInsert('project_tools', r)),
+      ...projectAssignmentsToRows(project).map(r => dbInsert('project_assignments', r))
+    ]);
+  } catch (err: any) {
+    console.warn('[cloud-sync] syncProjectChildren a échoué :', err.message);
+  }
+}
+
+// Insère d'abord le chantier (contrainte de clé étrangère des tables enfants),
+// puis synchronise tâches/outils/assignations — ne doivent pas partir en parallèle.
+export async function syncProjectInsert(project: Project) {
+  try {
+    await dbInsert('projects', projectToRow(project));
+    await syncProjectChildren(project);
+  } catch (err: any) {
+    console.warn('[cloud-sync] syncProjectInsert a échoué :', err.message);
+  }
+}
+
+// Supprime les enfants distants d'un chantier avant sa suppression, en défense
+// contre l'absence éventuelle de ON DELETE CASCADE sur project_tasks/project_assignments.
+export async function syncDeleteProjectChildren(projectId: string) {
+  try {
+    const [existingTasks, existingTools, existingAssignments] = await Promise.all([
+      dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
+    ]);
+    await Promise.all([
+      ...existingTasks.filter((r: any) => r.project_id === projectId).map((r: any) => dbDelete('project_tasks', r.id)),
+      ...existingTools.filter((r: any) => r.project_id === projectId).map((r: any) => dbDelete('project_tools', r.id)),
+      ...existingAssignments.filter((r: any) => r.project_id === projectId).map((r: any) => dbDelete('project_assignments', r.id))
+    ]);
+  } catch (err: any) {
+    console.warn('[cloud-sync] syncDeleteProjectChildren a échoué :', err.message);
+  }
+}
+
 export function punchToRow(p: PunchSession, companyId?: string) {
   return {
     id: p.id, company_id: companyId, employee_id: p.employeeId, employee_name: p.employeeName,
