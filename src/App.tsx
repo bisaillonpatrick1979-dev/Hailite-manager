@@ -538,7 +538,73 @@ export default function App() {
     }
   };
 
-  // Send message to the selected AI provider (Gemini / Anthropic / OpenAI) via the server proxy
+  // Même consigne système que côté serveur (apiRoutes.ts), pour le mode secours navigateur
+  const buildAiSystemInstruction = (regionLabel: string): string => `
+    Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${regionLabel}.
+    L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
+    Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
+    Base tes réponses de conformité, de sécurité et de charges sociales sur les règles applicables en ${regionLabel} — ne présume jamais que l'entreprise est au Québec à moins que ce soit précisé.
+    Donne des conseils professionnels et clairs.
+    Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
+  `;
+
+  // Mode secours : appel du fournisseur IA directement depuis le navigateur avec la clé
+  // entrée dans Réglages (comme les apps AI Studio d'origine). Utilisé uniquement quand
+  // le proxy serveur /api/chat est injoignable (ex: fonction serverless indisponible),
+  // pour que l'assistant fonctionne même en hébergement purement statique.
+  const callAiDirectFromBrowser = async (provider: string, apiKey: string, message: string, systemInstruction: string): Promise<string> => {
+    if (provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-5',
+          max_tokens: 1024,
+          system: systemInstruction,
+          messages: [{ role: 'user', content: message }]
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.message || `Erreur Anthropic (${res.status})`);
+      return data?.content?.[0]?.text || '';
+    }
+    if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: message }
+          ]
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.message || `Erreur OpenAI (${res.status})`);
+      return data?.choices?.[0]?.message?.content || '';
+    }
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemInstruction }] },
+        contents: [{ role: 'user', parts: [{ text: message }] }]
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || `Erreur Gemini (${res.status})`);
+    return data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '';
+  };
+
+  // Send message to the selected AI provider (Gemini / Anthropic / OpenAI) via the server
+  // proxy, avec repli automatique sur un appel direct depuis le navigateur si le serveur
+  // est injoignable et qu'une clé API personnelle est enregistrée.
   const handleSendAiMessage = async () => {
     if (!aiMessage.trim()) return;
 
@@ -547,29 +613,70 @@ export default function App() {
     setAiMessage('');
     setIsAiLoading(true);
 
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userText,
-          provider: companyInfo.aiProvider || 'gemini',
-          apiKey: companyInfo.aiApiKey || '',
-          regionLabel: `${companyRegion.nameFR} (${companyCountry === 'US' ? 'États-Unis' : 'Canada'})`
-        })
-      });
-      const data = await res.json();
+    const provider = companyInfo.aiProvider || 'gemini';
+    const clientKey = (companyInfo.aiApiKey || '').trim();
+    const regionLabel = `${companyRegion.nameFR} (${companyCountry === 'US' ? 'États-Unis' : 'Canada'})`;
 
-      setAiHistory(prev => [...prev, {
-        role: 'assistant',
-        text: res.ok ? data.reply : (data.error || "Désolé, l'agent IA a rencontré une erreur. Veuillez réessayer."),
-        simulated: data.simulated
-      }]);
+    try {
+      // 1) Tentative via le proxy serveur (préférable : la clé ne quitte pas le serveur
+      //    quand elle vient des variables d'environnement)
+      let serverUnreachable = false;
+      let reply: string | null = null;
+      let simulated: boolean | undefined;
+      let providerError: string | null = null;
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: userText, provider, apiKey: clientKey, regionLabel })
+        });
+        const raw = await res.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          // Réponse non-JSON (ex: page 404/500 HTML de l'hébergeur) : le proxy n'existe
+          // pas ou ne tourne pas — candidat au mode secours navigateur.
+          serverUnreachable = true;
+        }
+        if (data) {
+          if (res.ok) {
+            reply = data.reply;
+            simulated = data.simulated;
+          } else {
+            providerError = data.error || null;
+          }
+        }
+      } catch {
+        serverUnreachable = true;
+      }
+
+      // 2) Repli : appel direct depuis le navigateur avec la clé personnelle
+      if (serverUnreachable && clientKey) {
+        reply = await callAiDirectFromBrowser(provider, clientKey, userText, buildAiSystemInstruction(regionLabel));
+        providerError = null;
+      }
+
+      if (reply !== null) {
+        setAiHistory(prev => [...prev, { role: 'assistant', text: reply as string, simulated }]);
+      } else if (providerError) {
+        setAiHistory(prev => [...prev, { role: 'assistant', text: providerError as string }]);
+      } else {
+        setAiHistory(prev => [...prev, {
+          role: 'assistant',
+          text: serverUnreachable && !clientKey
+            ? "Le serveur IA est injoignable et aucune clé API personnelle n'est enregistrée. Ajoutez votre clé dans Réglages > Assistant IA pour utiliser l'IA directement depuis cet appareil."
+            : "Désolé, l'agent IA a rencontré une erreur. Veuillez réessayer."
+        }]);
+      }
     } catch (err: any) {
       console.error(err);
       setAiHistory(prev => [...prev, {
         role: 'assistant',
-        text: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer."
+        text: err?.message
+          ? `Désolé, l'agent IA a rencontré une erreur : ${err.message}`
+          : "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer."
       }]);
     } finally {
       setIsAiLoading(false);
