@@ -149,8 +149,16 @@ export default function App() {
     deleteClient, updateCompanyInfo, resolveHRAlert, startPunchSession, pausePunchSession,
     resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
-    documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment
+    documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
+    hydrateCloud
   } = useAppStore();
+
+  // Hydratation depuis Supabase au démarrage (best effort, non bloquant : l'app
+  // fonctionne déjà avec les données LocalStorage chargées de façon synchrone ci-dessus).
+  const [cloudSyncing, setCloudSyncing] = useState(true);
+  useEffect(() => {
+    hydrateCloud().finally(() => setCloudSyncing(false));
+  }, []);
 
   const dragControls = useDragControls();
   const t = translations[currentLanguage];
@@ -704,6 +712,11 @@ export default function App() {
       id="main-scaffold-container"
       className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 pt-16 flex flex-col relative select-none"
     >
+      {cloudSyncing && (
+        <div className="fixed top-1 right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
+          ☁️ Synchronisation...
+        </div>
+      )}
       {/* Top Navbar */}
       <nav id="navbar-scaffold" className="fixed top-0 left-0 right-0 h-16 border-b border-gray-800 bg-[#16191F] px-4 flex items-center justify-between z-40">
         <div className="flex items-center gap-3">

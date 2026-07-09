@@ -6,6 +6,15 @@ import {
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine, GCPDocumentPaymentHistoryEntry,
   ExpenseRecord, PayrollPayment
 } from './types';
+import {
+  genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId,
+  employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
+  supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
+  hrAlertToRow, expenseToRow, payrollPaymentToRow, documentToRow, documentPaymentToRow,
+  rowToEmployee, rowToProject, rowToPunch, rowToInvoice, rowToSupplier, rowToCatalogue, rowToInventory,
+  rowToSupplierOrder, rowToClient, rowToCompanyInfo, rowToWeeklyGoal, rowToMotivationTeam, rowToMotivationGoal,
+  rowToHRAlert, rowToExpense, rowToPayrollPayment, rowToDocument
+} from './apiClient';
 
 interface AppState {
   // Data State
@@ -128,6 +137,9 @@ interface AppState {
   deleteExpense: (id: string) => void;
   addPayrollPayment: (pay: Omit<PayrollPayment, 'id'>) => void;
   deletePayrollPayment: (id: string) => void;
+
+  // Synchronisation cloud (Supabase) : hydrate le store depuis la base de données si configurée
+  hydrateCloud: () => Promise<void>;
 }
 
 // Initial Mock Data to bootstrap the application beautifully
@@ -775,14 +787,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { employees } = get();
     const newEmp: Employee = {
       ...emp,
-      id: `emp-${Date.now()}`,
+      id: genId(),
       level: 1,
       xp: 0
     };
     const updated = [...employees, newEmp];
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    
+    syncInsert('app_users', employeeToRow(newEmp));
+
     // Auto trigger alert
     get().addHRAlert({
       type: 'info',
@@ -798,7 +811,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = employees.map(e => e.id === emp.id ? emp : e);
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    
+    syncUpdate('app_users', emp.id, employeeToRow(emp));
+
     if (activeEmployee && activeEmployee.id === emp.id) {
       set({ activeEmployee: emp });
       saveState('gcp_activeEmployee', emp);
@@ -810,6 +824,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = employees.filter(e => e.id !== id);
     set({ employees: updated });
     saveState('gcp_employees', updated);
+    syncDelete('app_users', id);
 
     // Nettoie les références à l'employé supprimé pour éviter des données fantômes
     const updatedProjects = projects.map(p => ({
@@ -870,13 +885,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { motivationTeams } = get();
     const newTeam: MotivationTeam = {
       ...team,
-      id: `team-${Date.now()}`,
+      id: genId(),
       active: true,
       createdAt: new Date().toISOString()
     };
     const updated = [...motivationTeams, newTeam];
     set({ motivationTeams: updated });
     saveState('gcp_motivationTeams', updated);
+    syncInsert('motivation_teams', motivationTeamToRow(newTeam));
     get().recomputeGoalsAndStreaks();
   },
 
@@ -885,6 +901,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = motivationTeams.map(t => t.id === team.id ? team : t);
     set({ motivationTeams: updated });
     saveState('gcp_motivationTeams', updated);
+    syncUpdate('motivation_teams', team.id, motivationTeamToRow(team));
     get().recomputeGoalsAndStreaks();
   },
 
@@ -893,6 +910,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = motivationTeams.filter(t => t.id !== id);
     set({ motivationTeams: updated });
     saveState('gcp_motivationTeams', updated);
+    syncDelete('motivation_teams', id);
     get().recomputeGoalsAndStreaks();
   },
 
@@ -901,7 +919,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { motivationGoals } = get();
     const newGoal: MotivationGoal = {
       ...goal,
-      id: `goal-${Date.now()}`,
+      id: genId(),
       startDate: new Date().toISOString().split('T')[0],
       current: 0,
       status: 'active'
@@ -909,6 +927,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [...motivationGoals, newGoal];
     set({ motivationGoals: updated });
     saveState('gcp_motivationGoals', updated);
+    syncInsert('motivation_goals', motivationGoalToRow(newGoal));
     get().recomputeGoalsAndStreaks();
   },
 
@@ -917,6 +936,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = motivationGoals.map(g => g.id === goal.id ? goal : g);
     set({ motivationGoals: updated });
     saveState('gcp_motivationGoals', updated);
+    syncUpdate('motivation_goals', goal.id, motivationGoalToRow(goal));
     get().recomputeGoalsAndStreaks();
   },
 
@@ -925,6 +945,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = motivationGoals.filter(g => g.id !== id);
     set({ motivationGoals: updated });
     saveState('gcp_motivationGoals', updated);
+    syncDelete('motivation_goals', id);
     get().recomputeGoalsAndStreaks();
   },
 
@@ -940,6 +961,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     set({ motivationGoals: updated });
     saveState('gcp_motivationGoals', updated);
+    const changedGoal = updated.find(g => g.id === goalId);
+    if (changedGoal) syncUpdate('motivation_goals', goalId, motivationGoalToRow(changedGoal));
     get().recomputeGoalsAndStreaks();
   },
 
@@ -1086,6 +1109,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ weeklyGoals: updatedWeeklyGoals, motivationGoals: updatedMotivationGoals });
     saveState('gcp_weeklyGoals', updatedWeeklyGoals);
     saveState('gcp_motivationGoals', updatedMotivationGoals);
+    updatedWeeklyGoals.forEach(wg => syncUpsert('weekly_goals', weeklyGoalToRow(wg)));
+    updatedMotivationGoals.forEach(g => syncUpdate('motivation_goals', g.id, motivationGoalToRow(g)));
   },
 
   // Projects CRUD
@@ -1093,11 +1118,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { projects } = get();
     const newProj: Project = {
       ...proj,
-      id: `proj-${Date.now()}`
+      id: genId()
     };
     const updated = [...projects, newProj];
     set({ projects: updated });
     saveState('gcp_projects', updated);
+    syncInsert('projects', projectToRow(newProj));
   },
 
   updateProject: (proj) => {
@@ -1105,6 +1131,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = projects.map(p => p.id === proj.id ? proj : p);
     set({ projects: updated });
     saveState('gcp_projects', updated);
+    syncUpdate('projects', proj.id, projectToRow(proj));
   },
 
   deleteProject: (id) => {
@@ -1112,6 +1139,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = projects.filter(p => p.id !== id);
     set({ projects: updated });
     saveState('gcp_projects', updated);
+    syncDelete('projects', id);
 
     // Retire toute référence au chantier supprimé dans les équipes de motivation
     const updatedTeams = motivationTeams.map(team => ({
@@ -1127,11 +1155,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { catalogue } = get();
     const newItem: CatalogueMaterial = {
       ...item,
-      id: `cat-${Date.now()}`
+      id: genId()
     };
     const updated = [...catalogue, newItem];
     set({ catalogue: updated });
     saveState('gcp_catalogue', updated);
+    syncInsert('catalog_items', catalogueToRow(newItem));
   },
 
   updateCatalogueMaterial: (item) => {
@@ -1139,6 +1168,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = catalogue.map(c => c.id === item.id ? item : c);
     set({ catalogue: updated });
     saveState('gcp_catalogue', updated);
+    syncUpdate('catalog_items', item.id, catalogueToRow(item));
   },
 
   deleteCatalogueMaterial: (id) => {
@@ -1146,6 +1176,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = catalogue.filter(c => c.id !== id);
     set({ catalogue: updated });
     saveState('gcp_catalogue', updated);
+    syncDelete('catalog_items', id);
   },
 
   // Supplier CRUD
@@ -1153,11 +1184,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { suppliers } = get();
     const newSupplier: Supplier = {
       ...supplier,
-      id: `sup-${Date.now()}`
+      id: genId()
     };
     const updated = [...suppliers, newSupplier];
     set({ suppliers: updated });
     saveState('gcp_suppliers', updated);
+    syncInsert('suppliers', supplierToRow(newSupplier));
   },
 
   updateSupplier: (supplier) => {
@@ -1165,6 +1197,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = suppliers.map(s => s.id === supplier.id ? supplier : s);
     set({ suppliers: updated });
     saveState('gcp_suppliers', updated);
+    syncUpdate('suppliers', supplier.id, supplierToRow(supplier));
   },
 
   deleteSupplier: (id) => {
@@ -1172,6 +1205,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = suppliers.filter(s => s.id !== id);
     set({ suppliers: updated });
     saveState('gcp_suppliers', updated);
+    syncDelete('suppliers', id);
   },
 
   // Inventory CRUD
@@ -1179,11 +1213,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { inventory } = get();
     const newItem: InventoryItem = {
       ...item,
-      id: `inv-${Date.now()}`
+      id: genId()
     };
     const updated = [...inventory, newItem];
     set({ inventory: updated });
     saveState('gcp_inventory', updated);
+    syncInsert('inventory_items', inventoryToRow(newItem));
   },
 
   updateInventoryItem: (item) => {
@@ -1191,6 +1226,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = inventory.map(i => i.id === item.id ? item : i);
     set({ inventory: updated });
     saveState('gcp_inventory', updated);
+    syncUpdate('inventory_items', item.id, inventoryToRow(item));
 
     // Trigger alert if stock is critical
     if (item.quantity < item.minThreshold) {
@@ -1207,6 +1243,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = inventory.filter(i => i.id !== id);
     set({ inventory: updated });
     saveState('gcp_inventory', updated);
+    syncDelete('inventory_items', id);
   },
 
   // Orders CRUD
@@ -1214,18 +1251,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { orders, inventory } = get();
     const newOrder: SupplierOrder = {
       ...order,
-      id: `ord-${Date.now()}`
+      id: genId()
     };
     const updatedOrders = [...orders, newOrder];
     set({ orders: updatedOrders });
     saveState('gcp_orders', updatedOrders);
+    syncInsert('supplier_orders', supplierOrderToRow(newOrder));
+    syncOrderItems(newOrder);
 
     // If order received, update stock
     if (newOrder.status === 'received') {
       const updatedInventory = inventory.map(invItem => {
         const orderItem = newOrder.items.find(item => item.name.toLowerCase() === invItem.name.toLowerCase());
         if (orderItem) {
-          return { ...invItem, quantity: invItem.quantity + orderItem.quantity };
+          const nextItem = { ...invItem, quantity: invItem.quantity + orderItem.quantity };
+          syncUpdate('inventory_items', nextItem.id, inventoryToRow(nextItem));
+          return nextItem;
         }
         return invItem;
       });
@@ -1241,13 +1282,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updatedOrders = orders.map(o => o.id === order.id ? order : o);
     set({ orders: updatedOrders });
     saveState('gcp_orders', updatedOrders);
+    syncUpdate('supplier_orders', order.id, supplierOrderToRow(order));
+    syncOrderItems(order);
 
     if (original && original.status !== 'received' && order.status === 'received') {
       // Add items to stock
       const updatedInventory = inventory.map(invItem => {
         const orderItem = order.items.find(item => item.name.toLowerCase() === invItem.name.toLowerCase());
         if (orderItem) {
-          return { ...invItem, quantity: invItem.quantity + orderItem.quantity };
+          const nextItem = { ...invItem, quantity: invItem.quantity + orderItem.quantity };
+          syncUpdate('inventory_items', nextItem.id, inventoryToRow(nextItem));
+          return nextItem;
         }
         return invItem;
       });
@@ -1261,11 +1306,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { clients } = get();
     const newCli: Client = {
       ...cli,
-      id: `cli-${Date.now()}`
+      id: genId()
     };
     const updated = [...clients, newCli];
     set({ clients: updated });
     saveState('gcp_clients', updated);
+    syncInsert('clients', clientToRow(newCli));
   },
 
   updateClient: (cli) => {
@@ -1273,6 +1319,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = clients.map(c => c.id === cli.id ? cli : c);
     set({ clients: updated });
     saveState('gcp_clients', updated);
+    syncUpdate('clients', cli.id, clientToRow(cli));
   },
 
   deleteClient: (id) => {
@@ -1280,6 +1327,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = clients.filter(c => c.id !== id);
     set({ clients: updated });
     saveState('gcp_clients', updated);
+    syncDelete('clients', id);
   },
 
   // Company Info Update
@@ -1288,6 +1336,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = { ...companyInfo, ...info };
     set({ companyInfo: updated });
     saveState('gcp_companyInfo', updated);
+    const companyId = getCompanyId();
+    if (companyId) syncUpdate('companies', companyId, companyInfoToRow(updated));
   },
 
   // HR Alerts
@@ -1295,13 +1345,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { hrAlerts } = get();
     const newAlert: HRAlert = {
       ...alert,
-      id: `hr-${Date.now()}`,
+      id: genId(),
       date: new Date().toISOString(),
       resolved: false
     };
     const updated = [newAlert, ...hrAlerts];
     set({ hrAlerts: updated });
     saveState('gcp_hrAlerts', updated);
+    syncInsert('hr_alerts', hrAlertToRow(newAlert));
   },
 
   resolveHRAlert: (id) => {
@@ -1309,6 +1360,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = hrAlerts.map(h => h.id === id ? { ...h, resolved: true } : h);
     set({ hrAlerts: updated });
     saveState('gcp_hrAlerts', updated);
+    syncUpdate('hr_alerts', id, { resolved: true });
   },
 
   // Punch Sessions
@@ -1324,7 +1376,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (active) return; // Prevent multiple active punches
 
     const newPunch: PunchSession = {
-      id: `punch-${Date.now()}`,
+      id: genId(),
       employeeId,
       employeeName: emp.name,
       projectId,
@@ -1344,6 +1396,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [newPunch, ...punchSessions];
     set({ punchSessions: updated });
     saveState('gcp_punchSessions', updated);
+    syncInsert('punches', punchToRow(newPunch));
 
     // If attempted outside geofence, log infraction as HR alert
     if (attemptedOutsideGeofence) {
@@ -1370,6 +1423,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     set({ punchSessions: updated });
     saveState('gcp_punchSessions', updated);
+    const paused = updated.find(p => p.id === id);
+    if (paused) syncUpdate('punches', id, { paused_at: paused.pausedAt });
   },
 
   resumePunchSession: (id) => {
@@ -1389,6 +1444,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     set({ punchSessions: updated });
     saveState('gcp_punchSessions', updated);
+    const resumed = updated.find(p => p.id === id);
+    if (resumed) syncUpdate('punches', id, { paused_at: null, total_pause_minutes: resumed.totalPauseMinutes });
   },
 
   stopPunchSession: (id, surfaceMaterials) => {
@@ -1441,6 +1498,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Give some XP for completing work session!
     const stoppedPunch = updated.find(p => p.id === id);
     if (stoppedPunch) {
+      syncUpdate('punches', id, punchToRow(stoppedPunch));
       const xpPoints = stoppedPunch.payMode === 'surface' ? 350 : Math.ceil((stoppedPunch.totalWorkedHours || 0) * 50);
       get().addXP(stoppedPunch.employeeId, xpPoints);
 
@@ -1451,7 +1509,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           const used = surfaceMaterials.find(m => m.name.toLowerCase() === item.name.toLowerCase());
           if (used) {
             const newQty = Math.max(0, item.quantity - used.quantity);
-            return { ...item, quantity: newQty };
+            const nextItem = { ...item, quantity: newQty };
+            syncUpdate('inventory_items', nextItem.id, inventoryToRow(nextItem));
+            return nextItem;
           }
           return item;
         });
@@ -1466,12 +1526,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { invoices } = get();
     const newInvoice: Invoice = {
       ...inv,
-      id: `inv-${Date.now()}`,
+      id: genId(),
       invoiceNumber: nextSequentialNumber(invoices.map(i => i.invoiceNumber), 'INV')
     };
     const updated = [newInvoice, ...invoices];
     set({ invoices: updated });
     saveState('gcp_invoices', updated);
+    syncInsert('payroll_entries', invoiceToRow(newInvoice));
   },
 
   updateInvoice: (inv) => {
@@ -1479,6 +1540,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = invoices.map(i => i.id === inv.id ? inv : i);
     set({ invoices: updated });
     saveState('gcp_invoices', updated);
+    syncUpdate('payroll_entries', inv.id, invoiceToRow(inv));
   },
 
   generateDraftInvoiceForEmployee: (employeeId) => {
@@ -1507,7 +1569,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const totalWithTaxes = Number((amount + gstAmount + qstAmount).toFixed(2));
 
     const newInvoice: Invoice = {
-      id: `inv-${Date.now()}`,
+      id: genId(),
       employeeId,
       employeeName: emp.name,
       invoiceNumber: nextSequentialNumber(invoices.map(i => i.invoiceNumber), 'INV'),
@@ -1526,6 +1588,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [newInvoice, ...invoices];
     set({ invoices: updated });
     saveState('gcp_invoices', updated);
+    syncInsert('payroll_entries', invoiceToRow(newInvoice));
   },
 
   // System A: Client Documents actions implementation with auto-calculations
@@ -1557,7 +1620,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const newDoc: GCPDocument = {
       ...doc,
-      id: `gcpdoc-${Date.now()}`,
+      id: genId(),
       number,
       subtotal: Number(subtotal.toFixed(2)),
       taxAmount,
@@ -1569,6 +1632,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [newDoc, ...documents];
     set({ documents: updated });
     saveState('gcp_documents', updated);
+    syncDocumentInsert(newDoc);
   },
 
   updateGCPDocument: (doc) => {
@@ -1607,6 +1671,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = documents.map(d => d.id === doc.id ? updatedGCPDoc : d);
     set({ documents: updated });
     saveState('gcp_documents', updated);
+    syncUpdate('documents', doc.id, documentToRow(updatedGCPDoc));
+    syncDocumentLines(updatedGCPDoc);
   },
 
   deleteGCPDocument: (id) => {
@@ -1614,6 +1680,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = documents.filter(d => d.id !== id);
     set({ documents: updated });
     saveState('gcp_documents', updated);
+    syncDelete('documents', id);
   },
 
   convertQuoteToInvoice: (quoteId) => {
@@ -1625,7 +1692,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const invoice: GCPDocument = {
       ...quote,
-      id: `gcpdoc-${Date.now()}`,
+      id: genId(),
       type: 'invoice',
       number,
       status: 'draft',
@@ -1637,6 +1704,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [invoice, ...documents];
     set({ documents: updated });
     saveState('gcp_documents', updated);
+    syncDocumentInsert(invoice);
   },
 
   addPartialPayment: (id, amount, method, notes) => {
@@ -1645,7 +1713,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!doc) return;
 
     const newPayment: GCPDocumentPaymentHistoryEntry = {
-      id: `pay-${Date.now()}`,
+      id: genId(),
       date: new Date().toISOString().split('T')[0],
       amount,
       method,
@@ -1671,17 +1739,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = documents.map(d => d.id === id ? updatedDoc : d);
     set({ documents: updated });
     saveState('gcp_documents', updated);
+    syncUpdate('documents', id, { balance_due: balanceDue, status });
+    syncInsert('document_payments', documentPaymentToRow(newPayment, id));
   },
 
   addExpense: (exp) => {
     const { expenses } = get();
     const newExp: ExpenseRecord = {
       ...exp,
-      id: `exp-${Date.now()}`
+      id: genId()
     };
     const updated = [newExp, ...expenses];
     set({ expenses: updated });
     saveState('gcp_expenses', updated);
+    syncInsert('expenses', expenseToRow(newExp));
   },
 
   deleteExpense: (id) => {
@@ -1689,17 +1760,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = expenses.filter(e => e.id !== id);
     set({ expenses: updated });
     saveState('gcp_expenses', updated);
+    syncDelete('expenses', id);
   },
 
   addPayrollPayment: (pay) => {
     const { payrollPayments } = get();
     const newPay: PayrollPayment = {
       ...pay,
-      id: `pay-${Date.now()}`
+      id: genId()
     };
     const updated = [newPay, ...payrollPayments];
     set({ payrollPayments: updated });
     saveState('gcp_payrollPayments', updated);
+    syncInsert('payroll_payments', payrollPaymentToRow(newPay));
   },
 
   deletePayrollPayment: (id) => {
@@ -1707,6 +1780,80 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = payrollPayments.filter(p => p.id !== id);
     set({ payrollPayments: updated });
     saveState('gcp_payrollPayments', updated);
+    syncDelete('payroll_payments', id);
+  },
+
+  hydrateCloud: async () => {
+    const result = await hydrateFromCloud();
+    if (!result.enabled) {
+      set({ offlineSyncStatus: 'offline' });
+      return;
+    }
+    const t = result.tables;
+    const employees = (t.app_users || []).map(rowToEmployee);
+    const assignments = t.project_assignments || [];
+    const tasks = t.project_tasks || [];
+    const tools = t.project_tools || [];
+    const projects = (t.projects || []).map((r: any) => rowToProject(r, tasks, tools, assignments));
+    const punchSessions = (t.punches || []).map(rowToPunch);
+    const invoices = (t.payroll_entries || []).map(rowToInvoice);
+    const catalogue = (t.catalog_items || []).map(rowToCatalogue);
+    const suppliers = (t.suppliers || []).map(rowToSupplier);
+    const inventory = (t.inventory_items || []).map(rowToInventory);
+    const orderItems = t.supplier_order_items || [];
+    const orders = (t.supplier_orders || []).map((r: any) => rowToSupplierOrder(r, orderItems));
+    const clients = (t.clients || []).map(rowToClient);
+    const hrAlerts = (t.hr_alerts || []).map(rowToHRAlert);
+    const documentItems = t.document_items || [];
+    const documentPayments = t.document_payments || [];
+    const documents = (t.documents || []).map((r: any) => rowToDocument(r, documentItems, documentPayments));
+    const expenses = (t.expenses || []).map(rowToExpense);
+    const payrollPayments = (t.payroll_payments || []).map(rowToPayrollPayment);
+    const motivationTeams = (t.motivation_teams || []).map(rowToMotivationTeam);
+    const motivationGoals = (t.motivation_goals || []).map(rowToMotivationGoal);
+    const weeklyGoals = (t.weekly_goals || []).map(rowToWeeklyGoal);
+    const companyRow = (t.companies || [])[0];
+
+    set(state => {
+      const next: Partial<AppState> = { offlineSyncStatus: 'synced' };
+      if (employees.length) next.employees = employees;
+      if (projects.length) next.projects = projects;
+      if (punchSessions.length) next.punchSessions = punchSessions;
+      if (invoices.length) next.invoices = invoices;
+      if (catalogue.length) next.catalogue = catalogue;
+      if (suppliers.length) next.suppliers = suppliers;
+      if (inventory.length) next.inventory = inventory;
+      if (orders.length) next.orders = orders;
+      if (clients.length) next.clients = clients;
+      if (hrAlerts.length) next.hrAlerts = hrAlerts;
+      if (documents.length) next.documents = documents;
+      if (expenses.length) next.expenses = expenses;
+      if (payrollPayments.length) next.payrollPayments = payrollPayments;
+      if (motivationTeams.length) next.motivationTeams = motivationTeams;
+      if (motivationGoals.length) next.motivationGoals = motivationGoals;
+      if (weeklyGoals.length) next.weeklyGoals = weeklyGoals;
+      if (companyRow) next.companyInfo = { ...state.companyInfo, ...rowToCompanyInfo(companyRow) };
+      return next as AppState;
+    });
+
+    const s = get();
+    saveState('gcp_employees', s.employees);
+    saveState('gcp_projects', s.projects);
+    saveState('gcp_punchSessions', s.punchSessions);
+    saveState('gcp_invoices', s.invoices);
+    saveState('gcp_catalogue', s.catalogue);
+    saveState('gcp_suppliers', s.suppliers);
+    saveState('gcp_inventory', s.inventory);
+    saveState('gcp_orders', s.orders);
+    saveState('gcp_clients', s.clients);
+    saveState('gcp_hrAlerts', s.hrAlerts);
+    saveState('gcp_documents', s.documents);
+    saveState('gcp_expenses', s.expenses);
+    saveState('gcp_payrollPayments', s.payrollPayments);
+    saveState('gcp_motivationTeams', s.motivationTeams);
+    saveState('gcp_motivationGoals', s.motivationGoals);
+    saveState('gcp_weeklyGoals', s.weeklyGoals);
+    saveState('gcp_companyInfo', s.companyInfo);
   }
 }));
 export default useAppStore;

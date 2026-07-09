@@ -4,15 +4,24 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { supabase, supabaseEnabled, resolveCompanyId, TABLES_WITH_COMPANY_ID, TABLE_ID_COLUMN } from './db';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
+const KNOWN_TABLES = [
+  'companies', 'app_users', 'projects', 'project_tools', 'project_assignments', 'project_tasks',
+  'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders', 'supplier_order_items',
+  'clients', 'documents', 'document_items', 'document_payments', 'payroll_entries', 'payroll_payments',
+  'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses'
+];
+
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '15mb' })); // signatures tactiles encodées en base64
 
   function buildSystemInstruction(regionLabel?: string): string {
     const location = regionLabel && regionLabel.trim() ? regionLabel.trim() : 'Amérique du Nord';
@@ -134,6 +143,130 @@ async function startServer() {
     } catch (error: any) {
       console.error('Error on /api/chat:', error);
       return res.status(500).json({ error: error.message || 'Error occurred while calling the AI provider' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Couche de données générique branchée sur Supabase (voir db.ts et
+  // supabase_migration.sql). Chaque action du store applicatif passe par ces
+  // routes REST au lieu d'écrire directement dans LocalStorage.
+  // -------------------------------------------------------------------------
+
+  function requireKnownTable(table: string, res: express.Response): boolean {
+    if (!KNOWN_TABLES.includes(table)) {
+      res.status(404).json({ error: `Table inconnue : ${table}` });
+      return false;
+    }
+    return true;
+  }
+
+  // Hydratation complète au démarrage de l'application : toutes les tables en un seul appel
+  app.get('/api/hydrate', async (_req, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.json({ enabled: false });
+    }
+    try {
+      const companyId = await resolveCompanyId();
+      const results: Record<string, any> = { enabled: true, companyId };
+      for (const table of KNOWN_TABLES) {
+        const { data, error } = await supabase.from(table).select('*');
+        if (error) throw error;
+        results[table] = data;
+      }
+      return res.json(results);
+    } catch (error: any) {
+      console.error('Error on /api/hydrate:', error);
+      return res.status(500).json({ error: error.message || 'Erreur de chargement des données' });
+    }
+  });
+
+  // Liste (avec filtre optionnel par company_id pour les tables mono-tenant)
+  app.get('/api/db/:table', async (req, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
+    const { table } = req.params;
+    if (!requireKnownTable(table, res)) return;
+    try {
+      let query = supabase.from(table).select('*');
+      if (TABLES_WITH_COMPANY_ID.has(table)) {
+        const companyId = await resolveCompanyId();
+        query = query.eq('company_id', companyId);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      return res.json(data);
+    } catch (error: any) {
+      console.error(`Error on GET /api/db/${table}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Création d'une ligne (injecte automatiquement company_id si applicable et absent)
+  app.post('/api/db/:table', async (req, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
+    const { table } = req.params;
+    if (!requireKnownTable(table, res)) return;
+    try {
+      const payload = { ...req.body };
+      if (TABLES_WITH_COMPANY_ID.has(table) && !payload.company_id) {
+        payload.company_id = await resolveCompanyId();
+      }
+      const { data, error } = await supabase.from(table).insert(payload).select().single();
+      if (error) throw error;
+      return res.json(data);
+    } catch (error: any) {
+      console.error(`Error on POST /api/db/${table}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Upsert générique (utile pour les tables clé-primaire naturelle, ex: weekly_goals)
+  app.put('/api/db/:table', async (req, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
+    const { table } = req.params;
+    if (!requireKnownTable(table, res)) return;
+    try {
+      const payload = { ...req.body };
+      if (TABLES_WITH_COMPANY_ID.has(table) && !payload.company_id) {
+        payload.company_id = await resolveCompanyId();
+      }
+      const { data, error } = await supabase.from(table).upsert(payload).select().single();
+      if (error) throw error;
+      return res.json(data);
+    } catch (error: any) {
+      console.error(`Error on PUT /api/db/${table}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Mise à jour partielle d'une ligne existante par identifiant
+  app.patch('/api/db/:table/:id', async (req, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
+    const { table, id } = req.params;
+    if (!requireKnownTable(table, res)) return;
+    try {
+      const idColumn = TABLE_ID_COLUMN[table] || 'id';
+      const { data, error } = await supabase.from(table).update(req.body).eq(idColumn, id).select().single();
+      if (error) throw error;
+      return res.json(data);
+    } catch (error: any) {
+      console.error(`Error on PATCH /api/db/${table}/${id}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Suppression d'une ligne par identifiant
+  app.delete('/api/db/:table/:id', async (req, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
+    const { table, id } = req.params;
+    if (!requireKnownTable(table, res)) return;
+    try {
+      const idColumn = TABLE_ID_COLUMN[table] || 'id';
+      const { error } = await supabase.from(table).delete().eq(idColumn, id);
+      if (error) throw error;
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error(`Error on DELETE /api/db/${table}/${id}:`, error);
+      return res.status(500).json({ error: error.message });
     }
   });
 
