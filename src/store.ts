@@ -8,7 +8,7 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
-  authLogin, setAuthToken, fetchLoginDirectory,
+  authLogin, setAuthToken, getAuthToken, fetchLoginDirectory, isUuid,
   syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
@@ -1861,6 +1861,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Pas encore de session : on ne récupère que l'annuaire minimal (id, nom,
       // rôle, avatar — jamais de NIP) pour peupler l'écran de connexion.
       if (result.needsAuth) {
+        // Session zombie : un utilisateur cloud restauré du stockage local sans
+        // jeton valide (session d'avant la mise à jour de sécurité, ou jeton
+        // expiré). On force le retour à l'écran de connexion — sinon l'app
+        // paraît connectée mais l'IA et la synchronisation échouent en 401.
+        const { activeEmployee } = get();
+        if (getAuthToken()) setAuthToken(null);
+        if (activeEmployee && isUuid(activeEmployee.id)) {
+          set({ activeEmployee: null });
+          saveState('gcp_activeEmployee', null);
+        }
         const dir = await fetchLoginDirectory();
         if (dir.length > 0) {
           const { employees } = get();
