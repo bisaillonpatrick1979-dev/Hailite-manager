@@ -4,7 +4,8 @@
 // n'importe quelle instance Express sans dupliquer la logique.
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { supabase, supabaseEnabled, resolveCompanyId, TABLES_WITH_COMPANY_ID, TABLE_ID_COLUMN } from './db';
+// Extension .js obligatoire (ESM sur Vercel) — voir le commentaire dans api/index.ts.
+import { supabase, supabaseEnabled, resolveCompanyId, TABLES_WITH_COMPANY_ID, TABLE_ID_COLUMN } from './db.js';
 
 // Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
 const KNOWN_TABLES = [

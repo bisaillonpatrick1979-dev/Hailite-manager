@@ -80,7 +80,23 @@ function bestEffort(promise: Promise<any>, label: string) {
 // ---------------------------------------------------------------------------
 
 const workModeToPayMode: Record<string, string> = { hour: 'horaire', sqft: 'surface', flat: 'forfait' };
-const payModeToWorkMode: Record<string, string> = { horaire: 'hour', surface: 'sqft', forfait: 'flat' };
+// Inclut les anciens formats écrits par la version ChatGPT de l'app (square_foot,
+// hourly, fixed) encore présents dans la base de production.
+const payModeToWorkMode: Record<string, string> = {
+  horaire: 'hour', surface: 'sqft', forfait: 'flat',
+  hourly: 'hour', square_foot: 'sqft', fixed: 'flat'
+};
+
+// Anciens rôles de la version ChatGPT ("owner", "subcontractor") vers les rôles actuels
+const legacyRoleMap: Record<string, Employee['role']> = {
+  admin: 'admin', owner: 'admin',
+  employee: 'employee', subcontractor: 'employee',
+  secretary: 'secretary', accountant: 'accountant'
+};
+
+// Les anciens NIP sont stockés hachés (bcrypt, "$2a$...") : impossible à retaper tel
+// quel dans l'écran de connexion — on le vide pour que l'admin en attribue un nouveau.
+const isHashedNip = (v: string) => v.startsWith('$2');
 
 export function employeeToRow(e: Employee, companyId?: string) {
   return {
@@ -99,7 +115,9 @@ export function employeeToRow(e: Employee, companyId?: string) {
 
 export function rowToEmployee(r: any): Employee {
   return {
-    id: r.id, name: r.full_name, nip: r.access_code_hash || '', role: r.role, hourlyRate: r.pay_rate || 0,
+    id: r.id, name: r.full_name,
+    nip: r.access_code_hash && !isHashedNip(r.access_code_hash) ? r.access_code_hash : '',
+    role: legacyRoleMap[r.role] || 'employee', hourlyRate: r.pay_rate || 0,
     workerType: r.worker_type || '', asNumber: r.as_number || '', phone: r.phone || '', address: r.address || '',
     hireDate: r.hire_date || '', avatar: r.avatar || '', level: r.level || 1, xp: r.xp || 0,
     workMode: payModeToWorkMode[r.pay_mode] as any, contractRenewalDate: r.contract_renewal_date || undefined,
