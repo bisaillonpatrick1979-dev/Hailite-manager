@@ -8,7 +8,7 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
-  authLogin, setAuthToken, getAuthToken, fetchLoginDirectory, isUuid,
+  authLogin, setAuthToken, getAuthToken, fetchLoginDirectory, isUuid, normalizeAppRole,
   syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
@@ -1871,23 +1871,42 @@ export const useAppStore = create<AppState>((set, get) => ({
           set({ activeEmployee: null });
           saveState('gcp_activeEmployee', null);
         }
+      }
+      // Tente l'annuaire dès que le cloud est indisponible sans session — même si
+      // l'appel hydrate a échoué autrement qu'en 401 (erreur transitoire) : sans
+      // annuaire, les vrais profils cloud n'apparaissent pas à l'écran de connexion.
+      {
         const dir = await fetchLoginDirectory();
         if (dir.length > 0) {
           const { employees } = get();
-          const byId = new Map(employees.map(e => [e.id, e]));
+          // Dès que de vrais profils cloud existent, on retire les profils de
+          // démonstration (emp-1..emp-4) : ils créaient des doublons trompeurs
+          // (deux « Patrick Bisaillon ») dont un qui refusait toujours le NIP.
+          const DEMO_IDS = new Set(['emp-1', 'emp-2', 'emp-3', 'emp-4']);
+          const dirIds = new Set(dir.map(u => u.id));
+          const locals = employees.filter(e => !DEMO_IDS.has(e.id) && !dirIds.has(e.id));
           const merged = [
-            ...employees.map(e => {
-              const d = dir.find(u => u.id === e.id);
-              return d ? { ...e, name: d.name || e.name, avatar: d.avatar || e.avatar, workerType: d.workerType || e.workerType } : e;
+            ...dir.map(u => {
+              const existing = employees.find(e => e.id === u.id);
+              return existing
+                ? { ...existing, name: u.name || existing.name, avatar: u.avatar || existing.avatar, workerType: u.workerType || existing.workerType }
+                : ({
+                    id: u.id, name: u.name, nip: '', role: normalizeAppRole(u.role),
+                    hourlyRate: 0, workerType: u.workerType || '', asNumber: '', phone: '', address: '',
+                    hireDate: '', avatar: u.avatar || '', level: 1, xp: 0
+                  } as Employee)
             }),
-            ...dir.filter(u => !byId.has(u.id)).map(u => ({
-              id: u.id, name: u.name, nip: '', role: (u.role as Employee['role']) || 'employee',
-              hourlyRate: 0, workerType: u.workerType || '', asNumber: '', phone: '', address: '',
-              hireDate: '', avatar: u.avatar || '', level: 1, xp: 0
-            }) as Employee)
+            ...locals
           ];
           set({ employees: merged });
           saveState('gcp_employees', merged);
+          // Déconnecte aussi une session de démonstration restaurée : ces profils
+          // n'existent plus à l'écran une fois les vrais profils chargés.
+          const { activeEmployee: ae } = get();
+          if (ae && DEMO_IDS.has(ae.id)) {
+            set({ activeEmployee: null });
+            saveState('gcp_activeEmployee', null);
+          }
         }
       }
       return;
