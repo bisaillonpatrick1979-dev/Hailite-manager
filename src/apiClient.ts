@@ -228,6 +228,7 @@ export function rowToProject(r: any, tasks: any[], tools: any[], assignments: an
 // bloc "delete puis reinsert", l'identité exacte n'a pas d'importance côté cloud).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const asUuid = (id: string) => (UUID_RE.test(id) ? id : genId());
+export const isUuid = (id: string) => UUID_RE.test(id);
 
 export function projectTasksToRows(p: Project) {
   return (p.tasks || []).map(t => ({ id: asUuid(t.id), project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
