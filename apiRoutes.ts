@@ -177,7 +177,14 @@ export function registerApiRoutes(app: express.Express): void {
         text = await callGemini(message, apiKey, systemInstruction, chatImage);
       }
 
-      return res.json({ reply: text });
+      // Transparence : indique au client quel fournisseur a répondu et quelle clé
+      // a été utilisée (personnelle = entrée dans Réglages ; serveur = variable
+      // d'environnement de l'hébergeur), affiché sous chaque réponse.
+      return res.json({
+        reply: text,
+        provider: selectedProvider,
+        keySource: clientApiKey && clientApiKey.trim() ? 'personal' : 'server'
+      });
     } catch (error: any) {
       console.error('Error on /api/chat:', error);
       return res.status(500).json({ error: error.message || 'Error occurred while calling the AI provider' });

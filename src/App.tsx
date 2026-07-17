@@ -294,7 +294,7 @@ export default function App() {
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
   const [aiMessage, setAiMessage] = useState<string>('');
-  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string; pdfName?: string }>>([
+  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string; pdfName?: string; sourceLabel?: string }>>([
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -957,6 +957,9 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
       let reply: string | null = null;
       let simulated: boolean | undefined;
       let providerError: string | null = null;
+      let sourceLabel: string | undefined;
+
+      const PROVIDER_NAMES: Record<string, string> = { anthropic: 'Anthropic Claude', openai: 'OpenAI', gemini: 'Google Gemini' };
 
       try {
         const res = await fetch('/api/chat', {
@@ -977,6 +980,9 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
           if (res.ok) {
             reply = data.reply;
             simulated = data.simulated;
+            if (!data.simulated && data.provider) {
+              sourceLabel = `${PROVIDER_NAMES[data.provider] || data.provider} · clé ${data.keySource === 'personal' ? 'personnelle (Réglages)' : 'serveur (variables Vercel)'}`;
+            }
           } else {
             providerError = data.error || null;
           }
@@ -990,6 +996,7 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
         const fallbackInstruction = buildAiSystemInstruction(regionLabel) + (appContext ? `\n\n${appContext}` : '');
         reply = await callAiDirectFromBrowser(provider, clientKey, userText, fallbackInstruction, imagePayload);
         providerError = null;
+        sourceLabel = `${PROVIDER_NAMES[provider] || provider} · clé personnelle, appel direct navigateur`;
       }
 
       if (reply !== null) {
@@ -998,7 +1005,7 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
         const displayText = cleanText || (notes.length ? 'Action effectuée.' : reply);
         setAiHistory(prev => [
           ...prev,
-          { role: 'assistant', text: displayText, simulated },
+          { role: 'assistant', text: displayText, simulated, sourceLabel },
           ...notes.map(note => ({ role: 'assistant' as const, text: note }))
         ]);
         speakAiResponse(displayText);
@@ -6159,19 +6166,37 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
                               {showAiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                           </div>
-                          <button
-                            onClick={() => {
-                              updateCompanyInfo({ aiApiKey: aiKeyDraft });
-                              alert('Clé API enregistrée !');
-                            }}
-                            className="w-full py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded-xl transition cursor-pointer"
-                          >
-                            Enregistrer la clé
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                updateCompanyInfo({ aiApiKey: aiKeyDraft });
+                                alert('Clé API enregistrée !');
+                              }}
+                              className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded-xl transition cursor-pointer"
+                            >
+                              Enregistrer la clé
+                            </button>
+                            {companyInfo.aiApiKey && (
+                              <button
+                                onClick={() => {
+                                  setAiKeyDraft('');
+                                  updateCompanyInfo({ aiApiKey: '' });
+                                  alert('Clé personnelle effacée : les clés du serveur (variables Vercel) seront utilisées.');
+                                }}
+                                className="px-4 py-2 bg-gray-800 hover:bg-red-900 text-gray-300 font-black text-xs rounded-xl transition cursor-pointer"
+                                title="Effacer la clé personnelle et utiliser les clés du serveur"
+                              >
+                                Effacer
+                              </button>
+                            )}
+                          </div>
                           <p className="text-[10px] text-gray-500">
                             {companyInfo.aiApiKey
-                              ? `Clé actuellement enregistrée pour ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI' : 'Google Gemini'} (••••${companyInfo.aiApiKey.slice(-4)}).`
-                              : "Aucune clé enregistrée : l'assistant répond en mode simulation locale."}
+                              ? `Clé personnelle enregistrée (••••${companyInfo.aiApiKey.slice(-4)}) : elle sera utilisée avec ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI' : 'Google Gemini'}, en priorité sur les clés du serveur.`
+                              : "Aucune clé personnelle : l'assistant utilise la clé du serveur (variable d'environnement de l'hébergeur) du fournisseur sélectionné, s'il y en a une — sinon mode simulation."}
+                          </p>
+                          <p className="text-[10px] text-gray-600">
+                            💡 Chaque réponse de l'assistant affiche le fournisseur et la clé réellement utilisés (badge ⚡ sous la réponse).
                           </p>
                         </div>
                       </div>
@@ -6321,6 +6346,11 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
                     {chat.simulated && (
                       <span className="block mt-2 text-[9px] text-orange-400 font-mono tracking-widest uppercase">
                         [Modes Démo sans clé]
+                      </span>
+                    )}
+                    {chat.sourceLabel && (
+                      <span className="block mt-2 text-[9px] text-cyan-500/80 font-mono tracking-wide">
+                        ⚡ {chat.sourceLabel}
                       </span>
                     )}
                   </div>
