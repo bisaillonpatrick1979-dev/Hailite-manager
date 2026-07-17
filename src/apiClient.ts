@@ -168,6 +168,11 @@ const legacyRoleMap: Record<string, Employee['role']> = {
 // quel dans l'écran de connexion — on le vide pour que l'admin en attribue un nouveau.
 const isHashedNip = (v: string) => v.startsWith('$2');
 
+// Normalisation des rôles hérités pour tout usage côté client (annuaire de
+// connexion inclus) : "owner" doit donner accès admin dans l'interface.
+export const normalizeAppRole = (r: string | null | undefined): Employee['role'] =>
+  legacyRoleMap[String(r || '').toLowerCase()] || 'employee';
+
 export function employeeToRow(e: Employee, companyId?: string) {
   return {
     id: e.id, company_id: companyId, full_name: e.name, avatar_initials: e.name.slice(0, 2).toUpperCase(),
