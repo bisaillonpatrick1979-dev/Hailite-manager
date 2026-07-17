@@ -148,11 +148,14 @@ export function registerApiRoutes(app: express.Express): void {
   // API Route for AI Agent chat (Gemini / Anthropic / OpenAI)
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message, provider, apiKey: clientApiKey, regionLabel, image } = req.body;
+      const { message, provider, apiKey: clientApiKey, regionLabel, image, appContext } = req.body;
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
       const envKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
       const apiKey = (clientApiKey && clientApiKey.trim()) || envKey;
-      const systemInstruction = buildSystemInstruction(regionLabel);
+      // appContext : données en direct + protocole d'actions, fournis par le client
+      // pour les rôles privilégiés (admin/secrétaire) — voir buildAiAppContext dans App.tsx
+      const systemInstruction = buildSystemInstruction(regionLabel)
+        + (typeof appContext === 'string' && appContext.trim() ? `\n\n${appContext.slice(0, 40000)}` : '');
       const chatImage: ChatImage | undefined =
         image && typeof image.data === 'string' && typeof image.mimeType === 'string'
           ? { mimeType: image.mimeType, data: image.data, name: typeof image.name === 'string' ? image.name : undefined }
