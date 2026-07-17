@@ -25,14 +25,18 @@ function buildSystemInstruction(regionLabel?: string): string {
     Donne des conseils professionnels et clairs.
     Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
     Si une photo est jointe (chantier, toiture, revêtement, matériau, dommage, document), analyse-la en détail : état, matériaux visibles, problèmes potentiels, sécurité, estimation des travaux.
+    Si un document PDF est joint (soumission, plan, devis, facture, contrat), lis-le et résume ou analyse son contenu selon la question posée.
   `;
 }
 
-// Image jointe au message (photo de chantier, document, etc.) encodée en base64
+// Pièce jointe au message (photo de chantier ou document PDF) encodée en base64
 export interface ChatImage {
   mimeType: string;
   data: string; // base64 sans préfixe data:
+  name?: string; // nom de fichier (utile pour les PDF)
 }
+
+const isPdf = (a: ChatImage) => a.mimeType === 'application/pdf';
 
 async function callGemini(message: string, apiKey: string, systemInstruction: string, image?: ChatImage): Promise<string> {
   const ai = new GoogleGenAI({
@@ -61,7 +65,9 @@ async function parseJsonSafely(res: Response, providerLabel: string): Promise<an
 async function callAnthropic(message: string, apiKey: string, systemInstruction: string, image?: ChatImage): Promise<string> {
   const content: any = image
     ? [
-        { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+        isPdf(image)
+          ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: image.data } }
+          : { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
         { type: 'text', text: message }
       ]
     : message;
@@ -90,7 +96,9 @@ async function callOpenAI(message: string, apiKey: string, systemInstruction: st
   const userContent: any = image
     ? [
         { type: 'text', text: message },
-        { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+        isPdf(image)
+          ? { type: 'file', file: { filename: image.name || 'document.pdf', file_data: `data:application/pdf;base64,${image.data}` } }
+          : { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
       ]
     : message;
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -147,7 +155,7 @@ export function registerApiRoutes(app: express.Express): void {
       const systemInstruction = buildSystemInstruction(regionLabel);
       const chatImage: ChatImage | undefined =
         image && typeof image.data === 'string' && typeof image.mimeType === 'string'
-          ? { mimeType: image.mimeType, data: image.data }
+          ? { mimeType: image.mimeType, data: image.data, name: typeof image.name === 'string' ? image.name : undefined }
           : undefined;
 
       if (!apiKey || apiKey.trim() === '') {

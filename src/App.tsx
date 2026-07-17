@@ -294,15 +294,15 @@ export default function App() {
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
   const [aiMessage, setAiMessage] = useState<string>('');
-  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string }>>([
+  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string; pdfName?: string }>>([
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
   const [aiKeyDraft, setAiKeyDraft] = useState<string>(companyInfo.aiApiKey || '');
   const [showAiKey, setShowAiKey] = useState<boolean>(false);
 
-  // Photo/fichier joint au prochain message IA (redimensionné côté client)
-  const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string } | null>(null);
+  // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
+  const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
   const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
   // Dictée vocale (Web Speech API) et lecture des réponses à voix haute
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -562,11 +562,14 @@ export default function App() {
   // entrée dans Réglages (comme les apps AI Studio d'origine). Utilisé uniquement quand
   // le proxy serveur /api/chat est injoignable (ex: fonction serverless indisponible),
   // pour que l'assistant fonctionne même en hébergement purement statique.
-  const callAiDirectFromBrowser = async (provider: string, apiKey: string, message: string, systemInstruction: string, image?: { mimeType: string; data: string }): Promise<string> => {
+  const callAiDirectFromBrowser = async (provider: string, apiKey: string, message: string, systemInstruction: string, image?: { mimeType: string; data: string; name?: string }): Promise<string> => {
+    const attachmentIsPdf = image?.mimeType === 'application/pdf';
     if (provider === 'anthropic') {
       const content: any = image
         ? [
-            { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+            attachmentIsPdf
+              ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: image.data } }
+              : { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
             { type: 'text', text: message }
           ]
         : message;
@@ -593,7 +596,9 @@ export default function App() {
       const userContent: any = image
         ? [
             { type: 'text', text: message },
-            { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+            attachmentIsPdf
+              ? { type: 'file', file: { filename: image.name || 'document.pdf', file_data: `data:application/pdf;base64,${image.data}` } }
+              : { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
           ]
         : message;
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -669,15 +674,35 @@ export default function App() {
     setIsListening(true);
   };
 
-  // Photo/fichier joint : lit l'image et la réduit (max 1280px, JPEG) pour rester
-  // sous les limites de taille des fonctions serverless (~4.5 Mo sur Vercel)
+  // Photo ou PDF joint : les images sont réduites (max 1280px, JPEG) et les PDF
+  // acceptés tels quels jusqu'à 3 Mo, pour rester sous les limites de taille des
+  // fonctions serverless (~4.5 Mo sur Vercel, marge pour l'encodage base64)
   const handleAiPhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.type === 'application/pdf') {
+      const MAX_PDF_BYTES = 3 * 1024 * 1024;
+      if (file.size > MAX_PDF_BYTES) {
+        alert(currentLanguage === 'FR'
+          ? 'Ce PDF dépasse 3 Mo. Utilisez un fichier plus petit (ou exportez seulement les pages utiles).'
+          : 'This PDF exceeds 3 MB. Use a smaller file (or export only the relevant pages).');
+        e.target.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAiImageAttachment({ dataUrl: reader.result as string, mimeType: 'application/pdf', name: file.name });
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+      return;
+    }
+
     if (!file.type.startsWith('image/')) {
       alert(currentLanguage === 'FR'
-        ? 'Seules les images (photos) sont supportées pour le moment.'
-        : 'Only images (photos) are supported for now.');
+        ? 'Formats supportés : images (photos) et PDF.'
+        : 'Supported formats: images (photos) and PDF.');
       e.target.value = '';
       return;
     }
@@ -694,7 +719,7 @@ export default function App() {
         if (!ctx) return;
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        setAiImageAttachment({ dataUrl, mimeType: 'image/jpeg' });
+        setAiImageAttachment({ dataUrl, mimeType: 'image/jpeg', name: file.name });
       };
       img.src = reader.result as string;
     };
@@ -709,12 +734,20 @@ export default function App() {
     const attachment = aiImageAttachment;
     if (!aiMessage.trim() && !attachment) return;
 
-    const userText = aiMessage.trim() || (currentLanguage === 'FR' ? 'Analyse cette photo de chantier.' : 'Analyze this jobsite photo.');
-    // Image encodée pour l'API : base64 sans le préfixe data:
+    const attachmentIsPdf = attachment?.mimeType === 'application/pdf';
+    const userText = aiMessage.trim() || (attachmentIsPdf
+      ? (currentLanguage === 'FR' ? 'Analyse ce document PDF.' : 'Analyze this PDF document.')
+      : (currentLanguage === 'FR' ? 'Analyse cette photo de chantier.' : 'Analyze this jobsite photo.'));
+    // Pièce jointe encodée pour l'API : base64 sans le préfixe data:
     const imagePayload = attachment
-      ? { mimeType: attachment.mimeType, data: attachment.dataUrl.split(',')[1] }
+      ? { mimeType: attachment.mimeType, data: attachment.dataUrl.split(',')[1], name: attachment.name }
       : undefined;
-    setAiHistory(prev => [...prev, { role: 'user', text: userText, imagePreviewUrl: attachment?.dataUrl }]);
+    setAiHistory(prev => [...prev, {
+      role: 'user',
+      text: userText,
+      imagePreviewUrl: attachment && !attachmentIsPdf ? attachment.dataUrl : undefined,
+      pdfName: attachmentIsPdf ? (attachment?.name || 'document.pdf') : undefined
+    }]);
     setAiMessage('');
     setAiImageAttachment(null);
     setIsAiLoading(true);
@@ -6076,6 +6109,12 @@ export default function App() {
                         className="rounded-lg mb-2 max-h-40 w-auto max-w-full object-contain"
                       />
                     )}
+                    {chat.pdfName && (
+                      <span className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded-lg bg-black/25 text-[10px] font-bold">
+                        <FileText className="w-3.5 h-3.5 text-red-300 shrink-0" />
+                        <span className="truncate">{chat.pdfName}</span>
+                      </span>
+                    )}
                     {chat.text}
                     {chat.simulated && (
                       <span className="block mt-2 text-[9px] text-orange-400 font-mono tracking-widest uppercase">
@@ -6094,19 +6133,29 @@ export default function App() {
               )}
             </div>
 
-            {/* Aperçu de la photo jointe au prochain message */}
+            {/* Aperçu de la pièce jointe (photo ou PDF) au prochain message */}
             {aiImageAttachment && (
               <div className="px-3 pt-2 bg-gray-900 flex items-center gap-2">
-                <img
-                  src={aiImageAttachment.dataUrl}
-                  alt="Photo à envoyer"
-                  className="h-14 w-14 object-cover rounded-lg border border-gray-700"
-                />
-                <span className="text-[10px] text-gray-400 flex-1">Photo prête à envoyer</span>
+                {aiImageAttachment.mimeType === 'application/pdf' ? (
+                  <div className="h-14 w-14 flex items-center justify-center rounded-lg border border-gray-700 bg-gray-950">
+                    <FileText className="w-6 h-6 text-red-400" />
+                  </div>
+                ) : (
+                  <img
+                    src={aiImageAttachment.dataUrl}
+                    alt="Photo à envoyer"
+                    className="h-14 w-14 object-cover rounded-lg border border-gray-700"
+                  />
+                )}
+                <span className="text-[10px] text-gray-400 flex-1 truncate">
+                  {aiImageAttachment.mimeType === 'application/pdf'
+                    ? `PDF prêt : ${aiImageAttachment.name || 'document.pdf'}`
+                    : 'Photo prête à envoyer'}
+                </span>
                 <button
                   onClick={() => setAiImageAttachment(null)}
                   className="p-1 text-gray-400 hover:text-red-400 transition cursor-pointer"
-                  title="Retirer la photo"
+                  title="Retirer la pièce jointe"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -6118,14 +6167,14 @@ export default function App() {
               <input
                 ref={aiPhotoInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,application/pdf"
                 onChange={handleAiPhotoSelected}
                 className="hidden"
               />
               <button
                 onClick={() => aiPhotoInputRef.current?.click()}
                 disabled={isAiLoading}
-                title="Joindre une photo ou en prendre une"
+                title="Joindre une photo, en prendre une, ou joindre un PDF"
                 className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 cursor-pointer transition disabled:opacity-40"
               >
                 <Camera className="w-4 h-4" />
