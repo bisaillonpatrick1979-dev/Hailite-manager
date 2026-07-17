@@ -146,8 +146,15 @@ export interface CredentialCheck {
   reason?: 'unavailable' | 'invalid' | 'inactive';
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function verifyCredentials(employeeId: string, nip: string): Promise<CredentialCheck> {
   if (!supabaseEnabled || !supabase) return { ok: false, reason: 'unavailable' };
+  // Identifiant local hérité (ex: "emp-1" des données de démonstration) : cet
+  // utilisateur n'existe pas dans la base — on répond "unavailable" plutôt
+  // qu'"invalid" pour que le client bascule sur sa vérification locale au lieu
+  // d'afficher "NIP incorrect" à tort.
+  if (!UUID_RE.test(employeeId)) return { ok: false, reason: 'unavailable' };
 
   const { data: user, error } = await supabase
     .from('app_users')
