@@ -24,19 +24,27 @@ function buildSystemInstruction(regionLabel?: string): string {
     Base tes réponses de conformité, de sécurité et de charges sociales sur les règles applicables en ${location} — ne présume jamais que l'entreprise est au Québec à moins que ce soit précisé.
     Donne des conseils professionnels et clairs.
     Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
+    Si une photo est jointe (chantier, toiture, revêtement, matériau, dommage, document), analyse-la en détail : état, matériaux visibles, problèmes potentiels, sécurité, estimation des travaux.
   `;
 }
 
-async function callGemini(message: string, apiKey: string, systemInstruction: string): Promise<string> {
+// Image jointe au message (photo de chantier, document, etc.) encodée en base64
+export interface ChatImage {
+  mimeType: string;
+  data: string; // base64 sans préfixe data:
+}
+
+async function callGemini(message: string, apiKey: string, systemInstruction: string, image?: ChatImage): Promise<string> {
   const ai = new GoogleGenAI({
     apiKey,
     httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
   });
+  const parts: any[] = [];
+  if (image) parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } });
+  parts.push({ text: `Système: ${systemInstruction}\n\nClient message: ${message}` });
   const response = await ai.models.generateContent({
     model: 'gemini-3.5-flash',
-    contents: [
-      { role: 'user', parts: [{ text: `Système: ${systemInstruction}\n\nClient message: ${message}` }] }
-    ],
+    contents: [{ role: 'user', parts }],
   });
   return response.text || '';
 }
@@ -50,7 +58,13 @@ async function parseJsonSafely(res: Response, providerLabel: string): Promise<an
   }
 }
 
-async function callAnthropic(message: string, apiKey: string, systemInstruction: string): Promise<string> {
+async function callAnthropic(message: string, apiKey: string, systemInstruction: string, image?: ChatImage): Promise<string> {
+  const content: any = image
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+        { type: 'text', text: message }
+      ]
+    : message;
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -62,7 +76,7 @@ async function callAnthropic(message: string, apiKey: string, systemInstruction:
       model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: systemInstruction,
-      messages: [{ role: 'user', content: message }]
+      messages: [{ role: 'user', content }]
     })
   });
   const data = await parseJsonSafely(res, 'Anthropic');
@@ -72,7 +86,13 @@ async function callAnthropic(message: string, apiKey: string, systemInstruction:
   return data?.content?.[0]?.text || '';
 }
 
-async function callOpenAI(message: string, apiKey: string, systemInstruction: string): Promise<string> {
+async function callOpenAI(message: string, apiKey: string, systemInstruction: string, image?: ChatImage): Promise<string> {
+  const userContent: any = image
+    ? [
+        { type: 'text', text: message },
+        { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+      ]
+    : message;
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -83,7 +103,7 @@ async function callOpenAI(message: string, apiKey: string, systemInstruction: st
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemInstruction },
-        { role: 'user', content: message }
+        { role: 'user', content: userContent }
       ]
     })
   });
@@ -120,11 +140,15 @@ export function registerApiRoutes(app: express.Express): void {
   // API Route for AI Agent chat (Gemini / Anthropic / OpenAI)
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message, provider, apiKey: clientApiKey, regionLabel } = req.body;
+      const { message, provider, apiKey: clientApiKey, regionLabel, image } = req.body;
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
       const envKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
       const apiKey = (clientApiKey && clientApiKey.trim()) || envKey;
       const systemInstruction = buildSystemInstruction(regionLabel);
+      const chatImage: ChatImage | undefined =
+        image && typeof image.data === 'string' && typeof image.mimeType === 'string'
+          ? { mimeType: image.mimeType, data: image.data }
+          : undefined;
 
       if (!apiKey || apiKey.trim() === '') {
         return res.json({
@@ -135,11 +159,11 @@ export function registerApiRoutes(app: express.Express): void {
 
       let text = '';
       if (selectedProvider === 'anthropic') {
-        text = await callAnthropic(message, apiKey, systemInstruction);
+        text = await callAnthropic(message, apiKey, systemInstruction, chatImage);
       } else if (selectedProvider === 'openai') {
-        text = await callOpenAI(message, apiKey, systemInstruction);
+        text = await callOpenAI(message, apiKey, systemInstruction, chatImage);
       } else {
-        text = await callGemini(message, apiKey, systemInstruction);
+        text = await callGemini(message, apiKey, systemInstruction, chatImage);
       }
 
       return res.json({ reply: text });

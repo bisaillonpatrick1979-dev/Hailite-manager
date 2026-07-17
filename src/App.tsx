@@ -22,7 +22,7 @@ import {
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, Eye, EyeOff, CheckSquare, Dumbbell,
-  Play, Pause, Award, HelpCircle, Phone, Mail, Coins
+  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX
 } from 'lucide-react';
 
 // Petites icônes-avatars générées localement (SVG en data URI) : aucune
@@ -294,12 +294,22 @@ export default function App() {
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
   const [aiMessage, setAiMessage] = useState<string>('');
-  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean }>>([
+  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string }>>([
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
   const [aiKeyDraft, setAiKeyDraft] = useState<string>(companyInfo.aiApiKey || '');
   const [showAiKey, setShowAiKey] = useState<boolean>(false);
+
+  // Photo/fichier joint au prochain message IA (redimensionné côté client)
+  const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string } | null>(null);
+  const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  // Dictée vocale (Web Speech API) et lecture des réponses à voix haute
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(false);
+  const recognitionRef = useRef<any>(null);
+  const voiceEnabledRef = useRef<boolean>(false);
+  voiceEnabledRef.current = voiceEnabled;
 
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
@@ -552,8 +562,14 @@ export default function App() {
   // entrée dans Réglages (comme les apps AI Studio d'origine). Utilisé uniquement quand
   // le proxy serveur /api/chat est injoignable (ex: fonction serverless indisponible),
   // pour que l'assistant fonctionne même en hébergement purement statique.
-  const callAiDirectFromBrowser = async (provider: string, apiKey: string, message: string, systemInstruction: string): Promise<string> => {
+  const callAiDirectFromBrowser = async (provider: string, apiKey: string, message: string, systemInstruction: string, image?: { mimeType: string; data: string }): Promise<string> => {
     if (provider === 'anthropic') {
+      const content: any = image
+        ? [
+            { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+            { type: 'text', text: message }
+          ]
+        : message;
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -566,7 +582,7 @@ export default function App() {
           model: 'claude-sonnet-5',
           max_tokens: 1024,
           system: systemInstruction,
-          messages: [{ role: 'user', content: message }]
+          messages: [{ role: 'user', content }]
         })
       });
       const data = await res.json();
@@ -574,6 +590,12 @@ export default function App() {
       return data?.content?.[0]?.text || '';
     }
     if (provider === 'openai') {
+      const userContent: any = image
+        ? [
+            { type: 'text', text: message },
+            { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+          ]
+        : message;
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -581,7 +603,7 @@ export default function App() {
           model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemInstruction },
-            { role: 'user', content: message }
+            { role: 'user', content: userContent }
           ]
         })
       });
@@ -589,12 +611,15 @@ export default function App() {
       if (!res.ok) throw new Error(data?.error?.message || `Erreur OpenAI (${res.status})`);
       return data?.choices?.[0]?.message?.content || '';
     }
+    const geminiParts: any[] = [];
+    if (image) geminiParts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
+    geminiParts.push({ text: message });
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: 'user', parts: [{ text: message }] }]
+        contents: [{ role: 'user', parts: geminiParts }]
       })
     });
     const data = await res.json();
@@ -602,15 +627,96 @@ export default function App() {
     return data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '';
   };
 
+  // Lit la réponse de l'assistant à voix haute (si la lecture vocale est activée)
+  const speakAiResponse = (text: string) => {
+    if (!voiceEnabledRef.current || typeof speechSynthesis === 'undefined') return;
+    speechSynthesis.cancel();
+    // Retire le formatage markdown et les emojis pour une lecture naturelle
+    const clean = text.replace(/[*_#`]/g, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
+    if (!clean) return;
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.lang = currentLanguage === 'FR' ? 'fr-CA' : 'en-US';
+    utterance.rate = 1.05;
+    speechSynthesis.speak(utterance);
+  };
+
+  // Dictée vocale : bascule l'écoute du micro (Web Speech API, si supportée)
+  const handleToggleVoiceInput = () => {
+    const SpeechRecognitionImpl = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionImpl) {
+      alert(currentLanguage === 'FR'
+        ? "La dictée vocale n'est pas supportée par ce navigateur. Essayez Chrome ou Edge."
+        : 'Voice dictation is not supported by this browser. Try Chrome or Edge.');
+      return;
+    }
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+      return;
+    }
+    const recognition = new SpeechRecognitionImpl();
+    recognition.lang = currentLanguage === 'FR' ? 'fr-CA' : 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results).map((r: any) => r[0].transcript).join(' ');
+      setAiMessage(transcript);
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  };
+
+  // Photo/fichier joint : lit l'image et la réduit (max 1280px, JPEG) pour rester
+  // sous les limites de taille des fonctions serverless (~4.5 Mo sur Vercel)
+  const handleAiPhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert(currentLanguage === 'FR'
+        ? 'Seules les images (photos) sont supportées pour le moment.'
+        : 'Only images (photos) are supported for now.');
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1280;
+        const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        setAiImageAttachment({ dataUrl, mimeType: 'image/jpeg' });
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   // Send message to the selected AI provider (Gemini / Anthropic / OpenAI) via the server
   // proxy, avec repli automatique sur un appel direct depuis le navigateur si le serveur
   // est injoignable et qu'une clé API personnelle est enregistrée.
   const handleSendAiMessage = async () => {
-    if (!aiMessage.trim()) return;
+    const attachment = aiImageAttachment;
+    if (!aiMessage.trim() && !attachment) return;
 
-    const userText = aiMessage;
-    setAiHistory(prev => [...prev, { role: 'user', text: userText }]);
+    const userText = aiMessage.trim() || (currentLanguage === 'FR' ? 'Analyse cette photo de chantier.' : 'Analyze this jobsite photo.');
+    // Image encodée pour l'API : base64 sans le préfixe data:
+    const imagePayload = attachment
+      ? { mimeType: attachment.mimeType, data: attachment.dataUrl.split(',')[1] }
+      : undefined;
+    setAiHistory(prev => [...prev, { role: 'user', text: userText, imagePreviewUrl: attachment?.dataUrl }]);
     setAiMessage('');
+    setAiImageAttachment(null);
     setIsAiLoading(true);
 
     const provider = companyInfo.aiProvider || 'gemini';
@@ -629,7 +735,7 @@ export default function App() {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: userText, provider, apiKey: clientKey, regionLabel })
+          body: JSON.stringify({ message: userText, provider, apiKey: clientKey, regionLabel, image: imagePayload })
         });
         const raw = await res.text();
         let data: any = null;
@@ -654,12 +760,13 @@ export default function App() {
 
       // 2) Repli : appel direct depuis le navigateur avec la clé personnelle
       if (serverUnreachable && clientKey) {
-        reply = await callAiDirectFromBrowser(provider, clientKey, userText, buildAiSystemInstruction(regionLabel));
+        reply = await callAiDirectFromBrowser(provider, clientKey, userText, buildAiSystemInstruction(regionLabel), imagePayload);
         providerError = null;
       }
 
       if (reply !== null) {
         setAiHistory(prev => [...prev, { role: 'assistant', text: reply as string, simulated }]);
+        speakAiResponse(reply);
       } else if (providerError) {
         setAiHistory(prev => [...prev, { role: 'assistant', text: providerError as string }]);
       } else {
@@ -5929,12 +6036,25 @@ export default function App() {
                   <span className="text-[9px] text-green-400 font-mono font-bold uppercase">Hailite Assistant</span>
                 </div>
               </div>
-              <button
-                onClick={() => setAiChatOpen(false)}
-                className="text-gray-400 hover:text-white transition p-1 rounded-full hover:bg-white/10 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => {
+                    const next = !voiceEnabled;
+                    setVoiceEnabled(next);
+                    if (!next && typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+                  }}
+                  title={voiceEnabled ? 'Désactiver la lecture vocale' : 'Activer la lecture vocale des réponses'}
+                  className={`transition p-1 rounded-full hover:bg-white/10 cursor-pointer ${voiceEnabled ? 'text-green-400' : 'text-gray-400 hover:text-white'}`}
+                >
+                  {voiceEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+                </button>
+                <button
+                  onClick={() => setAiChatOpen(false)}
+                  className="text-gray-400 hover:text-white transition p-1 rounded-full hover:bg-white/10 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Chat message logs */}
@@ -5945,10 +6065,17 @@ export default function App() {
                   className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div className={`p-3 rounded-xl text-xs max-w-[85%] leading-relaxed ${
-                    chat.role === 'user' 
-                      ? 'bg-orange-600 text-white rounded-br-none' 
+                    chat.role === 'user'
+                      ? 'bg-orange-600 text-white rounded-br-none'
                       : 'bg-gray-850 text-gray-200 rounded-bl-none'
                   }`}>
+                    {chat.imagePreviewUrl && (
+                      <img
+                        src={chat.imagePreviewUrl}
+                        alt="Photo jointe"
+                        className="rounded-lg mb-2 max-h-40 w-auto max-w-full object-contain"
+                      />
+                    )}
                     {chat.text}
                     {chat.simulated && (
                       <span className="block mt-2 text-[9px] text-orange-400 font-mono tracking-widest uppercase">
@@ -5967,19 +6094,63 @@ export default function App() {
               )}
             </div>
 
+            {/* Aperçu de la photo jointe au prochain message */}
+            {aiImageAttachment && (
+              <div className="px-3 pt-2 bg-gray-900 flex items-center gap-2">
+                <img
+                  src={aiImageAttachment.dataUrl}
+                  alt="Photo à envoyer"
+                  className="h-14 w-14 object-cover rounded-lg border border-gray-700"
+                />
+                <span className="text-[10px] text-gray-400 flex-1">Photo prête à envoyer</span>
+                <button
+                  onClick={() => setAiImageAttachment(null)}
+                  className="p-1 text-gray-400 hover:text-red-400 transition cursor-pointer"
+                  title="Retirer la photo"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* Input message form */}
             <div className="p-3 border-t border-gray-800 bg-gray-900 flex items-center gap-2">
               <input
+                ref={aiPhotoInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleAiPhotoSelected}
+                className="hidden"
+              />
+              <button
+                onClick={() => aiPhotoInputRef.current?.click()}
+                disabled={isAiLoading}
+                title="Joindre une photo ou en prendre une"
+                className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 cursor-pointer transition disabled:opacity-40"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleToggleVoiceInput}
+                disabled={isAiLoading}
+                title={isListening ? 'Arrêter la dictée' : 'Dicter votre message'}
+                className={`p-2 rounded-lg cursor-pointer transition disabled:opacity-40 ${
+                  isListening ? 'bg-red-600 text-white animate-pulse' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+                }`}
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+              <input
                 type="text"
-                placeholder={t.aiPlaceholder}
+                placeholder={isListening ? '🎙️ Parlez...' : t.aiPlaceholder}
                 value={aiMessage}
                 onChange={e => setAiMessage(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleSendAiMessage()}
-                className="flex-1 p-2 bg-gray-950 rounded border border-gray-800 text-xs text-white text-sans text-left"
+                className="flex-1 p-2 bg-gray-950 rounded border border-gray-800 text-xs text-white text-sans text-left min-w-0"
               />
               <button
                 onClick={handleSendAiMessage}
-                disabled={isAiLoading || !aiMessage.trim()}
+                disabled={isAiLoading || (!aiMessage.trim() && !aiImageAttachment)}
                 className="p-2 bg-orange-600 hover:bg-orange-500 rounded-lg text-white font-bold cursor-pointer transition disabled:opacity-40"
               >
                 <Send className="w-4 h-4" />
