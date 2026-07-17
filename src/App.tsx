@@ -548,6 +548,92 @@ export default function App() {
     }
   };
 
+  // L'IA de gestion (données + actions) est réservée aux rôles de bureau ;
+  // les employés/sous-traitants gardent l'assistant technique de chantier.
+  const aiPrivileged = !!activeEmployee && (activeEmployee.role === 'admin' || activeEmployee.role === 'secretary');
+
+  // Construit le contexte envoyé à l'IA pour les rôles privilégiés : un instantané
+  // agrégé des données de l'app (revenus, dépenses, équipes, inventaire, etc.)
+  // suivi du protocole d'actions que l'IA peut déclencher dans l'application.
+  const buildAiAppContext = (): string => {
+    const now = new Date();
+    const monthPrefix = now.toISOString().slice(0, 7); // "2026-07"
+    const inMonth = (dateStr?: string | null) => !!dateStr && dateStr.startsWith(monthPrefix);
+
+    const monthPunches = punchSessions.filter(p => inMonth(p.startTime) && p.endTime);
+    const punchStatsByEmployee = employees.map(emp => {
+      const punches = monthPunches.filter(p => p.employeeId === emp.id);
+      return {
+        nom: emp.name, role: emp.role, tauxHoraire: emp.hourlyRate,
+        heuresCeMois: Number(punches.reduce((s, p) => s + (p.totalWorkedHours || 0), 0).toFixed(1)),
+        coutMainOeuvreCeMois: Number(punches.reduce((s, p) => s + (p.revenue || 0), 0).toFixed(2))
+      };
+    });
+    const teamStats = motivationTeams.map(team => ({
+      equipe: team.name,
+      membres: team.memberIds.map(id => employees.find(e => e.id === id)?.name).filter(Boolean),
+      heuresCeMois: Number(monthPunches
+        .filter(p => team.memberIds.includes(p.employeeId))
+        .reduce((s, p) => s + (p.totalWorkedHours || 0), 0).toFixed(1))
+    }));
+    const revenusClientsCeMois = documents
+      .filter(d => d.type === 'invoice')
+      .reduce((s, d) => s + (d.paymentsHistory || []).filter(p => inMonth(p.date)).reduce((x, p) => x + p.amount, 0), 0);
+    const depensesCeMois = expenses.filter(e => inMonth(e.date)).reduce((s, e) => s + e.amount + (e.tax || 0), 0);
+    const paiesVerseesCeMois = payrollPayments.filter(p => inMonth(p.date) && p.status === 'paid').reduce((s, p) => s + p.amount, 0);
+    const coutMainOeuvreCeMois = monthPunches.reduce((s, p) => s + (p.revenue || 0), 0);
+
+    const data = {
+      dateDuJour: now.toISOString().split('T')[0],
+      moisCourant: monthPrefix,
+      financesDuMois: {
+        revenusClientsEncaisses: Number(revenusClientsCeMois.toFixed(2)),
+        depenses: Number(depensesCeMois.toFixed(2)),
+        paiesVersees: Number(paiesVerseesCeMois.toFixed(2)),
+        coutMainOeuvrePunches: Number(coutMainOeuvreCeMois.toFixed(2)),
+        profitEstime: Number((revenusClientsCeMois - depensesCeMois - paiesVerseesCeMois).toFixed(2))
+      },
+      facturesClients: documents.slice(0, 15).map(d => ({
+        numero: d.number, type: d.type, client: d.clientName, statut: d.status,
+        total: d.total, solde: d.balanceDue
+      })),
+      employes: punchStatsByEmployee,
+      equipes: teamStats,
+      chantiers: projects.map(p => ({
+        nom: p.name, client: p.clientName, statut: p.status,
+        heuresCeMois: Number(monthPunches.filter(x => x.projectId === p.id).reduce((s, x) => s + (x.totalWorkedHours || 0), 0).toFixed(1))
+      })),
+      inventaire: inventory.map(i => ({
+        nom: i.name, quantite: i.quantity, unite: i.unit, seuilMin: i.minThreshold,
+        stockBas: i.quantity < i.minThreshold
+      })),
+      commandes: orders.slice(-8).map(o => ({ fournisseur: o.supplierName, date: o.date, statut: o.status, total: o.totalAmount })),
+      clients: clients.map(c => c.name),
+      depensesDuMoisParCategorie: expenses.filter(e => inMonth(e.date)).reduce((acc: Record<string, number>, e) => {
+        acc[e.category] = Number(((acc[e.category] || 0) + e.amount).toFixed(2));
+        return acc;
+      }, {})
+    };
+
+    return `DONNÉES EN DIRECT DE L'APPLICATION (l'utilisateur est ${activeEmployee?.role === 'admin' ? 'administrateur' : 'secrétaire'} : tu peux répondre à ses questions de gestion — profits, heures, équipes, inventaire, factures — à partir de ces données réelles) :
+${JSON.stringify(data)}
+
+ACTIONS DISPONIBLES : tu peux aussi AGIR dans l'application. Quand l'utilisateur te demande de créer ou modifier quelque chose, termine ta réponse par un ou plusieurs blocs d'action au format EXACT suivant (un bloc par action, maximum 5) :
+<<<ACTION
+{"action":"nom_action", ...paramètres}
+ACTION>>>
+
+Actions supportées :
+- {"action":"create_employee","name":"...","role":"admin|employee|secretary|accountant","hourlyRate":25,"workerType":"...","phone":"...","address":"..."} (seuls name, role et hourlyRate sont requis)
+- {"action":"create_project","name":"...","clientName":"...","address":"..."}
+- {"action":"create_client","name":"...","phone":"...","email":"...","address":"..."}
+- {"action":"add_inventory_item","name":"...","quantity":10,"unit":"paquets","minThreshold":5}
+- {"action":"adjust_inventory","name":"nom exact de l'article","quantity":25} (fixe la quantité à cette valeur)
+- {"action":"create_order","supplierName":"...","items":[{"name":"...","quantity":10,"price":12.50}]}
+
+Règles : n'invente JAMAIS de données (si une information essentielle manque, demande-la au lieu d'émettre un bloc) ; confirme dans ta réponse en langage naturel ce que tu viens de créer/modifier ; n'émets un bloc QUE si l'utilisateur a clairement demandé l'action.`;
+  };
+
   // Même consigne système que côté serveur (apiRoutes.ts), pour le mode secours navigateur
   const buildAiSystemInstruction = (regionLabel: string): string => `
     Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${regionLabel}.
@@ -630,6 +716,112 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || `Erreur Gemini (${res.status})`);
     return data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '';
+  };
+
+  // Exécute une action demandée par l'IA (rôles admin/secrétaire seulement) et
+  // retourne une phrase de confirmation, ou un message d'erreur explicite.
+  const executeAiAction = (params: any): string => {
+    switch (params.action) {
+      case 'create_employee': {
+        if (!params.name || !params.role || typeof params.hourlyRate !== 'number') {
+          return "⚠️ Action ignorée : il manque le nom, le rôle ou le taux horaire de l'employé.";
+        }
+        const nip = String(Math.floor(1000 + Math.random() * 9000));
+        addEmployee({
+          name: String(params.name),
+          nip,
+          role: (['admin', 'employee', 'secretary', 'accountant'].includes(params.role) ? params.role : 'employee') as EmployeeRole,
+          hourlyRate: Math.max(0, Number(params.hourlyRate)),
+          workerType: String(params.workerType || 'Ouvrier'),
+          asNumber: String(params.asNumber || ''),
+          phone: String(params.phone || ''),
+          address: String(params.address || ''),
+          hireDate: new Date().toISOString().split('T')[0],
+          avatar: makeIconAvatar('👷', '#F97316')
+        });
+        return `✅ Employé « ${params.name} » créé (NIP temporaire : ${nip} — à changer dans Réglages > Employés).`;
+      }
+      case 'create_project': {
+        if (!params.name) return '⚠️ Action ignorée : il manque le nom du chantier.';
+        addProject({
+          name: String(params.name),
+          clientName: String(params.clientName || ''),
+          address: String(params.address || ''),
+          latitude: 0,
+          longitude: 0,
+          radius: 100,
+          assignedEmployees: [],
+          status: 'active'
+        });
+        return `✅ Chantier « ${params.name} » créé. Pense à définir sa position GPS (onglet Projets) pour activer le géorepérage.`;
+      }
+      case 'create_client': {
+        if (!params.name) return '⚠️ Action ignorée : il manque le nom du client.';
+        addClient({
+          name: String(params.name),
+          phone: String(params.phone || ''),
+          email: String(params.email || ''),
+          address: String(params.address || '')
+        });
+        return `✅ Client « ${params.name} » créé.`;
+      }
+      case 'add_inventory_item': {
+        if (!params.name || typeof params.quantity !== 'number') {
+          return "⚠️ Action ignorée : il manque le nom ou la quantité de l'article.";
+        }
+        addInventoryItem({
+          name: String(params.name),
+          quantity: Math.max(0, Number(params.quantity)),
+          unit: String(params.unit || 'unités'),
+          emoji: '📦',
+          minThreshold: Math.max(0, Number(params.minThreshold ?? 5))
+        });
+        return `✅ Article d'inventaire « ${params.name} » ajouté (${params.quantity} ${params.unit || 'unités'}).`;
+      }
+      case 'adjust_inventory': {
+        const item = inventory.find(i => i.name.toLowerCase() === String(params.name || '').toLowerCase());
+        if (!item) return `⚠️ Article introuvable dans l'inventaire : « ${params.name} ».`;
+        if (typeof params.quantity !== 'number') return '⚠️ Action ignorée : quantité manquante.';
+        updateInventoryItem({ ...item, quantity: Math.max(0, Number(params.quantity)) });
+        return `✅ Inventaire ajusté : « ${item.name} » est maintenant à ${Math.max(0, Number(params.quantity))} ${item.unit}.`;
+      }
+      case 'create_order': {
+        if (!params.supplierName || !Array.isArray(params.items) || params.items.length === 0) {
+          return '⚠️ Action ignorée : il manque le fournisseur ou les articles de la commande.';
+        }
+        const items = params.items
+          .filter((it: any) => it && it.name)
+          .map((it: any) => ({ name: String(it.name), quantity: Math.max(0, Number(it.quantity) || 0), price: Math.max(0, Number(it.price) || 0) }));
+        const totalAmount = Number(items.reduce((s: number, it: any) => s + it.quantity * it.price, 0).toFixed(2));
+        addSupplierOrder({
+          supplierName: String(params.supplierName),
+          date: new Date().toISOString().split('T')[0],
+          items,
+          status: 'ordered',
+          totalAmount
+        });
+        return `✅ Commande créée chez « ${params.supplierName} » (${items.length} article(s), total ${totalAmount.toFixed(2)} $).`;
+      }
+      default:
+        return `⚠️ Action inconnue ignorée : « ${params.action} ».`;
+    }
+  };
+
+  // Détecte et exécute les blocs <<<ACTION ... ACTION>>> émis par l'IA, puis les
+  // retire du texte affiché. Ne fait rien pour les rôles non privilégiés.
+  const processAiActions = (reply: string): { cleanText: string; notes: string[] } => {
+    const notes: string[] = [];
+    if (!aiPrivileged) return { cleanText: reply, notes };
+    const cleanText = reply.replace(/<<<ACTION([\s\S]*?)ACTION>>>/g, (_match, jsonBlock) => {
+      if (notes.length >= 5) return '';
+      try {
+        notes.push(executeAiAction(JSON.parse(jsonBlock.trim())));
+      } catch {
+        notes.push("⚠️ Une action de l'IA n'a pas pu être lue (format invalide) — rien n'a été modifié.");
+      }
+      return '';
+    }).trim();
+    return { cleanText, notes };
   };
 
   // Lit la réponse de l'assistant à voix haute (si la lecture vocale est activée)
@@ -755,6 +947,8 @@ export default function App() {
     const provider = companyInfo.aiProvider || 'gemini';
     const clientKey = (companyInfo.aiApiKey || '').trim();
     const regionLabel = `${companyRegion.nameFR} (${companyCountry === 'US' ? 'États-Unis' : 'Canada'})`;
+    // Contexte de gestion (données + actions) : réservé aux admins/secrétaires
+    const appContext = aiPrivileged ? buildAiAppContext() : undefined;
 
     try {
       // 1) Tentative via le proxy serveur (préférable : la clé ne quitte pas le serveur
@@ -768,7 +962,7 @@ export default function App() {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: userText, provider, apiKey: clientKey, regionLabel, image: imagePayload })
+          body: JSON.stringify({ message: userText, provider, apiKey: clientKey, regionLabel, image: imagePayload, appContext })
         });
         const raw = await res.text();
         let data: any = null;
@@ -793,13 +987,21 @@ export default function App() {
 
       // 2) Repli : appel direct depuis le navigateur avec la clé personnelle
       if (serverUnreachable && clientKey) {
-        reply = await callAiDirectFromBrowser(provider, clientKey, userText, buildAiSystemInstruction(regionLabel), imagePayload);
+        const fallbackInstruction = buildAiSystemInstruction(regionLabel) + (appContext ? `\n\n${appContext}` : '');
+        reply = await callAiDirectFromBrowser(provider, clientKey, userText, fallbackInstruction, imagePayload);
         providerError = null;
       }
 
       if (reply !== null) {
-        setAiHistory(prev => [...prev, { role: 'assistant', text: reply as string, simulated }]);
-        speakAiResponse(reply);
+        // Exécute les actions demandées par l'IA (création d'employé, de chantier, etc.)
+        const { cleanText, notes } = processAiActions(reply);
+        const displayText = cleanText || (notes.length ? 'Action effectuée.' : reply);
+        setAiHistory(prev => [
+          ...prev,
+          { role: 'assistant', text: displayText, simulated },
+          ...notes.map(note => ({ role: 'assistant' as const, text: note }))
+        ]);
+        speakAiResponse(displayText);
       } else if (providerError) {
         setAiHistory(prev => [...prev, { role: 'assistant', text: providerError as string }]);
       } else {
