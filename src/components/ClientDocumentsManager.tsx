@@ -11,7 +11,8 @@ import {
   FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin,
   CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
 } from 'lucide-react';
-import { CANADIAN_REGIONS, US_REGIONS, regionWithPreposition } from '../regionsData';
+import { CANADIAN_REGIONS, US_REGIONS } from '../regionsData';
+import { translations, fmt } from '../translations';
 import SignaturePad from './SignaturePad';
 
 export default function ClientDocumentsManager() {
@@ -25,6 +26,8 @@ export default function ClientDocumentsManager() {
   const companyRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === companyInfo.region) || CANADIAN_REGIONS[0];
   const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
   const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
+  const t = translations[currentLanguage];
+  const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
 
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'invoice' | 'quote' | 'contract'>('all');
   const [activeStatusTab, setActiveStatusTab] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'paid' | 'overdue'>('all');
@@ -122,16 +125,16 @@ export default function ClientDocumentsManager() {
   const handleCreateDocument = () => {
     const cli = clients.find(c => c.id === newClientId) || clients[0];
     if (!cli) {
-      alert("Veuillez sélectionner un client d'abord ou en ajouter un dans les Réglages.");
+      alert(t.cdmSelectClientFirst);
       return;
     }
 
     if (!ownerSignatureData) {
-      alert("La signature tactile de l'entrepreneur est requise avant de générer ce document.");
+      alert(t.cdmContractorSignRequired);
       return;
     }
     if (newDocType === 'contract' && !clientSignatureData) {
-      alert("La signature tactile du client est requise pour générer une entente/contrat.");
+      alert(t.cdmClientSignRequired);
       return;
     }
 
@@ -234,7 +237,7 @@ export default function ClientDocumentsManager() {
   const handleCapturePayment = (docId: string) => {
     const amount = parseFloat(payAmount);
     if (!amount || amount <= 0) {
-      alert("Veuillez saisir un montant supérieur à 0 $.");
+      alert(t.cdmAmountGtZero);
       return;
     }
     
@@ -249,7 +252,7 @@ export default function ClientDocumentsManager() {
         date: new Date().toISOString().split('T')[0],
         amount,
         method: payMethod,
-        notes: payNotes || 'Paiement partiel enregistré'
+        notes: payNotes || t.cdmPartialPaymentNote
       }];
       const totalPaid = updatedHistory.reduce((sum, p) => sum + p.amount, 0);
       const newBalance = Number((currentDoc.total - currentDoc.holdbackAmount - totalPaid).toFixed(2));
@@ -304,11 +307,11 @@ export default function ClientDocumentsManager() {
 
   const getStatusTranslation = (status: string) => {
     switch (status) {
-      case 'draft': return 'Brouillon';
-      case 'sent': return 'Envoyé';
-      case 'accepted': return 'Accepté 🤝';
-      case 'paid': return 'Payé ✔️';
-      case 'overdue': return 'Retard ⚠️';
+      case 'draft': return t.cdmStatusDraft;
+      case 'sent': return t.cdmStatusSent;
+      case 'accepted': return t.cdmStatusAccepted;
+      case 'paid': return t.cdmStatusPaid;
+      case 'overdue': return t.cdmStatusOverdue;
       default: return status;
     }
   };
@@ -334,29 +337,29 @@ export default function ClientDocumentsManager() {
           <div className="absolute top-2 right-2 p-1.5 bg-gray-900 text-cyan-400 rounded-lg">
             <DollarSign className="w-4 h-4" />
           </div>
-          <span className="text-[10px] text-gray-500 uppercase font-mono tracking-wider block">Recevables Clients</span>
-          <p className="text-xl font-black text-white mt-1">{totalReceivables.toLocaleString('fr-CA')}$</p>
-          <p className="text-[10px] text-gray-400 mt-1">Factures émises non payées</p>
+          <span className="text-[10px] text-gray-500 uppercase font-mono tracking-wider block">{t.cdmReceivables}</span>
+          <p className="text-xl font-black text-white mt-1">{totalReceivables.toLocaleString(dateLocale)}$</p>
+          <p className="text-[10px] text-gray-400 mt-1">{t.cdmUnpaidInvoices}</p>
         </div>
 
         <div className="bg-[#12131A] border border-gray-850 p-4 rounded-xl relative overflow-hidden">
           <div className="absolute top-2 right-2 p-1.5 bg-gray-900 text-purple-400 rounded-lg">
             <Briefcase className="w-4 h-4" />
           </div>
-          <span className="text-[10px] text-gray-500 uppercase font-mono tracking-wider block">Devis Signés</span>
-          <p className="text-xl font-black text-white mt-1">{totalQuotesAccepted.toLocaleString('fr-CA')}$</p>
-          <p className="text-[10px] text-gray-400 mt-1">Devis approuvés prêts à facturer</p>
+          <span className="text-[10px] text-gray-500 uppercase font-mono tracking-wider block">{t.cdmSignedQuotes}</span>
+          <p className="text-xl font-black text-white mt-1">{totalQuotesAccepted.toLocaleString(dateLocale)}$</p>
+          <p className="text-[10px] text-gray-400 mt-1">{t.cdmApprovedReady}</p>
         </div>
 
         <div className="bg-[#12131A] border border-gray-850 p-4 rounded-xl relative overflow-hidden col-span-2">
           <div className="flex items-center gap-2 mb-2">
             <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-            <span className="text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">Numérotation Automatique{isQuebec ? ' CCQ' : ''}</span>
+            <span className="text-[10px] text-gray-400 uppercase font-mono tracking-widest font-black">{t.cdmAutoNumbering}{isQuebec ? ' CCQ' : ''}</span>
           </div>
           <p className="text-xs text-gray-300 leading-relaxed max-w-sm">
             {isQuebec
-              ? "Numérotation séquentielle québécoise homologuée pour l'assurance qualité et le suivi diligent des inspections APCHQ/CCQ."
-              : `Numérotation séquentielle homologuée pour l'assurance qualité et le suivi diligent des documents ${regionWithPreposition(companyRegion, companyCountry)}.`}
+              ? t.cdmNumberingQc
+              : fmt(t.cdmNumberingStd, { region: regionName })}
           </p>
         </div>
 
@@ -374,7 +377,7 @@ export default function ClientDocumentsManager() {
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Rechercher par N° de pièce ou client..."
+                placeholder={t.cdmSearchPh}
                 className="w-full pl-9 pr-4 py-2 bg-gray-900 border border-gray-800 rounded-xl text-xs text-white focus:outline-none focus:border-orange-500"
               />
             </div>
@@ -384,17 +387,17 @@ export default function ClientDocumentsManager() {
               className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-xl transition flex items-center gap-2 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Nouveau document client</span>
+              <span>{t.cdmNewDocBtn}</span>
             </button>
           </div>
 
           {/* Type filters */}
           <div className="flex flex-wrap gap-1.5">
             {[
-              { id: 'all', label: 'Tous' },
-              { id: 'quote', label: 'Devis (Soumissions)' },
-              { id: 'contract', label: 'Contrats Travaux' },
-              { id: 'invoice', label: 'Factures Clients' }
+              { id: 'all', label: t.cdmFilterAll },
+              { id: 'quote', label: t.cdmFilterQuotes },
+              { id: 'contract', label: t.cdmFilterContracts },
+              { id: 'invoice', label: t.cdmFilterInvoices }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -414,14 +417,14 @@ export default function ClientDocumentsManager() {
 
         {/* Status sub filters */}
         <div className="flex flex-wrap items-center gap-1 border-t border-gray-800 pt-3">
-          <span className="text-[10px] uppercase font-mono tracking-wide text-gray-500 mr-2">Filtrer Statut :</span>
+          <span className="text-[10px] uppercase font-mono tracking-wide text-gray-500 mr-2">{t.cdmFilterStatus}</span>
           {[
-            { id: 'all', label: 'Tous' },
-            { id: 'draft', label: 'Brouillon' },
-            { id: 'sent', label: 'Envoyé' },
-            { id: 'accepted', label: 'Accepté 🤝' },
-            { id: 'paid', label: 'Payé' },
-            { id: 'overdue', label: 'Retard' }
+            { id: 'all', label: t.cdmFilterAll },
+            { id: 'draft', label: t.cdmStatusDraft },
+            { id: 'sent', label: t.cdmStatusSent },
+            { id: 'accepted', label: t.cdmStatusAccepted },
+            { id: 'paid', label: t.cdmStatusPaidShort },
+            { id: 'overdue', label: t.cdmStatusOverdueShort }
           ].map(stat => (
             <button
               key={stat.id}
@@ -443,7 +446,7 @@ export default function ClientDocumentsManager() {
         {filteredDocs.length === 0 ? (
           <div className="p-8 bg-gray-900/40 border border-gray-850 rounded-2xl text-center md:col-span-2">
             <AlertCircle className="w-8 h-8 text-gray-500 mx-auto mb-2" />
-            <p className="text-xs text-gray-400">Aucun document client correspondant aux filtres trouvés.</p>
+            <p className="text-xs text-gray-400">{t.cdmNoDocs}</p>
           </div>
         ) : (
           filteredDocs.map(doc => (
@@ -458,13 +461,13 @@ export default function ClientDocumentsManager() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-black text-white">{doc.number}</span>
                     <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded border font-semibold bg-gray-900 text-gray-400">
-                      {doc.type === 'quote' ? 'DEV' : doc.type === 'contract' ? 'CON' : 'FAC'}
+                      {doc.type === 'quote' ? t.cdmDocQuoteShort : doc.type === 'contract' ? t.cdmDocContractShort : t.cdmDocInvoiceShort}
                     </span>
                   </div>
                   <h4 className="text-sm font-bold text-white max-w-[220px] truncate">{doc.clientName}</h4>
                   <p className="text-[11px] text-gray-400 flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5 text-gray-500" />
-                    <span>Émis le {doc.date} | Échéance {doc.dueDate}</span>
+                    <span>{fmt(t.cdmIssuedDue, { date: doc.date, due: doc.dueDate })}</span>
                   </p>
                 </div>
 
@@ -473,7 +476,7 @@ export default function ClientDocumentsManager() {
                     {getStatusTranslation(doc.status)}
                   </span>
                   {doc.refQuote && (
-                    <p className="text-[9px] text-blue-400 font-mono">Quotes Ref: {doc.refQuote}</p>
+                    <p className="text-[9px] text-blue-400 font-mono">{t.cdmQuoteRef} {doc.refQuote}</p>
                   )}
                 </div>
               </div>
@@ -481,15 +484,15 @@ export default function ClientDocumentsManager() {
               {/* Items summary and pricing */}
               <div className="bg-gray-950/40 rounded-lg p-2.5 grid grid-cols-3 gap-2 text-center text-xs border border-gray-850">
                 <div>
-                  <span className="text-[10px] text-gray-500 font-mono">Sous-total</span>
+                  <span className="text-[10px] text-gray-500 font-mono">{t.cdmSubtotal}</span>
                   <p className="font-bold text-white mt-0.5">{doc.subtotal.toFixed(2)}$</p>
                 </div>
                 <div>
-                  <span className="text-[10px] text-gray-500 font-mono">Taxes (TTC)</span>
+                  <span className="text-[10px] text-gray-500 font-mono">{t.cdmTaxesTtc}</span>
                   <p className="font-bold text-white mt-0.5">{doc.total.toFixed(2)}$</p>
                 </div>
                 <div>
-                  <span className="text-[10px] text-gray-500 font-mono text-orange-500">Dû</span>
+                  <span className="text-[10px] text-gray-500 font-mono text-orange-500">{t.cdmDueShort}</span>
                   <p className="font-black text-green-400 mt-0.5">{doc.balanceDue.toFixed(2)}$</p>
                 </div>
               </div>
@@ -510,12 +513,12 @@ export default function ClientDocumentsManager() {
                     <button
                       onClick={() => {
                         convertQuoteToInvoice(doc.id);
-                        alert(`Le devis ${doc.number} a été converti avec succès en Facture client !`);
+                        alert(fmt(t.cdmConvertedAlert, { num: doc.number }));
                       }}
                       className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
                     >
                       <ArrowRight className="w-3 h-3" />
-                      <span>Convertir en Facture</span>
+                      <span>{t.cdmConvertBtn}</span>
                     </button>
                   )}
 
@@ -528,7 +531,7 @@ export default function ClientDocumentsManager() {
                       className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
                     >
                       <CheckCircle className="w-3 h-3" />
-                      <span>Approuver (Accepté)</span>
+                      <span>{t.cdmApproveBtn}</span>
                     </button>
                   )}
 
@@ -540,7 +543,7 @@ export default function ClientDocumentsManager() {
                       }}
                       className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-white text-[10px] font-bold uppercase rounded-lg transition"
                     >
-                      Marquer Envoyé
+                      {t.cdmMarkSentBtn}
                     </button>
                   )}
 
@@ -554,7 +557,7 @@ export default function ClientDocumentsManager() {
                       className="px-2.5 py-1.5 bg-green-600 hover:bg-green-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
                     >
                       <History className="w-3 h-3" />
-                      <span>Enregistrer Paiement</span>
+                      <span>{t.cdmRecordPaymentBtn}</span>
                     </button>
                   )}
 
@@ -564,7 +567,7 @@ export default function ClientDocumentsManager() {
                     className="px-3 py-1.5 bg-gray-900 hover:bg-gray-800 border border-gray-800 text-neutral-200 hover:text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
                   >
                     <FileText className="w-3 h-3" />
-                    <span>Ouvrir PDF / Imprimer</span>
+                    <span>{t.cdmOpenPdfBtn}</span>
                   </button>
 
                 </div>
@@ -583,7 +586,7 @@ export default function ClientDocumentsManager() {
             {/* Control panel buttons */}
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 pb-4 mb-4 print:hidden">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase font-mono px-2 py-1 rounded bg-orange-600/10 text-orange-500 font-extrabold border border-orange-500/20">Aperçu Certifié APCHQ</span>
+                <span className="text-[10px] uppercase font-mono px-2 py-1 rounded bg-orange-600/10 text-orange-500 font-extrabold border border-orange-500/20">{t.cdmCertifiedPreview}</span>
                 <span className="text-xs text-gray-500 font-mono">Modif-Replication Synced</span>
               </div>
 
@@ -593,7 +596,7 @@ export default function ClientDocumentsManager() {
                   className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg cursor-pointer transition flex items-center gap-2"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Imprimer / Exporter PDF</span>
+                  <span>{t.cdmPrintExportBtn}</span>
                 </button>
                 <button
                   onClick={() => setSelectedDocForView(null)}
@@ -624,10 +627,10 @@ export default function ClientDocumentsManager() {
                   </div>
                   {/* Diagonal Type of document PAR-DESSUS exact diagonal overlay */}
                   <span className="absolute text-5xl font-mono font-black uppercase tracking-widest text-slate-900 mt-2 filter drop-shadow">
-                    {selectedDocForView.status === 'paid' ? 'FACTURE PAYÉE' : 
-                     selectedDocForView.status === 'accepted' ? 'DEVIS ACCEPTÉ' : 
-                     selectedDocForView.type === 'quote' ? 'DEVIS PROJECTION' : 
-                     selectedDocForView.type === 'contract' ? 'ENTENTE CONTRAT' : 'FACTURE SOLDE'}
+                    {selectedDocForView.status === 'paid' ? t.cdmWmPaid : 
+                     selectedDocForView.status === 'accepted' ? t.cdmWmAccepted : 
+                     selectedDocForView.type === 'quote' ? t.cdmWmQuote : 
+                     selectedDocForView.type === 'contract' ? t.cdmWmContract : t.cdmWmInvoice}
                   </span>
                 </div>
               </div>
@@ -642,12 +645,12 @@ export default function ClientDocumentsManager() {
                       <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center font-bold text-white text-xl">H</div>
                       <div>
                         <h2 className="text-lg font-black text-slate-900 uppercase leading-none tracking-tighter">{companyInfo.name || "HAILITE XTERIORS"}</h2>
-                        <span className="text-[9px] uppercase tracking-wider font-mono text-gray-500">Pose Professionnelle & Revêtement</span>
+                        <span className="text-[9px] uppercase tracking-wider font-mono text-gray-500">{t.cdmTagline}</span>
                       </div>
                     </div>
                     <p className="text-xs text-slate-600 mt-2 font-mono">
                       {companyInfo.address || "1980 Boul. du Chantier, Montréal, QC"}<br />
-                      Tél : {companyInfo.phone || "(514) 876-0000"} | Émail : {companyInfo.email || "info@hailitexteriors.ca"}
+                      {t.cdmTelColon} {companyInfo.phone || "(514) 876-0000"} | {t.cdmEmailColon} {companyInfo.email || "info@hailitexteriors.ca"}
                     </p>
                     <div className="text-[10px] text-gray-500 font-mono space-y-0.5 mt-1">
                       {companyInfo.gstNumber && <p>TPS / GST : {companyInfo.gstNumber}</p>}
@@ -657,13 +660,13 @@ export default function ClientDocumentsManager() {
 
                   <div className="text-right space-y-1">
                     <span className="text-3xl font-black uppercase tracking-tight block text-slate-800">
-                      {selectedDocForView.type === 'invoice' ? 'Facture' : selectedDocForView.type === 'quote' ? 'Devis' : 'Contrat'}
+                      {selectedDocForView.type === 'invoice' ? t.cdmDocInvoice : selectedDocForView.type === 'quote' ? t.cdmDocQuote : t.cdmDocContract}
                     </span>
                     <p className="text-sm font-mono font-bold text-slate-900">{selectedDocForView.number}</p>
-                    <p className="text-xs text-slate-500 font-mono">Émis le : {selectedDocForView.date}</p>
-                    <p className="text-xs text-slate-500 font-mono">Échéance : <span className="font-bold text-red-600">{selectedDocForView.dueDate}</span></p>
+                    <p className="text-xs text-slate-500 font-mono">{t.cdmIssuedOnColon} {selectedDocForView.date}</p>
+                    <p className="text-xs text-slate-500 font-mono">{t.cdmDueOnColon} <span className="font-bold text-red-600">{selectedDocForView.dueDate}</span></p>
                     {selectedDocForView.refQuote && (
-                      <p className="text-[10px] text-blue-600 font-mono mt-1">Ref Devis : {selectedDocForView.refQuote}</p>
+                      <p className="text-[10px] text-blue-600 font-mono mt-1">{t.cdmRefQuoteColon} {selectedDocForView.refQuote}</p>
                     )}
                   </div>
                 </div>
@@ -671,7 +674,7 @@ export default function ClientDocumentsManager() {
                 {/* Client info segment */}
                 <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-100">
                   <div className="space-y-1">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Facturation Destinée à :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">{t.cdmBilledTo}</span>
                     <p className="font-bold text-sm text-slate-900 flex items-center gap-1">
                       <User className="w-3.5 h-3.5 text-gray-400" />
                       <span>{selectedDocForView.clientName}</span>
@@ -680,16 +683,16 @@ export default function ClientDocumentsManager() {
                       <MapPin className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" />
                       <span>{selectedDocForView.clientAddress}</span>
                     </p>
-                    <p className="text-xs text-slate-600">Courriel : {selectedDocForView.clientEmail}</p>
-                    <p className="text-xs text-slate-600">Tél : {selectedDocForView.clientPhone}</p>
+                    <p className="text-xs text-slate-600">{t.cdmEmailColon} {selectedDocForView.clientEmail}</p>
+                    <p className="text-xs text-slate-600">{t.cdmTelColon} {selectedDocForView.clientPhone}</p>
                   </div>
 
                   <div className="space-y-1">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Adresse du Chantier :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">{t.cdmSiteAddress}</span>
                     <p className="text-xs text-slate-800 font-semibold">{selectedDocForView.siteAddress || selectedDocForView.clientAddress}</p>
                     <div className="pt-2 text-[10px] text-slate-500">
-                      <p>Règlement : {isQuebec ? 'Québec CCQ de Pose' : `Normes de construction — ${regionName}`}</p>
-                      <p>Retenue légale admissible : {selectedDocForView.holdbackPct}%</p>
+                      <p>{t.cdmRegulationColon} {isQuebec ? t.cdmQcInstallRule : fmt(t.cdmStdRule, { region: regionName })}</p>
+                      <p>{t.cdmLegalHoldback} {selectedDocForView.holdbackPct}%</p>
                     </div>
                   </div>
                 </div>
@@ -697,24 +700,24 @@ export default function ClientDocumentsManager() {
                 {/* Object description (Contracts) */}
                 {selectedDocForView.type === 'contract' && (
                   <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded text-xs">
-                    <strong className="text-indigo-900 block font-mono uppercase text-[9px] tracking-wider">Objet de l\'entente :</strong>
+                    <strong className="text-indigo-900 block font-mono uppercase text-[9px] tracking-wider">{t.cdmContractObject}</strong>
                     <p className="text-slate-700 italic mt-1">"{selectedDocForView.contractObject || 'Remplacement complet du parement extérieur conformément au devis émis.'}"</p>
                   </div>
                 )}
 
                 {/* Items loop list table */}
                 <div className="space-y-3">
-                  <span className="text-[10px] uppercase font-mono font-black text-slate-400 tracking-wide block">Description détaillée des travaux & fournitures :</span>
+                  <span className="text-[10px] uppercase font-mono font-black text-slate-400 tracking-wide block">{t.cdmWorkDescription}</span>
                   
                   {selectedDocForView.isSimpleLayout ? (
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="border-b-2 border-slate-200 text-gray-500">
-                          <th className="py-2">Travaux / Matériaux</th>
-                          <th className="py-2 text-center w-16">Quantité</th>
-                          <th className="py-2 text-center w-20">Unité</th>
-                          <th className="py-2 text-right w-24">Prix Unit.</th>
-                          <th className="py-2 text-right w-24">Total</th>
+                          <th className="py-2">{t.cdmThWorkMaterials}</th>
+                          <th className="py-2 text-center w-16">{t.cdmThQty}</th>
+                          <th className="py-2 text-center w-20">{t.cdmThUnit}</th>
+                          <th className="py-2 text-right w-24">{t.cdmThUnitPrice}</th>
+                          <th className="py-2 text-right w-24">{t.cdmThTotal}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -736,14 +739,14 @@ export default function ClientDocumentsManager() {
                       {/* Materials */}
                       {selectedDocForView.materialLines && selectedDocForView.materialLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
-                          <h5 className="text-[10px] font-black text-indigo-900 uppercase font-mono tracking-wider">Catégorie A : Fourniture Revêtements</h5>
+                          <h5 className="text-[10px] font-black text-indigo-900 uppercase font-mono tracking-wider">{t.cdmCatA}</h5>
                           <table className="w-full text-left text-[11px] border-collapse">
                             <thead>
                               <tr className="border-b border-indigo-100 text-slate-400 font-mono">
-                                <th className="py-1">Type de parement & Marque</th>
-                                <th className="py-1 text-center w-16">Superficie</th>
-                                <th className="py-1 text-right w-24">Prix Unit / pi²</th>
-                                <th className="py-1 text-right w-24">Sous-total</th>
+                                <th className="py-1">{t.cdmThCladding}</th>
+                                <th className="py-1 text-center w-16">{t.cdmThArea}</th>
+                                <th className="py-1 text-right w-24">{t.cdmThPricePerSqft}</th>
+                                <th className="py-1 text-right w-24">{t.cdmThSubTotal}</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -765,14 +768,14 @@ export default function ClientDocumentsManager() {
                       {/* Labor */}
                       {selectedDocForView.labourLines && selectedDocForView.labourLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
-                          <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">Catégorie B : Main-d'œuvre spécialisée{isQuebec ? ' CCQ' : ''}</h5>
+                          <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">{t.cdmCatB}{isQuebec ? ' CCQ' : ''}</h5>
                           <table className="w-full text-left text-[11px] border-collapse">
                             <thead>
                               <tr className="border-b border-amber-100 text-slate-400 font-mono">
-                                <th className="py-1">Description tâche</th>
-                                <th className="py-1 text-center w-16">Heures</th>
-                                <th className="py-1 text-right w-24">Taux horaire / Forfait</th>
-                                <th className="py-1 text-right w-24">Sous-total</th>
+                                <th className="py-1">{t.cdmThTaskDesc}</th>
+                                <th className="py-1 text-center w-16">{t.cdmThHrs}</th>
+                                <th className="py-1 text-right w-24">{t.cdmThRateFlat}</th>
+                                <th className="py-1 text-right w-24">{t.cdmThSubTotal}</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -780,7 +783,7 @@ export default function ClientDocumentsManager() {
                                 <tr key={lb.id}>
                                   <td className="py-1.5 text-slate-800 font-medium">{lb.task}</td>
                                   <td className="py-1.5 text-center font-mono">{lb.isFlatRate ? 'N/A' : lb.estimatedHours} h</td>
-                                  <td className="py-1.5 text-right font-mono">{lb.rate.toFixed(2)}$ {lb.isFlatRate ? '(Fixe)' : '/h'}</td>
+                                  <td className="py-1.5 text-right font-mono">{lb.rate.toFixed(2)}$ {lb.isFlatRate ? t.cdmFixedWord : '/h'}</td>
                                   <td className="py-1.5 text-right font-mono font-bold">{lb.total.toFixed(2)}$</td>
                                 </tr>
                               ))}
@@ -792,7 +795,7 @@ export default function ClientDocumentsManager() {
                       {/* Equipment/Others */}
                       {selectedDocForView.otherLines && selectedDocForView.otherLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
-                          <h5 className="text-[10px] font-black text-teal-950 uppercase font-mono tracking-wider">Catégorie C : Frais de transport, nacelle & échafaudage</h5>
+                          <h5 className="text-[10px] font-black text-teal-950 uppercase font-mono tracking-wider">{t.cdmCatC}</h5>
                           <div className="space-y-1 divide-y divide-slate-50 text-[11px]">
                             {selectedDocForView.otherLines.map(o => (
                               <div key={o.id} className="flex justify-between items-center py-1">
@@ -814,7 +817,7 @@ export default function ClientDocumentsManager() {
                   <div className="bg-emerald-50 border border-emerald-150 p-4 rounded-xl space-y-2">
                     <h5 className="text-[10px] font-black text-emerald-900 uppercase font-mono tracking-wider flex items-center gap-1.5">
                       <History className="w-3.5 h-3.5" />
-                      <span>Registre des paiements reçus (Acomptes & Virements)</span>
+                      <span>{t.cdmPaymentsRegister}</span>
                     </h5>
                     
                     <div className="space-y-1 divide-y divide-emerald-100 text-xs">
@@ -836,45 +839,45 @@ export default function ClientDocumentsManager() {
                   
                   {/* Payment Terms Info */}
                   <div className="text-xs text-slate-500 space-y-2 self-start max-w-sm">
-                    <p className="font-bold text-slate-900 font-mono text-[9px] uppercase tracking-wider">Conditions de paie réglementaires :</p>
-                    <p>Frais d\'intérêt sur retard cumulatif de {selectedDocForView.lateInterestPct || 2}% par mois de retard.</p>
-                    <p>Modes acceptés : Virement Interac, Chèque ou DEP électronique.</p>
-                    <p className="text-[10px]">L\'acompte demandé est de {selectedDocForView.depositPct || 25}% à la signature de la présente entente de pose.</p>
+                    <p className="font-bold text-slate-900 font-mono text-[9px] uppercase tracking-wider">{t.cdmRegulatoryTerms}</p>
+                    <p>{fmt(t.cdmLateInterestNote, { pct: selectedDocForView.lateInterestPct || 2 })}</p>
+                    <p>{t.cdmAcceptedModes}</p>
+                    <p className="text-[10px]">{fmt(t.cdmDepositNote, { pct: selectedDocForView.depositPct || 25 })}</p>
                   </div>
 
                   {/* Calculations summary alignment */}
                   <div className="space-y-1.5 text-xs text-right pr-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Sous-total brut :</span>
+                      <span className="text-slate-500">{t.cdmGrossSubtotal}</span>
                       <span className="font-mono">{selectedDocForView.subtotal.toFixed(2)}$</span>
                     </div>
 
                     {selectedDocForView.discountPct > 0 && (
                       <div className="flex justify-between items-center text-red-650">
-                        <span className="text-slate-500">Escompte professionnel ({selectedDocForView.discountPct}%) :</span>
+                        <span className="text-slate-500">{fmt(t.cdmProDiscount, { pct: selectedDocForView.discountPct })}</span>
                         <span className="font-mono font-bold">-{ (selectedDocForView.subtotal * (selectedDocForView.discountPct / 100)).toFixed(2) }$</span>
                       </div>
                     )}
 
                     <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
-                      <span className="text-slate-500">Taxes combinées ({selectedDocForView.taxRate}%) :</span>
+                      <span className="text-slate-500">{fmt(t.cdmCombinedTaxes, { rate: selectedDocForView.taxRate })}</span>
                       <span className="font-mono">+{selectedDocForView.taxAmount.toFixed(2)}$</span>
                     </div>
 
                     <div className="flex justify-between items-center font-bold text-slate-900 text-sm">
-                      <span>Total général TTC :</span>
+                      <span>{t.cdmGrandTotal}</span>
                       <span className="font-mono font-black">{selectedDocForView.total.toFixed(2)}$</span>
                     </div>
 
                     {selectedDocForView.holdbackPct > 0 && (
                       <div className="flex justify-between items-center text-amber-800">
-                        <span>Retenue légale{isQuebec ? ' CCQ' : ''} ({selectedDocForView.holdbackPct}%) :</span>
+                        <span>{fmt(t.cdmLegalHoldback2, { ccq: isQuebec ? ' CCQ' : '', pct: selectedDocForView.holdbackPct })}</span>
                         <span className="font-mono font-semibold">-{selectedDocForView.holdbackAmount.toFixed(2)}$</span>
                       </div>
                     )}
 
                     <div className="flex justify-between items-center font-black text-green-650 text-base border-t border-slate-205 pt-2">
-                      <span className="text-slate-900">Solde exigible :</span>
+                      <span className="text-slate-900">{t.cdmBalanceDue}</span>
                       <span className="font-mono text-green-600">{selectedDocForView.balanceDue.toFixed(2)}$ CAD</span>
                     </div>
                   </div>
@@ -884,19 +887,19 @@ export default function ClientDocumentsManager() {
                 {/* Contracts/Quotes: Dynamic legal clauses rendering */}
                 {(selectedDocForView.type === 'contract' || selectedDocForView.type === 'quote') && (
                   <div className="border-t border-slate-200 pt-4 space-y-3">
-                    <h5 className="text-[10px] font-black text-slate-700 uppercase font-mono tracking-wider">ANNEXE A : Clauses légales & Conditions de pose Québécoises</h5>
+                    <h5 className="text-[10px] font-black text-slate-700 uppercase font-mono tracking-wider">{t.cdmAnnexA}</h5>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[10px] text-slate-500">
                       <div className="p-2.5 bg-slate-50 border border-slate-100 rounded">
-                        <strong className="text-slate-800 block mb-1">Avenants de travaux :</strong>
+                        <strong className="text-slate-800 block mb-1">{t.cdmWorkAmendments}</strong>
                         <p className="leading-normal">{selectedDocForView.clauseChangeOrder || clausePresets.changeOrder}</p>
                       </div>
                       <div className="p-2.5 bg-slate-50 border border-slate-100 rounded">
-                        <strong className="text-slate-800 block mb-1">Résiliation unilatérale :</strong>
+                        <strong className="text-slate-800 block mb-1">{t.cdmUnilateralTermination}</strong>
                         <p className="leading-normal">{selectedDocForView.clauseResiliation || clausePresets.resiliation}</p>
                       </div>
                       <div className="p-2.5 bg-slate-50 border border-slate-100 rounded">
-                        <strong className="text-slate-800 block mb-1">Garantie limitée :</strong>
+                        <strong className="text-slate-800 block mb-1">{t.cdmLimitedWarranty}</strong>
                         <p className="leading-normal">{selectedDocForView.clauseWarrantyDetails || clausePresets.warranty}</p>
                       </div>
                     </div>
@@ -908,18 +911,18 @@ export default function ClientDocumentsManager() {
                   
                   {/* Signature Entrepreneur */}
                   <div className="space-y-2">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">L'Entrepreneur (Signature tactile) :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">{t.cdmContractorSign}</span>
                     <div className="border border-slate-200 rounded p-3 h-14 flex items-center justify-center font-serif text-sm bg-slate-50">
                       {selectedDocForView.ownerSignature ? (
                         selectedDocForView.ownerSignature.startsWith('data:image') ? (
-                          <img src={selectedDocForView.ownerSignature} alt="Signature de l'entrepreneur" className="h-full object-contain" />
+                          <img src={selectedDocForView.ownerSignature} alt={t.cdmContractorSignAlt} className="h-full object-contain" />
                         ) : (
                           <span className="italic font-bold text-slate-800 select-none">
                             {selectedDocForView.ownerSignature.replace('typed://', '')}
                           </span>
                         )
                       ) : (
-                        <span className="text-gray-400 font-sans text-xs">Non signé numériquement</span>
+                        <span className="text-gray-400 font-sans text-xs">{t.cdmNotSignedDigitally}</span>
                       )}
                     </div>
                     <p className="text-[10px] font-semibold text-slate-700">{companyInfo.name || 'Hailite Xteriors Inc.'}</p>
@@ -927,22 +930,22 @@ export default function ClientDocumentsManager() {
 
                   {/* Signature Client */}
                   <div className="space-y-2">
-                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">Le Client (Signature tactile) :</span>
+                    <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">{t.cdmClientSign}</span>
                     <div className="border border-slate-200 rounded p-3 h-14 flex items-center justify-center font-serif text-sm bg-slate-50">
                       {selectedDocForView.clientSignature ? (
                         selectedDocForView.clientSignature.startsWith('data:image') ? (
-                          <img src={selectedDocForView.clientSignature} alt="Signature du client" className="h-full object-contain" />
+                          <img src={selectedDocForView.clientSignature} alt={t.cdmClientSignAlt} className="h-full object-contain" />
                         ) : (
                           <span className="italic font-bold text-orange-600 select-none">
                             {selectedDocForView.clientSignature.replace('typed://', '')}
                           </span>
                         )
                       ) : (
-                        <span className="text-gray-400 font-sans text-xs">Non signé numériquement</span>
+                        <span className="text-gray-400 font-sans text-xs">{t.cdmNotSignedDigitally}</span>
                       )}
                     </div>
                     {selectedDocForView.signedAt && (
-                      <p className="text-[9px] text-gray-500 font-mono">Signé électroniquement le {new Date(selectedDocForView.signedAt).toLocaleDateString('fr-CA')}</p>
+                      <p className="text-[9px] text-gray-500 font-mono">{fmt(t.cdmSignedElectronically, { date: new Date(selectedDocForView.signedAt).toLocaleDateString(dateLocale) })}</p>
                     )}
                     <p className="text-[10px] font-semibold text-slate-700">{selectedDocForView.clientName}</p>
                   </div>
@@ -962,14 +965,14 @@ export default function ClientDocumentsManager() {
         <div className="fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
           <div className="bg-[#12141C] border border-gray-850 w-full max-w-md rounded-2xl p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-              <h3 className="text-sm font-black font-mono uppercase tracking-widest text-white">Saisie de Paiement Partiel</h3>
+              <h3 className="text-sm font-black font-mono uppercase tracking-widest text-white">{t.cdmPartialPaymentTitle}</h3>
               <button onClick={() => setShowPaymentModal(null)} className="text-gray-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
 
             <div className="space-y-3 text-xs">
               
               <div className="space-y-1.5">
-                <label className="text-xs text-gray-400 block">Montant encaissé ($ CAD)</label>
+                <label className="text-xs text-gray-400 block">{t.cdmAmountCollected}</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-white font-mono">$</span>
                   <input
@@ -977,32 +980,32 @@ export default function ClientDocumentsManager() {
                     min="0"
                     value={payAmount}
                     onChange={e => setPayAmount(e.target.value)}
-                    placeholder="ex: 2500"
+                    placeholder={t.cdmAmountPh}
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded-lg p-2 pl-7 focus:outline-none"
                   />
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs text-gray-400 block">Mode de paiement canadien</label>
+                <label className="text-xs text-gray-400 block">{t.cdmPaymentMode}</label>
                 <select
                   value={payMethod}
                   onChange={e => setPayMethod(e.target.value as any)}
                   className="w-full bg-gray-900 border border-gray-800 text-white rounded-lg p-2 focus:outline-none cursor-pointer"
                 >
-                  <option value="etransfer">Virement Interac</option>
-                  <option value="cheque">Chèque certifié</option>
-                  <option value="virement">Dépôt Direct EFT / Direct</option>
-                  <option value="cash">Comptant</option>
+                  <option value="etransfer">{t.cdmInterac}</option>
+                  <option value="cheque">{t.cdmCertifiedCheck}</option>
+                  <option value="virement">{t.cdmDirectDeposit}</option>
+                  <option value="cash">{t.cdmCash}</option>
                 </select>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs text-gray-400 block">Notes administratives</label>
+                <label className="text-xs text-gray-400 block">{t.cdmAdminNotes}</label>
                 <textarea
                   value={payNotes}
                   onChange={e => setPayNotes(e.target.value)}
-                  placeholder="ex: Acompte de démarrage reçu par virement bancaire"
+                  placeholder={t.cdmAdminNotesPh}
                   className="w-full bg-gray-900 border border-gray-800 text-white rounded-lg p-2 h-20 focus:outline-none text-xs"
                 />
               </div>
@@ -1011,7 +1014,7 @@ export default function ClientDocumentsManager() {
                 onClick={() => handleCapturePayment(showPaymentModal)}
                 className="w-full py-2.5 bg-green-600 hover:bg-green-500 text-white font-black uppercase tracking-wider rounded-lg transition mt-3"
               >
-                Enregistrer & Mettre à jour le solde
+                {t.cdmSavePaymentBtn}
               </button>
 
             </div>
@@ -1025,7 +1028,7 @@ export default function ClientDocumentsManager() {
           <div className="bg-[#12141C] border border-gray-850 w-full max-w-2xl rounded-2xl p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             
             <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-              <h3 className="text-sm font-black font-mono uppercase tracking-widest text-white">Nouveau Document Client Générateur</h3>
+              <h3 className="text-sm font-black font-mono uppercase tracking-widest text-white">{t.cdmNewDocGenTitle}</h3>
               <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
 
@@ -1034,9 +1037,9 @@ export default function ClientDocumentsManager() {
               {/* Type toggle */}
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: 'quote', title: '💬 DEVIS (SOUVENIR)' },
-                  { id: 'contract', title: '✍️ CONTRAT DIRECT' },
-                  { id: 'invoice', title: '💵 FACTURE FINALE' }
+                  { id: 'quote', title: t.cdmOptQuote },
+                  { id: 'contract', title: t.cdmOptContract },
+                  { id: 'invoice', title: t.cdmOptInvoice }
                 ].map(op => (
                   <button
                     key={op.id}
@@ -1056,7 +1059,7 @@ export default function ClientDocumentsManager() {
               {/* Client Selection */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-gray-400">Sélectionner Client Régularisé</label>
+                  <label className="text-gray-400">{t.cdmSelectClient}</label>
                   <select
                     value={newClientId}
                     onChange={e => setNewClientId(e.target.value)}
@@ -1069,7 +1072,7 @@ export default function ClientDocumentsManager() {
                 </div>
 
                 <div className="space-y-1.5 font-mono">
-                  <label className="text-gray-400">Date d\'échéance légale</label>
+                  <label className="text-gray-400">{t.cdmLegalDueDate}</label>
                   <input
                     type="date"
                     value={newDueDate}
@@ -1081,7 +1084,7 @@ export default function ClientDocumentsManager() {
 
               {/* Layout layout option toggler */}
               <div className="flex items-center gap-4 text-xs">
-                <span className="text-gray-400">Structure des Lignes :</span>
+                <span className="text-gray-400">{t.cdmLineStructure}</span>
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input 
                     type="radio" 
@@ -1089,7 +1092,7 @@ export default function ClientDocumentsManager() {
                     onChange={() => setNewIsSimple(true)}
                     className="accent-orange-500" 
                   />
-                  <span>Simple ligne globale (Forfait)</span>
+                  <span>{t.cdmSimpleLineOpt}</span>
                 </label>
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input 
@@ -1098,7 +1101,7 @@ export default function ClientDocumentsManager() {
                     onChange={() => setNewIsSimple(false)}
                     className="accent-orange-500" 
                   />
-                  <span>Détaillée (Matériaux, main d\'œuvre)</span>
+                  <span>{t.cdmDetailedOpt}</span>
                 </label>
               </div>
 
@@ -1107,7 +1110,7 @@ export default function ClientDocumentsManager() {
                 /* Simple layout */
                 <div className="space-y-2 border border-gray-800 p-3 rounded-lg">
                   <div className="flex justify-between items-center mb-1">
-                    <span className="font-bold text-white">Ligne forfaitaire principale :</span>
+                    <span className="font-bold text-white">{t.cdmMainFlatLine}</span>
                   </div>
                   {simpleLines.map((l, idx) => (
                     <div key={idx} className="grid grid-cols-7 gap-2 items-center">
@@ -1119,7 +1122,7 @@ export default function ClientDocumentsManager() {
                           dup[idx].desc = e.target.value;
                           setSimpleLines(dup);
                         }}
-                        placeholder="Description travaux..."
+                        placeholder={t.cdmWorkDescPh}
                         className="col-span-3 bg-gray-900 border border-gray-800 text-white rounded p-1.5 text-xs"
                       />
                       <input
@@ -1142,7 +1145,7 @@ export default function ClientDocumentsManager() {
                           dup[idx].unit = e.target.value;
                           setSimpleLines(dup);
                         }}
-                        placeholder="Unité"
+                        placeholder={t.cdmUnitPh}
                         className="col-span-1 bg-gray-900 border border-gray-800 text-white rounded p-1.5 text-xs text-center"
                       />
                       <input
@@ -1167,7 +1170,7 @@ export default function ClientDocumentsManager() {
                   {/* Cladding materials item creation */}
                   <div className="space-y-2 pb-2.5 border-b border-gray-805">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white flex items-center gap-1">🛠️ Matériaux de parement ({richMaterials.length})</span>
+                      <span className="font-bold text-white flex items-center gap-1">{t.cdmCladdingMaterials} ({richMaterials.length})</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -1175,7 +1178,7 @@ export default function ClientDocumentsManager() {
                         }}
                         className="text-[10px] uppercase font-bold text-orange-500 hover:underline"
                       >
-                        + Ajouter Revêtement
+                        {t.cdmAddCladding}
                       </button>
                     </div>
 
@@ -1194,7 +1197,7 @@ export default function ClientDocumentsManager() {
                           <option value="Acier Hailite Rustique">Acier Hailite Rustique</option>
                         </select>
                         <input
-                          type="text" value={m.brand} placeholder="Marque"
+                          type="text" value={m.brand} placeholder={t.cdmBrandPh}
                           onChange={e => { const d = [...richMaterials]; d[idx].brand = e.target.value; setRichMaterials(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded font-mono"
                         />
@@ -1221,7 +1224,7 @@ export default function ClientDocumentsManager() {
                   {/* Labor entries */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white flex items-center gap-1">👷 Main-d\'œuvre spécialisée ({richLabours.length})</span>
+                      <span className="font-bold text-white flex items-center gap-1">{t.cdmSpecializedLabor} ({richLabours.length})</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -1229,19 +1232,19 @@ export default function ClientDocumentsManager() {
                         }}
                         className="text-[10px] uppercase font-bold text-orange-500 hover:underline"
                       >
-                        + Ajouter Main-d'œuvre
+                        {t.cdmAddLabor}
                       </button>
                     </div>
 
                     {richLabours.map((lb, idx) => (
                       <div key={idx} className="grid grid-cols-6 gap-2 bg-gray-900/60 p-2 rounded">
                         <input
-                          type="text" value={lb.task} placeholder="Tâche"
+                          type="text" value={lb.task} placeholder={t.cdmTaskPh}
                           onChange={e => { const d = [...richLabours]; d[idx].task = e.target.value; setRichLabours(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded col-span-2"
                         />
                         <input
-                          type="number" min="0" value={lb.hours} placeholder="Heures"
+                          type="number" min="0" value={lb.hours} placeholder={t.cdmHoursPh}
                           onChange={e => { const d = [...richLabours]; d[idx].hours = Math.max(0, parseFloat(e.target.value) || 0); setRichLabours(d); }}
                           className="bg-gray-900 border border-gray-850 text-white text-[11px] p-1 rounded text-center font-mono"
                         />
@@ -1266,7 +1269,7 @@ export default function ClientDocumentsManager() {
               {/* Extras Financial Parameters (Builders Lien holdbacks / deposits) */}
               <div className="grid grid-cols-3 gap-3 border border-gray-800 p-3 rounded-lg bg-gray-900/40">
                 <div className="space-y-1">
-                  <label className="text-gray-400 block">Escompte (%)</label>
+                  <label className="text-gray-400 block">{t.cdmDiscountPct}</label>
                   <input
                     type="number"
                     min="0"
@@ -1279,7 +1282,7 @@ export default function ClientDocumentsManager() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 block">Retenue Garantie (%)</label>
+                  <label className="text-gray-400 block">{t.cdmHoldbackPct}</label>
                   <input
                     type="number"
                     min="0"
@@ -1292,13 +1295,13 @@ export default function ClientDocumentsManager() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-gray-400 block">Acompte demandé ($)</label>
+                  <label className="text-gray-400 block">{t.cdmDepositRequested}</label>
                   <input
                     type="number"
                     min="0"
                     value={depositAmount}
                     onChange={e => setDepositAmount(Math.max(0, parseFloat(e.target.value) || 0))}
-                    placeholder="ex: 2500"
+                    placeholder={t.cdmAmountPh}
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded p-1.5 focus:outline-none text-right font-mono text-green-400"
                   />
                 </div>
@@ -1307,38 +1310,38 @@ export default function ClientDocumentsManager() {
               {/* Warranty and legal settings if Contract selected */}
               {(newDocType === 'contract' || newDocType === 'quote') && (
                 <div className="space-y-2 border border-gray-800 p-3 rounded-lg">
-                  <span className="font-extrabold text-white text-[11px] uppercase tracking-wide block text-indigo-400">📜 Clauses sauvegardables de garantie (APCHQ Québécois)</span>
+                  <span className="font-extrabold text-white text-[11px] uppercase tracking-wide block text-indigo-400">{t.cdmWarrantyClausesTitle}</span>
                   
                   {/* Select Preset to inject with zero friction */}
                   <div className="flex items-center gap-2 mb-2 bg-gray-950 p-2 rounded border border-gray-850">
-                    <span className="text-[10px] text-gray-500 font-mono">Injecter modèle type :</span>
+                    <span className="text-[10px] text-gray-500 font-mono">{t.cdmInjectTemplate}</span>
                     <button
                       type="button"
                       onClick={() => {
                         setClauseChange(clausePresets.changeOrder);
                         setClauseResil(clausePresets.resiliation);
                         setClauseWarr(clausePresets.warranty);
-                        alert("Clauses juridiques APCHQ injectées dans l'entente.");
+                        alert(t.cdmClausesInjectedAlert);
                       }}
                       className="px-2 py-0.5 bg-indigo-950 text-indigo-400 border border-indigo-900 text-[10px] font-bold rounded hover:bg-indigo-900/50 cursor-pointer"
                     >
-                      Insérer Clauses Types
+                      {t.cdmInsertClausesBtn}
                     </button>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-gray-400 block">Description travaux (Chantier)</label>
+                      <label className="text-gray-400 block">{t.cdmSiteWorkDesc}</label>
                       <textarea
                         value={remarks}
                         onChange={e => setRemarks(e.target.value)}
-                        placeholder="ex: Remplacement intégrale du fibro-ciment extérieur"
+                        placeholder={t.cdmSiteWorkDescPh}
                         className="w-full bg-[#161822] border border-gray-800 text-white rounded p-1.5 h-14"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-gray-400 block">Clause Garantie Décennale</label>
+                      <label className="text-gray-400 block">{t.cdmDecennialWarranty}</label>
                       <textarea
                         value={clauseWarr}
                         onChange={e => setClauseWarr(e.target.value)}
@@ -1353,7 +1356,7 @@ export default function ClientDocumentsManager() {
               <div className={`grid gap-4 border-t border-gray-800 pt-3 ${newDocType === 'contract' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
                 <div key={`owner-${signaturePadResetKey}`}>
                   <SignaturePad
-                    label="Signature de l'entrepreneur"
+                    label={t.cdmContractorSignAlt}
                     value={ownerSignatureData}
                     onChange={setOwnerSignatureData}
                     required
@@ -1364,7 +1367,7 @@ export default function ClientDocumentsManager() {
                 {newDocType === 'contract' && (
                   <div key={`client-${signaturePadResetKey}`}>
                     <SignaturePad
-                      label="Signature du client"
+                      label={t.cdmClientSignAlt}
                       value={clientSignatureData}
                       onChange={setClientSignatureData}
                       required
@@ -1375,7 +1378,7 @@ export default function ClientDocumentsManager() {
               </div>
               {newDocType !== 'contract' && (
                 <p className="text-[10px] text-gray-500 -mt-2">
-                  Ce type de document n'est signé que par l'entrepreneur. Seule une entente/contrat requiert aussi la signature tactile du client.
+                  {t.cdmOnlyContractorSigns}
                 </p>
               )}
 
@@ -1385,7 +1388,7 @@ export default function ClientDocumentsManager() {
                 className="w-full py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-black uppercase tracking-wider rounded-xl transition cursor-pointer flex items-center justify-center gap-2 mt-4"
               >
                 <Check className="w-4 h-4" />
-                <span>Générer et cataloguer la pièce</span>
+                <span>{t.cdmGenerateBtn}</span>
               </button>
 
             </div>

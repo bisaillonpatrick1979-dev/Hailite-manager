@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import useAppStore from '../store';
+import { translations, fmt } from '../translations';
 import { CatalogueMaterial, CatalogueUnit } from '../types';
 import { Trash, Edit, Check, X, Camera } from 'lucide-react';
 
@@ -96,15 +97,6 @@ function suggestEmoji(name: string): string {
   return '📦';
 }
 
-const UNIT_META: Record<CatalogueUnit, { short: string; full: string }> = {
-  pi2: { short: 'pi²', full: 'Pied carré (pi²)' },
-  pi_lin: { short: 'pi lin.', full: 'Pied linéaire (pi lin.)' },
-  boite: { short: 'boîte', full: 'Boîte' },
-  rouleau: { short: 'rouleau', full: 'Rouleau' },
-  unite: { short: 'unité', full: 'Unité' },
-  lot: { short: 'lot', full: 'Lot' },
-};
-
 const UNIT_OPTIONS: CatalogueUnit[] = ['pi2', 'pi_lin', 'boite', 'rouleau', 'unite', 'lot'];
 
 // Suggère une unité de vente courante à partir du nom (boîte, rouleau, pied linéaire...),
@@ -169,6 +161,8 @@ type CatalogueFormState = {
 const EMPTY_FORM: CatalogueFormState = { name: '', emoji: '🪵', pricePerSqFt: 5.0, supplierPrice: 0, clientPrice: 0, supplierId: '', unit: 'pi2', unitNote: '', imageUrl: '', imageAlt: '' };
 
 function PhotoCaptureField({ imageUrl, onChange }: { imageUrl: string; onChange: (url: string, alt: string) => void }) {
+  const lang = useAppStore(s => s.currentLanguage);
+  const tt = translations[lang];
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFile = (file: File | undefined) => {
@@ -176,7 +170,7 @@ function PhotoCaptureField({ imageUrl, onChange }: { imageUrl: string; onChange:
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        onChange(reader.result, 'Photo du matériau');
+        onChange(reader.result, tt.photoMaterialAlt);
       }
     };
     reader.readAsDataURL(file);
@@ -184,10 +178,10 @@ function PhotoCaptureField({ imageUrl, onChange }: { imageUrl: string; onChange:
 
   return (
     <div className="space-y-2">
-      <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">📷 Photo du matériau (couleur, texture)</label>
+      <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{tt.photoMaterialLabel}</label>
       {imageUrl && (
         <div className="relative rounded-lg overflow-hidden border border-gray-800">
-          <img src={imageUrl} alt="Aperçu" className="w-full h-24 object-cover" referrerPolicy="no-referrer" />
+          <img src={imageUrl} alt={tt.previewWord} className="w-full h-24 object-cover" referrerPolicy="no-referrer" />
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -205,14 +199,14 @@ function PhotoCaptureField({ imageUrl, onChange }: { imageUrl: string; onChange:
           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/40 text-orange-300 text-[11px] font-black uppercase rounded-lg transition cursor-pointer"
         >
           <Camera className="w-3.5 h-3.5" />
-          Prendre une photo
+          {tt.takePhotoShort}
         </button>
         <input
           type="text"
-          placeholder="...ou coller une URL d'image"
+          placeholder={tt.orPasteUrlPh}
           className="flex-1 min-w-[160px] p-1.5 bg-gray-950 font-mono text-white text-[11px] rounded border border-gray-850"
           value={imageUrl.startsWith('data:image/') ? '' : imageUrl}
-          onChange={(e) => onChange(e.target.value, 'Aperçu')}
+          onChange={(e) => onChange(e.target.value, tt.previewWord)}
         />
       </div>
     </div>
@@ -221,10 +215,20 @@ function PhotoCaptureField({ imageUrl, onChange }: { imageUrl: string; onChange:
 
 export default function CatalogueManager() {
   const {
-    catalogue, suppliers, activeEmployee,
+    catalogue, suppliers, activeEmployee, currentLanguage,
     addCatalogueMaterial, updateCatalogueMaterial, deleteCatalogueMaterial,
     addSupplier, deleteSupplier
   } = useAppStore();
+  const t = translations[currentLanguage];
+
+  const UNIT_META_I18N: Record<CatalogueUnit, { short: string; full: string }> = {
+    pi2: { short: t.unitPi2, full: t.unitPi2Full },
+    pi_lin: { short: t.unitPiLin, full: t.unitPiLinFull },
+    boite: { short: t.unitBoite, full: t.unitBoiteFull },
+    rouleau: { short: t.unitRouleau, full: t.unitRouleauFull },
+    unite: { short: t.unitUnite, full: t.unitUniteFull },
+    lot: { short: t.unitLot, full: t.unitLotFull },
+  };
 
   const canManage = activeEmployee?.role === 'admin' || activeEmployee?.role === 'secretary';
 
@@ -299,27 +303,27 @@ export default function CatalogueManager() {
   };
 
   const supplierName = (id?: string) => suppliers.find(s => s.id === id)?.name;
-  const unitShort = (unit?: CatalogueUnit) => UNIT_META[unit || 'pi2'].short;
+  const unitShort = (unit?: CatalogueUnit) => UNIT_META_I18N[unit || 'pi2'].short;
 
   const renderUnitField = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => (
     <div className="grid grid-cols-2 gap-2">
       <div className="space-y-1">
-        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Unité de vente</label>
+        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.saleUnitLabel}</label>
         <select
           className="w-full p-1.5 bg-gray-950 text-white text-xs rounded border border-gray-850"
           value={form.unit}
           onChange={(e) => setForm({ ...form, unit: e.target.value as CatalogueUnit })}
         >
           {UNIT_OPTIONS.map(u => (
-            <option key={u} value={u}>{UNIT_META[u].full}</option>
+            <option key={u} value={u}>{UNIT_META_I18N[u].full}</option>
           ))}
         </select>
       </div>
       <div className="space-y-1">
-        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Précision (optionnel)</label>
+        <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.precisionOptional}</label>
         <input
           type="text"
-          placeholder="Ex: ≈340 pièces/boîte"
+          placeholder={t.precisionPh}
           className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
           value={form.unitNote}
           onChange={(e) => setForm({ ...form, unitNote: e.target.value })}
@@ -329,11 +333,11 @@ export default function CatalogueManager() {
   );
 
   const renderPriceFields = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => {
-    const u = UNIT_META[form.unit].short;
+    const u = UNIT_META_I18N[form.unit].short;
     return (
       <div className="grid grid-cols-3 gap-2">
         <div className="space-y-1">
-          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Fournisseur ({`$${u}`})</label>
+          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.priceSupplier} ({`$${u}`})</label>
           <input
             type="number" step="0.05" min="0"
             className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
@@ -342,7 +346,7 @@ export default function CatalogueManager() {
           />
         </div>
         <div className="space-y-1">
-          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Sous-traitant ({`$${u}`})</label>
+          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.priceSub} ({`$${u}`})</label>
           <input
             type="number" step="0.05" min="0"
             className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
@@ -351,7 +355,7 @@ export default function CatalogueManager() {
           />
         </div>
         <div className="space-y-1">
-          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Prix Client ({`$${u}`})</label>
+          <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.priceClient} ({`$${u}`})</label>
           <input
             type="number" step="0.05" min="0"
             className="w-full p-1.5 bg-gray-950 font-mono text-white text-xs rounded border border-gray-850"
@@ -365,13 +369,13 @@ export default function CatalogueManager() {
 
   const renderSupplierSelect = (form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => (
     <div className="space-y-1">
-      <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">Fournisseur</label>
+      <label className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.supplierLabel}</label>
       <select
         className="w-full p-1.5 bg-gray-950 text-white text-xs rounded border border-gray-850"
         value={form.supplierId}
         onChange={(e) => setForm({ ...form, supplierId: e.target.value })}
       >
-        <option value="">— Aucun —</option>
+        <option value="">{t.noneOption}</option>
         {suppliers.map(s => (
           <option key={s.id} value={s.id}>{s.name}</option>
         ))}
@@ -383,9 +387,9 @@ export default function CatalogueManager() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-4 pb-2">
         <div>
-          <h3 className="text-xl font-black text-white">Catalogue Unitaire pour Devis & Soumissions</h3>
+          <h3 className="text-xl font-black text-white">{t.ctlgTitle}</h3>
           <p className="text-xs text-gray-400 mt-1">
-            Prix Fournisseur (coût), Prix Sous-traitant (payé pour l'installation) et Prix Client (chargé) — pour connaître votre marge de profit.
+            {t.ctlgSubtitle}
           </p>
         </div>
         {canManage && (
@@ -394,7 +398,7 @@ export default function CatalogueManager() {
               onClick={() => setShowSupplierManager(!showSupplierManager)}
               className="px-4 py-2 bg-gray-800 hover:bg-gray-750 text-white text-xs font-black rounded-xl transition cursor-pointer"
             >
-              🚚 Fournisseurs ({suppliers.length})
+              {t.suppliersBtn} ({suppliers.length})
             </button>
             <button
               onClick={() => {
@@ -403,7 +407,7 @@ export default function CatalogueManager() {
               }}
               className="px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-xs font-black rounded-xl transition shadow-lg cursor-pointer"
             >
-              {showAddForm ? 'Fermer le formulaire' : '+ Nouveau Matériau Catalogue'}
+              {showAddForm ? t.closeFormBtn : t.newCatalogItemBtn}
             </button>
           </div>
         )}
@@ -412,7 +416,7 @@ export default function CatalogueManager() {
       {/* Supplier Manager */}
       {showSupplierManager && canManage && (
         <div className="p-4 bg-gray-900 border border-gray-800 rounded-2xl text-left space-y-3 max-w-2xl">
-          <h4 className="text-sm font-extrabold text-white uppercase tracking-wider text-orange-400">🚚 Liste de fournisseurs</h4>
+          <h4 className="text-sm font-extrabold text-white uppercase tracking-wider text-orange-400">{t.suppliersListTitle}</h4>
           <div className="space-y-1.5">
             {suppliers.map(s => (
               <div key={s.id} className="flex items-center justify-between gap-2 p-2 bg-gray-950 rounded-lg border border-gray-850">
@@ -424,7 +428,7 @@ export default function CatalogueManager() {
                 </div>
                 <button
                   onClick={() => {
-                    if (confirm(`Supprimer le fournisseur "${s.name}" ?`)) deleteSupplier(s.id);
+                    if (confirm(fmt(t.deleteSupplierConfirm, { name: s.name }))) deleteSupplier(s.id);
                   }}
                   className="p-1 px-2 bg-red-950/45 hover:bg-red-900 text-red-300 rounded font-bold text-[10px] cursor-pointer transition"
                 >
@@ -433,20 +437,20 @@ export default function CatalogueManager() {
               </div>
             ))}
             {suppliers.length === 0 && (
-              <p className="text-xs text-gray-500 italic">Aucun fournisseur enregistré.</p>
+              <p className="text-xs text-gray-500 italic">{t.noSuppliers}</p>
             )}
           </div>
           <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-850">
             <input
               type="text"
-              placeholder="Nom du fournisseur"
+              placeholder={t.supplierNamePh}
               className="flex-1 min-w-[160px] p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850"
               value={newSupplierName}
               onChange={(e) => setNewSupplierName(e.target.value)}
             />
             <input
               type="text"
-              placeholder="Téléphone (optionnel)"
+              placeholder={t.phoneOptionalPh}
               className="w-40 p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850"
               value={newSupplierPhone}
               onChange={(e) => setNewSupplierPhone(e.target.value)}
@@ -460,7 +464,7 @@ export default function CatalogueManager() {
               }}
               className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded-xl transition disabled:opacity-40 cursor-pointer"
             >
-              + Ajouter
+              {t.addPlusBtn}
             </button>
           </div>
         </div>
@@ -470,12 +474,12 @@ export default function CatalogueManager() {
       {showAddForm && canManage && (
         <div className="p-5 bg-gray-900 border border-gray-800 rounded-2xl text-left space-y-4 max-w-2xl animate-fade-in">
           <h4 className="text-sm font-extrabold text-white uppercase tracking-wider text-orange-400 flex items-center gap-1.5">
-            <span>📦</span> Créer un modèle de produit standard de catalogue
+            <span>📦</span> {t.createCatalogTitle.replace('📦 ', '')}
           </h4>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
-              <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Émoji</label>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{t.emojiLabel}</label>
               <input
                 type="text"
                 className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-center"
@@ -484,11 +488,11 @@ export default function CatalogueManager() {
               />
             </div>
             <div className="col-span-2 space-y-1">
-              <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">Nom de l'élément standard / Brevet</label>
+              <label className="text-[10px] text-gray-400 font-bold uppercase block font-mono">{t.catalogItemNameLabel}</label>
               <input
                 type="text"
                 className="w-full p-2 bg-gray-950 text-white text-xs rounded-lg border border-gray-850 text-left"
-                placeholder="Ex: Bardeau architectural premium"
+                placeholder={t.catalogItemPh}
                 value={newForm.name}
                 onChange={(e) => handleNameChange(e.target.value, newForm, setNewForm)}
               />
@@ -528,7 +532,7 @@ export default function CatalogueManager() {
                 }}
                 className="px-6 py-2 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white font-black text-xs rounded-xl cursor-pointer"
               >
-                Ajouter au Catalogue
+                {t.addToCatalogBtn}
               </button>
             </div>
           </div>
@@ -559,13 +563,13 @@ export default function CatalogueManager() {
                     onClick={() => setEditingId(null)}
                     className="p-1.5 px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg font-bold cursor-pointer flex items-center gap-1"
                   >
-                    <X className="w-3.5 h-3.5" /> Annuler
+                    <X className="w-3.5 h-3.5" /> {t.modalCancelBtn}
                   </button>
                   <button
                     onClick={() => saveEdit(cat.id)}
                     className="p-1.5 px-3 bg-green-700 hover:bg-green-600 text-white rounded-lg font-bold cursor-pointer flex items-center gap-1"
                   >
-                    <Check className="w-3.5 h-3.5" /> Sauvegarder
+                    <Check className="w-3.5 h-3.5" /> {t.saveBtn}
                   </button>
                 </div>
               </div>
@@ -590,21 +594,21 @@ export default function CatalogueManager() {
 
               <div className="grid grid-cols-3 sm:flex gap-1.5 font-mono text-[10px] flex-shrink-0">
                 <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
-                  <div className="text-gray-500 uppercase whitespace-nowrap">Fourn.</div>
+                  <div className="text-gray-500 uppercase whitespace-nowrap">{t.fournShort}</div>
                   <div className="text-white font-bold whitespace-nowrap">{(cat.supplierPrice || 0).toFixed(2)}$</div>
                 </div>
                 <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
-                  <div className="text-gray-500 uppercase whitespace-nowrap">Sous-tr.</div>
+                  <div className="text-gray-500 uppercase whitespace-nowrap">{t.sousTrShort}</div>
                   <div className="text-white font-bold whitespace-nowrap">{cat.pricePerSqFt.toFixed(2)}$</div>
                 </div>
                 <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
-                  <div className="text-gray-500 uppercase whitespace-nowrap">Client</div>
+                  <div className="text-gray-500 uppercase whitespace-nowrap">{t.clientShort}</div>
                   <div className="text-white font-bold whitespace-nowrap">{(cat.clientPrice || 0).toFixed(2)}$</div>
                 </div>
               </div>
 
               <p className={`text-[11px] font-black flex-shrink-0 sm:w-32 text-left sm:text-right ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                Marge : {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$/{unitShort(cat.unit)}
+                {t.marginColon} {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$/{unitShort(cat.unit)}
               </p>
 
               {canManage && (
@@ -614,18 +618,18 @@ export default function CatalogueManager() {
                     className="p-1 px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 transition"
                   >
                     <Edit className="w-3.5 h-3.5" />
-                    <span>Modifier</span>
+                    <span>{t.editBtn}</span>
                   </button>
                   <button
                     onClick={() => {
-                      if (confirm(`Supprimer "${cat.name}" du catalogue de soumission ?`)) {
+                      if (confirm(fmt(t.deleteCatalogConfirm, { name: cat.name }))) {
                         deleteCatalogueMaterial(cat.id);
                       }
                     }}
                     className="p-1 px-3 bg-red-950/45 hover:bg-red-900 text-red-300 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 transition"
                   >
                     <Trash className="w-3.5 h-3.5" />
-                    <span>Retirer</span>
+                    <span>{t.removeWord}</span>
                   </button>
                 </div>
               )}

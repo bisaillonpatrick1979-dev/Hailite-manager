@@ -15,8 +15,10 @@ const KNOWN_TABLES = [
   'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses'
 ];
 
-function buildSystemInstruction(regionLabel?: string): string {
+function buildSystemInstruction(regionLabel?: string, language?: string): string {
   const location = regionLabel && regionLabel.trim() ? regionLabel.trim() : 'Amérique du Nord';
+  // Langue de réponse : suit la langue choisie dans l'application (FR par défaut)
+  const replyLanguage = language === 'EN' ? 'Always reply in English.' : 'Réponds toujours en français.';
   return `
     Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${location}.
     L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
@@ -26,6 +28,7 @@ function buildSystemInstruction(regionLabel?: string): string {
     Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
     Si une photo est jointe (chantier, toiture, revêtement, matériau, dommage, document), analyse-la en détail : état, matériaux visibles, problèmes potentiels, sécurité, estimation des travaux.
     Si un document PDF est joint (soumission, plan, devis, facture, contrat), lis-le et résume ou analyse son contenu selon la question posée.
+    ${replyLanguage}
   `;
 }
 
@@ -148,13 +151,13 @@ export function registerApiRoutes(app: express.Express): void {
   // API Route for AI Agent chat (Gemini / Anthropic / OpenAI)
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message, provider, apiKey: clientApiKey, regionLabel, image, appContext } = req.body;
+      const { message, provider, apiKey: clientApiKey, regionLabel, image, appContext, language } = req.body;
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
       const envKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
       const apiKey = (clientApiKey && clientApiKey.trim()) || envKey;
       // appContext : données en direct + protocole d'actions, fournis par le client
       // pour les rôles privilégiés (admin/secrétaire) — voir buildAiAppContext dans App.tsx
-      const systemInstruction = buildSystemInstruction(regionLabel)
+      const systemInstruction = buildSystemInstruction(regionLabel, language)
         + (typeof appContext === 'string' && appContext.trim() ? `\n\n${appContext.slice(0, 40000)}` : '');
       const chatImage: ChatImage | undefined =
         image && typeof image.data === 'string' && typeof image.mimeType === 'string'
@@ -163,7 +166,9 @@ export function registerApiRoutes(app: express.Express): void {
 
       if (!apiKey || apiKey.trim() === '') {
         return res.json({
-          reply: `🤖 L'assistant IA fonctionne en mode simulation locale car aucune clé API n'est configurée pour ${PROVIDER_LABELS[selectedProvider]}. Ajoutez votre clé API dans Réglages > Assistant IA pour l'activer.`,
+          reply: language === 'EN'
+            ? `🤖 The AI assistant is running in local simulation mode because no API key is configured for ${PROVIDER_LABELS[selectedProvider]}. Add your API key in Settings > AI Assistant to enable it.`
+            : `🤖 L'assistant IA fonctionne en mode simulation locale car aucune clé API n'est configurée pour ${PROVIDER_LABELS[selectedProvider]}. Ajoutez votre clé API dans Réglages > Assistant IA pour l'activer.`,
           simulated: true
         });
       }

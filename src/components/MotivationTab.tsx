@@ -642,7 +642,7 @@ export default function MotivationTab() {
                         <h5 className="font-extrabold text-white text-sm">{team.name}</h5>
                         {leaderObj && (
                           <p className="text-[10px] text-gray-400 mt-0.5">
-                            👑 Chef : <span className="text-orange-400 font-bold">{leaderObj.name}</span>
+                            👑 {isFrench ? 'Chef :' : 'Leader:'} <span className="text-orange-400 font-bold">{leaderObj.name}</span>
                           </p>
                         )}
                       </div>
@@ -682,19 +682,19 @@ export default function MotivationTab() {
                     {/* Live Stats */}
                     <div className="pl-2 mt-2 pt-2 border-t border-gray-850/50 grid grid-cols-3 gap-2.5 text-center font-mono text-xs">
                       <div className="bg-gray-950/60 p-2.5 rounded-lg border border-gray-850">
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">Membres On-Site</span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">{isFrench ? 'Membres sur place' : 'On-Site Members'}</span>
                         <span className={`text-sm font-black ${stats.onSiteCount > 0 ? 'text-green-400 animate-pulse' : 'text-gray-400'}`}>
                           🟢 {stats.onSiteCount} / {team.memberIds.length}
                         </span>
                       </div>
                       <div className="bg-gray-950/60 p-2.5 rounded-lg border border-gray-850">
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">Heures Totales</span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">{isFrench ? 'Heures Totales' : 'Total Hours'}</span>
                         <span className="text-sm font-black text-white">
                           ⏱️ {stats.activeHours}h
                         </span>
                       </div>
                       <div className="bg-gray-950/60 p-2.5 rounded-lg border border-gray-850">
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">Revenus</span>
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">{isFrench ? 'Revenus' : 'Revenue'}</span>
                         <span className="text-sm font-black text-orange-400">
                           💰 {stats.totalRevenue}$
                         </span>
@@ -702,7 +702,7 @@ export default function MotivationTab() {
                     </div>
 
                     <div className="pl-2 flex items-center justify-between text-xs text-gray-400 font-mono">
-                      <span className="font-bold">🔨 Chantier :</span>
+                      <span className="font-bold">🔨 {isFrench ? 'Chantier :' : 'Site:'}</span>
                       <span className="text-white font-black truncate max-w-[150px]">{stats.activeProjectNames}</span>
                     </div>
                   </div>
@@ -722,7 +722,7 @@ export default function MotivationTab() {
               {isFrench ? "Tableau d'Honneur de Hailite Xteriors" : "Hailite Xteriors Leaderboard"}
             </h4>
             <p className="text-[11px] text-gray-400 mt-1">
-              Classé par revenus de punch de la semaine. Encouragez les membres à compléter les chantiers !
+              {isFrench ? 'Classé par revenus de punch de la semaine. Encouragez les membres à compléter les chantiers !' : 'Ranked by punch revenue for the week. Encourage members to complete the job sites!'}
             </p>
           </div>
 
@@ -770,7 +770,7 @@ export default function MotivationTab() {
 
                       <div className="text-right font-mono">
                         <span className="font-bold text-orange-400 text-sm block">{row.revenue}$</span>
-                        <span className="text-gray-500 text-[10px]">{row.hours}h de punch</span>
+                        <span className="text-gray-500 text-[10px]">{row.hours}h {isFrench ? 'de punch' : 'punched'}</span>
                       </div>
                     </div>
                   );
@@ -811,7 +811,7 @@ export default function MotivationTab() {
                       </div>
                       
                       <div className="flex justify-between text-[9px] text-gray-400 font-mono">
-                        <span>{percent}% complété</span>
+                        <span>{percent}% {isFrench ? 'complété' : 'completed'}</span>
                         <span>{isFrench ? "Membres actifs : " : "Active : "} {stats.onSiteCount}</span>
                       </div>
                     </div>

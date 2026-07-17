@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Eraser } from 'lucide-react';
+import useAppStore from '../store';
+import { translations } from '../translations';
 
 interface SignaturePadProps {
   label: string;
@@ -11,6 +13,8 @@ interface SignaturePadProps {
 }
 
 export default function SignaturePad({ label, value, onChange, required, disabled, accentClass = 'text-gray-400' }: SignaturePadProps) {
+  const currentLanguage = useAppStore(s => s.currentLanguage);
+  const t = translations[currentLanguage];
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -119,7 +123,7 @@ export default function SignaturePad({ label, value, onChange, required, disable
             onClick={handleClear}
             className="flex items-center gap-1 text-[9px] text-gray-500 hover:text-red-400 transition cursor-pointer"
           >
-            <Eraser className="w-3 h-3" /> Effacer
+            <Eraser className="w-3 h-3" /> {t.eraseWord}
           </button>
         )}
       </div>
@@ -137,7 +141,7 @@ export default function SignaturePad({ label, value, onChange, required, disable
         {!hasDrawn && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="text-gray-400 text-[11px] italic">
-              {disabled ? 'Non signé' : 'Signez ici avec le doigt ou la souris'}
+              {disabled ? t.notSignedWord : t.signHere}
             </span>
           </div>
         )}
