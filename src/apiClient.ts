@@ -129,9 +129,20 @@ async function dbDelete(table: string, id: string): Promise<void> {
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
 }
 
+// Horodatage de la dernière écriture locale vers le cloud. L'hydratation
+// périodique (voir store.hydrateCloud) se met en pause tant qu'une modification
+// est récente ou en vol, pour ne jamais écraser une saisie en cours avec un
+// instantané cloud encore en retard (ex: tâches de chantier tout juste ajoutées).
+let lastMutationAt = 0;
+export function noteMutation() { lastMutationAt = Date.now(); }
+export function msSinceLastMutation() { return Date.now() - lastMutationAt; }
+
 // "Best effort" : ne jamais laisser un échec réseau/Supabase casser l'interface.
 function bestEffort(promise: Promise<any>, label: string) {
-  promise.catch(err => console.warn(`[cloud-sync] ${label} a échoué (le mode local reste actif) :`, err.message));
+  noteMutation();
+  promise
+    .catch(err => console.warn(`[cloud-sync] ${label} a échoué (le mode local reste actif) :`, err.message))
+    .finally(noteMutation);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,11 +221,19 @@ export function rowToProject(r: any, tasks: any[], tools: any[], assignments: an
   };
 }
 
+// Les colonnes id de la base sont de type uuid : les anciens identifiants locaux
+// ("task-172...", "li-172...") faisaient échouer chaque insert en silence, et le
+// rafraîchissement cloud effaçait ensuite les listes locales. On les remplace par
+// un UUID au moment de construire la ligne (les enfants étant resynchronisés en
+// bloc "delete puis reinsert", l'identité exacte n'a pas d'importance côté cloud).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const asUuid = (id: string) => (UUID_RE.test(id) ? id : genId());
+
 export function projectTasksToRows(p: Project) {
-  return (p.tasks || []).map(t => ({ id: t.id, project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
+  return (p.tasks || []).map(t => ({ id: asUuid(t.id), project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
 }
 export function projectToolsToRows(p: Project) {
-  return (p.tools || []).map(t => ({ id: t.id, project_id: p.id, name: t.name, brought: t.brought }));
+  return (p.tools || []).map(t => ({ id: asUuid(t.id), project_id: p.id, name: t.name, brought: t.brought }));
 }
 export function projectAssignmentsToRows(p: Project) {
   return p.assignedEmployees.map(empId => ({ project_id: p.id, user_id: empId }));
@@ -224,6 +243,7 @@ export function projectAssignmentsToRows(p: Project) {
 // courant (même stratégie "delete puis reinsert" que syncDocumentLines : ces
 // sous-listes n'ont pas d'identité stable côté UI, un diff fin serait fragile).
 export async function syncProjectChildren(project: Project) {
+  noteMutation();
   try {
     const [existingTasks, existingTools, existingAssignments] = await Promise.all([
       dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
@@ -243,23 +263,29 @@ export async function syncProjectChildren(project: Project) {
     ]);
   } catch (err: any) {
     console.warn('[cloud-sync] syncProjectChildren a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
 // Insère d'abord le chantier (contrainte de clé étrangère des tables enfants),
 // puis synchronise tâches/outils/assignations — ne doivent pas partir en parallèle.
 export async function syncProjectInsert(project: Project) {
+  noteMutation();
   try {
     await dbInsert('projects', projectToRow(project));
     await syncProjectChildren(project);
   } catch (err: any) {
     console.warn('[cloud-sync] syncProjectInsert a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
 // Supprime les enfants distants d'un chantier avant sa suppression, en défense
 // contre l'absence éventuelle de ON DELETE CASCADE sur project_tasks/project_assignments.
 export async function syncDeleteProjectChildren(projectId: string) {
+  noteMutation();
   try {
     const [existingTasks, existingTools, existingAssignments] = await Promise.all([
       dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
@@ -271,6 +297,8 @@ export async function syncDeleteProjectChildren(projectId: string) {
     ]);
   } catch (err: any) {
     console.warn('[cloud-sync] syncDeleteProjectChildren a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
@@ -361,6 +389,7 @@ export function orderItemsToRows(o: SupplierOrder) {
 }
 
 export async function syncOrderItems(order: SupplierOrder) {
+  noteMutation();
   try {
     const existing = await dbList('supplier_order_items');
     const stale = existing.filter((r: any) => r.order_id === order.id);
@@ -369,6 +398,8 @@ export async function syncOrderItems(order: SupplierOrder) {
     await Promise.all(rows.map(r => dbInsert('supplier_order_items', r)));
   } catch (err: any) {
     console.warn('[cloud-sync] syncOrderItems a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
@@ -514,22 +545,22 @@ export function rowToPayrollPayment(r: any): PayrollPayment {
 export function documentLinesToRows(doc: GCPDocument) {
   const rows: Record<string, any>[] = [];
   doc.lineItems.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'simple', description: l.description, quantity: l.qty,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'simple', description: l.description, quantity: l.qty,
     unit: l.unit, unit_price: l.unitPrice, total: l.total, sort_order: idx
   }));
   doc.materialLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'material', cladding_type: l.claddingType, brand: l.brand,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'material', cladding_type: l.claddingType, brand: l.brand,
     thickness: l.thickness, qty_sqft: l.qtySqft, supplier: l.supplier, unit_price: l.unitPrice, total: l.total, sort_order: idx
   }));
   doc.labourLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'labour', task: l.task, estimated_hours: l.estimatedHours,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'labour', task: l.task, estimated_hours: l.estimatedHours,
     rate: l.rate, is_flat_rate: l.isFlatRate, total: l.total, sort_order: idx
   }));
   doc.otherLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'other', description: l.description, amount: l.amount, sort_order: idx
+    id: asUuid(l.id), document_id: doc.id, line_type: 'other', description: l.description, amount: l.amount, sort_order: idx
   }));
   doc.subcontractLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'subcontract', company_name: l.companyName, phone: l.phone,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'subcontract', company_name: l.companyName, phone: l.phone,
     work_type: l.workType, amount: l.amount, sort_order: idx
   }));
   return rows;
@@ -598,7 +629,7 @@ export function rowToDocument(r: any, items: any[], payments: any[]): GCPDocumen
 }
 
 export function documentPaymentToRow(p: any, documentId: string) {
-  return { id: p.id, document_id: documentId, date: p.date, amount: p.amount, method: p.method, notes: p.notes };
+  return { id: asUuid(p.id), document_id: documentId, date: p.date, amount: p.amount, method: p.method, notes: p.notes };
 }
 
 // ---------------------------------------------------------------------------
@@ -613,11 +644,14 @@ export function syncDelete(table: string, id: string) { bestEffort(dbDelete(tabl
 // Insère d'abord la ligne "documents" (contrainte de clé étrangère de document_items),
 // puis synchronise ses lignes — les deux appels best-effort ne doivent pas partir en parallèle.
 export async function syncDocumentInsert(doc: GCPDocument) {
+  noteMutation();
   try {
     await dbInsert('documents', documentToRow(doc));
     await syncDocumentLines(doc);
   } catch (err: any) {
     console.warn('[cloud-sync] syncDocumentInsert a échoué (le mode local reste actif) :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 

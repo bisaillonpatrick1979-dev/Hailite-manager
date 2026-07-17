@@ -7,7 +7,7 @@ import {
   ExpenseRecord, PayrollPayment
 } from './types';
 import {
-  genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId,
+  genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
   authLogin, setAuthToken, fetchLoginDirectory,
   syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
@@ -1848,6 +1848,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   hydrateCloud: async () => {
+    // Garde anti-écrasement : si l'utilisateur vient tout juste de modifier des
+    // données (écriture cloud récente ou en vol), on reporte l'hydratation au
+    // prochain cycle — sinon l'instantané cloud, encore en retard, écraserait la
+    // saisie en cours (ex: tâches/outils de chantier tout juste ajoutés).
+    const RECENT_MUTATION_MS = 20000;
+    if (msSinceLastMutation() < RECENT_MUTATION_MS) return;
+
     const result = await hydrateFromCloud();
     if (!result.enabled) {
       set({ offlineSyncStatus: 'offline' });
@@ -1875,6 +1882,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return;
     }
+    // Re-vérifie après le voyage réseau : une modification a pu survenir pendant
+    // le chargement — dans ce cas l'instantané reçu est déjà périmé, on l'ignore.
+    if (msSinceLastMutation() < RECENT_MUTATION_MS) return;
     const t = result.tables;
     const employees = (t.app_users || []).map(rowToEmployee);
     const assignments = t.project_assignments || [];

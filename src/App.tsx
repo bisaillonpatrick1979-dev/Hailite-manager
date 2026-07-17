@@ -352,6 +352,9 @@ export default function App() {
     annualSalary: 0
   });
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+  // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
+  const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
+  const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
   const [newClientForm, setNewClientForm] = useState({ name: '', company: '', email: '', phone: '', address: '' });
   const [newInventoryForm, setNewInventoryForm] = useState({ name: '', quantity: 10, unit: 'pqt', emoji: '📦', minThreshold: 5 });
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
@@ -2182,7 +2185,131 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="font-mono text-[10px]">
                           GPS: {proj.latitude.toFixed(4)}, {proj.longitude.toFixed(4)} | {t.radiusTolerance} {proj.radius}m
                         </p>
+                        {proj.latitude === 0 && proj.longitude === 0 && (
+                          <p className="text-[10px] text-amber-500 font-bold">{t.gpsNotSet}</p>
+                        )}
                       </div>
+
+                      {/* Éditeur GPS pour un chantier déjà créé (admin) : mêmes options
+                          que le formulaire de création — capture de position, Google Maps,
+                          ou saisie manuelle des coordonnées et du rayon. */}
+                      {activeEmployee.role === 'admin' && (
+                        gpsEditProjectId === proj.id ? (
+                          <div className="mt-3 p-3 bg-gray-950 border border-gray-850 rounded-xl space-y-2">
+                            <div>
+                              <label className="text-[9px] font-mono uppercase text-gray-500">{t.addressLabel}</label>
+                              <input
+                                type="text"
+                                value={gpsEditForm.address}
+                                onChange={e => setGpsEditForm({ ...gpsEditForm, address: e.target.value })}
+                                className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                              />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.latitudeLabel}</label>
+                                <input
+                                  type="number"
+                                  step="0.000001"
+                                  value={gpsEditForm.latitude}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, latitude: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.longitudeLabel}</label>
+                                <input
+                                  type="number"
+                                  step="0.000001"
+                                  value={gpsEditForm.longitude}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, longitude: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.radiusLabel}</label>
+                                <input
+                                  type="number"
+                                  value={gpsEditForm.radius}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, radius: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!navigator.geolocation) {
+                                    alert(t.geoNotSupported);
+                                    return;
+                                  }
+                                  navigator.geolocation.getCurrentPosition((pos) => {
+                                    setGpsEditForm(prev => ({
+                                      ...prev,
+                                      latitude: Number(pos.coords.latitude.toFixed(6)),
+                                      longitude: Number(pos.coords.longitude.toFixed(6))
+                                    }));
+                                    alert(fmt(t.positionCaptured, { lat: pos.coords.latitude.toFixed(6), lon: pos.coords.longitude.toFixed(6) }));
+                                  }, (err) => {
+                                    alert(fmt(t.gpsCaptureError, { msg: err.message }));
+                                  }, { enableHighAccuracy: true });
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.imOnSiteBtn}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const addr = gpsEditForm.address || proj.address || 'Montréal, QC';
+                                  window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`, '_blank');
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-300 border border-gray-800 text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.openMapsBtn}
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateProject({
+                                    ...proj,
+                                    address: gpsEditForm.address,
+                                    latitude: Number(gpsEditForm.latitude),
+                                    longitude: Number(gpsEditForm.longitude),
+                                    radius: Math.max(10, Number(gpsEditForm.radius) || 100)
+                                  });
+                                  setGpsEditProjectId(null);
+                                  alert(t.gpsUpdated);
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.saveBtn}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setGpsEditProjectId(null)}
+                                className="px-3 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-400 border border-gray-800 text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.modalCancelBtn}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGpsEditForm({ address: proj.address, latitude: proj.latitude, longitude: proj.longitude, radius: proj.radius });
+                              setGpsEditProjectId(proj.id);
+                            }}
+                            className="mt-2 px-2.5 py-1.5 bg-gray-950 hover:bg-gray-900 text-cyan-400 border border-gray-850 text-[9px] font-black rounded-lg transition"
+                          >
+                            {t.editGpsBtn}
+                          </button>
+                        )
+                      )}
 
                       {/* Workers count assigned */}
                       <div className="mt-4 pt-3 border-t border-gray-850 flex items-center justify-between">
