@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
+import { authHeaders } from './apiClient';
 import { translations, fmt } from './translations';
 import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
@@ -21,7 +22,7 @@ import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
-  X, Briefcase, Percent, ShieldAlert, Laptop, Eye, EyeOff, CheckSquare, Dumbbell,
+  X, Briefcase, Percent, ShieldAlert, Laptop, CheckSquare, Dumbbell,
   Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX
 } from 'lucide-react';
 
@@ -351,6 +352,9 @@ export default function App() {
     annualSalary: 0
   });
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+  // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
+  const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
+  const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
   const [newClientForm, setNewClientForm] = useState({ name: '', company: '', email: '', phone: '', address: '' });
   const [newInventoryForm, setNewInventoryForm] = useState({ name: '', quantity: 10, unit: 'pqt', emoji: '📦', minThreshold: 5 });
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
@@ -370,8 +374,6 @@ export default function App() {
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
-  const [aiKeyDraft, setAiKeyDraft] = useState<string>(companyInfo.aiApiKey || '');
-  const [showAiKey, setShowAiKey] = useState<boolean>(false);
 
   // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
   const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
@@ -496,9 +498,11 @@ export default function App() {
     setPinBuffer(pinBuffer.slice(0, -1));
   };
 
-  const handleTriggerLogin = (pinToTest: string) => {
+  const handleTriggerLogin = async (pinToTest: string) => {
     if (!selectedEmpId) return;
-    const res = login(pinToTest, selectedEmpId);
+    // Le NIP est vérifié côté serveur (jeton de session) dès que le cloud est
+    // configuré ; repli sur la vérification locale en mode hors-ligne.
+    const res = await login(pinToTest, selectedEmpId);
     if (res.success) {
       // Clear login flow
       setSelectedEmpId(null);
@@ -687,108 +691,14 @@ export default function App() {
       }, {})
     };
 
+    // NOTE SÉCURITÉ : cet instantané ne contient JAMAIS de NIP, de NAS/SIN,
+    // de clés API ni de coordonnées bancaires. Les actions passent désormais
+    // par du function calling à schéma strict défini côté serveur (apiRoutes.ts)
+    // — l'ancien protocole texte <<<ACTION>>> est supprimé.
     return `DONNÉES EN DIRECT DE L'APPLICATION (l'utilisateur est ${activeEmployee?.role === 'admin' ? 'administrateur' : 'secrétaire'} : tu peux répondre à ses questions de gestion — profits, heures, équipes, inventaire, factures — à partir de ces données réelles) :
 ${JSON.stringify(data)}
 
-ACTIONS DISPONIBLES : tu peux aussi AGIR dans l'application. Quand l'utilisateur te demande de créer ou modifier quelque chose, termine ta réponse par un ou plusieurs blocs d'action au format EXACT suivant (un bloc par action, maximum 5) :
-<<<ACTION
-{"action":"nom_action", ...paramètres}
-ACTION>>>
-
-Actions supportées :
-- {"action":"create_employee","name":"...","role":"admin|employee|secretary|accountant","hourlyRate":25,"workerType":"...","phone":"...","address":"..."} (seuls name, role et hourlyRate sont requis)
-- {"action":"create_project","name":"...","clientName":"...","address":"..."}
-- {"action":"create_client","name":"...","phone":"...","email":"...","address":"..."}
-- {"action":"add_inventory_item","name":"...","quantity":10,"unit":"paquets","minThreshold":5}
-- {"action":"adjust_inventory","name":"nom exact de l'article","quantity":25} (fixe la quantité à cette valeur)
-- {"action":"create_order","supplierName":"...","items":[{"name":"...","quantity":10,"price":12.50}]}
-
-Règles : n'invente JAMAIS de données (si une information essentielle manque, demande-la au lieu d'émettre un bloc) ; confirme dans ta réponse en langage naturel ce que tu viens de créer/modifier ; n'émets un bloc QUE si l'utilisateur a clairement demandé l'action.`;
-  };
-
-  // Même consigne système que côté serveur (apiRoutes.ts), pour le mode secours navigateur
-  const buildAiSystemInstruction = (regionLabel: string): string => `
-    Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${regionLabel}.
-    L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
-    Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
-    Base tes réponses de conformité, de sécurité et de charges sociales sur les règles applicables en ${regionLabel} — ne présume jamais que l'entreprise est au Québec à moins que ce soit précisé.
-    Donne des conseils professionnels et clairs.
-    Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
-    ${currentLanguage === 'FR' ? 'Réponds toujours en français.' : 'Always reply in English.'}
-  `;
-
-  // Mode secours : appel du fournisseur IA directement depuis le navigateur avec la clé
-  // entrée dans Réglages (comme les apps AI Studio d'origine). Utilisé uniquement quand
-  // le proxy serveur /api/chat est injoignable (ex: fonction serverless indisponible),
-  // pour que l'assistant fonctionne même en hébergement purement statique.
-  const callAiDirectFromBrowser = async (provider: string, apiKey: string, message: string, systemInstruction: string, image?: { mimeType: string; data: string; name?: string }): Promise<string> => {
-    const attachmentIsPdf = image?.mimeType === 'application/pdf';
-    if (provider === 'anthropic') {
-      const content: any = image
-        ? [
-            attachmentIsPdf
-              ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: image.data } }
-              : { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
-            { type: 'text', text: message }
-          ]
-        : message;
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-5',
-          max_tokens: 1024,
-          system: systemInstruction,
-          messages: [{ role: 'user', content }]
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || `Erreur Anthropic (${res.status})`);
-      return data?.content?.[0]?.text || '';
-    }
-    if (provider === 'openai') {
-      const userContent: any = image
-        ? [
-            { type: 'text', text: message },
-            attachmentIsPdf
-              ? { type: 'file', file: { filename: image.name || 'document.pdf', file_data: `data:application/pdf;base64,${image.data}` } }
-              : { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
-          ]
-        : message;
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemInstruction },
-            { role: 'user', content: userContent }
-          ]
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || `Erreur OpenAI (${res.status})`);
-      return data?.choices?.[0]?.message?.content || '';
-    }
-    const geminiParts: any[] = [];
-    if (image) geminiParts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
-    geminiParts.push({ text: message });
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemInstruction }] },
-        contents: [{ role: 'user', parts: geminiParts }]
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error?.message || `Erreur Gemini (${res.status})`);
-    return data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '';
+Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'appelle un outil QUE si l'utilisateur a clairement demandé l'action, n'invente jamais de données (demande les informations manquantes), et confirme en langage naturel ce que tu viens de faire.`;
   };
 
   // Exécute une action demandée par l'IA (rôles admin/secrétaire seulement) et
@@ -880,21 +790,20 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
     }
   };
 
-  // Détecte et exécute les blocs <<<ACTION ... ACTION>>> émis par l'IA, puis les
-  // retire du texte affiché. Ne fait rien pour les rôles non privilégiés.
-  const processAiActions = (reply: string): { cleanText: string; notes: string[] } => {
-    const notes: string[] = [];
-    if (!aiPrivileged) return { cleanText: reply, notes };
-    const cleanText = reply.replace(/<<<ACTION([\s\S]*?)ACTION>>>/g, (_match, jsonBlock) => {
-      if (notes.length >= 5) return '';
+  // Exécute les actions structurées retournées par le serveur (function calling
+  // à schéma strict — voir AI_TOOL_DEFS dans apiRoutes.ts). Chaque action a déjà
+  // été validée contre son schéma JSON côté serveur ; executeAiAction revalide
+  // localement les champs requis avant toute mutation. Aucun texte libre n'est
+  // jamais interprété comme une commande.
+  const executeServerActions = (actions: Array<{ name: string; args: Record<string, any> }>): string[] => {
+    if (!aiPrivileged || !Array.isArray(actions)) return [];
+    return actions.slice(0, 5).map(a => {
       try {
-        notes.push(executeAiAction(JSON.parse(jsonBlock.trim())));
+        return executeAiAction({ action: a.name, ...(a.args || {}) });
       } catch {
-        notes.push(t.aiActParseError);
+        return t.aiActParseError;
       }
-      return '';
-    }).trim();
-    return { cleanText, notes };
+    });
   };
 
   // Lit la réponse de l'assistant à voix haute (si la lecture vocale est activée)
@@ -986,9 +895,10 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
     e.target.value = '';
   };
 
-  // Send message to the selected AI provider (Gemini / Anthropic / OpenAI) via the server
-  // proxy, avec repli automatique sur un appel direct depuis le navigateur si le serveur
-  // est injoignable et qu'une clé API personnelle est enregistrée.
+  // Envoie le message au fournisseur IA via le proxy serveur protégé (/api/chat).
+  // La clé API vit EXCLUSIVEMENT dans les variables d'environnement du serveur
+  // (Vercel) : aucune clé n'est transmise au ou depuis le navigateur, et le
+  // navigateur n'appelle jamais directement un fournisseur IA.
   const handleSendAiMessage = async () => {
     const attachment = aiImageAttachment;
     if (!aiMessage.trim() && !attachment) return;
@@ -1012,79 +922,52 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
     setIsAiLoading(true);
 
     const provider = companyInfo.aiProvider || 'gemini';
-    const clientKey = (companyInfo.aiApiKey || '').trim();
     const regionLabel = `${regionName} (${companyCountry === 'US' ? (currentLanguage === 'FR' ? 'États-Unis' : 'United States') : 'Canada'})`;
-    // Contexte de gestion (données + actions) : réservé aux admins/secrétaires
+    // Contexte de gestion (données agrégées, sans données sensibles) : réservé aux admins/secrétaires
     const appContext = aiPrivileged ? buildAiAppContext() : undefined;
 
     try {
-      // 1) Tentative via le proxy serveur (préférable : la clé ne quitte pas le serveur
-      //    quand elle vient des variables d'environnement)
-      let serverUnreachable = false;
-      let reply: string | null = null;
-      let simulated: boolean | undefined;
-      let providerError: string | null = null;
-      let sourceLabel: string | undefined;
-
       const PROVIDER_NAMES: Record<string, string> = { anthropic: 'Anthropic Claude', openai: 'OpenAI', gemini: 'Google Gemini' };
 
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          message: userText,
+          provider,
+          regionLabel,
+          image: imagePayload,
+          appContext,
+          language: currentLanguage,
+          // Les outils (actions) ne sont activés que pour les rôles de bureau ;
+          // le serveur revérifie le rôle porté par le jeton de session.
+          allowActions: aiPrivileged
+        })
+      });
+      let data: any = null;
       try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: userText, provider, apiKey: clientKey, regionLabel, image: imagePayload, appContext, language: currentLanguage })
-        });
-        const raw = await res.text();
-        let data: any = null;
-        try {
-          data = JSON.parse(raw);
-        } catch {
-          // Réponse non-JSON (ex: page 404/500 HTML de l'hébergeur) : le proxy n'existe
-          // pas ou ne tourne pas — candidat au mode secours navigateur.
-          serverUnreachable = true;
-        }
-        if (data) {
-          if (res.ok) {
-            reply = data.reply;
-            simulated = data.simulated;
-            if (!data.simulated && data.provider) {
-              sourceLabel = `${PROVIDER_NAMES[data.provider] || data.provider} · ${data.keySource === 'personal' ? t.keyPersonalSource : t.keyServerSource}`;
-            }
-          } else {
-            providerError = data.error || null;
-          }
-        }
-      } catch {
-        serverUnreachable = true;
-      }
+        data = JSON.parse(await res.text());
+      } catch { /* réponse non-JSON (proxy absent) : traitée comme injoignable */ }
 
-      // 2) Repli : appel direct depuis le navigateur avec la clé personnelle
-      if (serverUnreachable && clientKey) {
-        const fallbackInstruction = buildAiSystemInstruction(regionLabel) + (appContext ? `\n\n${appContext}` : '');
-        reply = await callAiDirectFromBrowser(provider, clientKey, userText, fallbackInstruction, imagePayload);
-        providerError = null;
-        sourceLabel = `${PROVIDER_NAMES[provider] || provider} · ${t.keyDirectBrowser}`;
-      }
-
-      if (reply !== null) {
-        // Exécute les actions demandées par l'IA (création d'employé, de chantier, etc.)
-        const { cleanText, notes } = processAiActions(reply);
-        const displayText = cleanText || (notes.length ? t.actionDone : reply);
+      if (data && res.ok) {
+        // Actions structurées (function calling) validées par le serveur
+        const notes = executeServerActions(data.actions || []);
+        const displayText = String(data.reply || '').trim() || (notes.length ? t.actionDone : t.aiGenericError);
+        const sourceLabel = !data.simulated && data.provider
+          ? `${PROVIDER_NAMES[data.provider] || data.provider} · ${t.keyServerSource}`
+          : undefined;
         setAiHistory(prev => [
           ...prev,
-          { role: 'assistant', text: displayText, simulated, sourceLabel },
+          { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel },
           ...notes.map(note => ({ role: 'assistant' as const, text: note }))
         ]);
         speakAiResponse(displayText);
-      } else if (providerError) {
-        setAiHistory(prev => [...prev, { role: 'assistant', text: providerError as string }]);
+      } else if (res.status === 401) {
+        setAiHistory(prev => [...prev, { role: 'assistant', text: t.aiAuthRequired }]);
+      } else if (data && data.error) {
+        setAiHistory(prev => [...prev, { role: 'assistant', text: String(data.error) }]);
       } else {
-        setAiHistory(prev => [...prev, {
-          role: 'assistant',
-          text: serverUnreachable && !clientKey
-            ? t.aiServerUnreachable
-            : t.aiGenericError
-        }]);
+        setAiHistory(prev => [...prev, { role: 'assistant', text: t.aiServerUnreachable }]);
       }
     } catch (err: any) {
       console.error(err);
@@ -2302,7 +2185,131 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
                         <p className="font-mono text-[10px]">
                           GPS: {proj.latitude.toFixed(4)}, {proj.longitude.toFixed(4)} | {t.radiusTolerance} {proj.radius}m
                         </p>
+                        {proj.latitude === 0 && proj.longitude === 0 && (
+                          <p className="text-[10px] text-amber-500 font-bold">{t.gpsNotSet}</p>
+                        )}
                       </div>
+
+                      {/* Éditeur GPS pour un chantier déjà créé (admin) : mêmes options
+                          que le formulaire de création — capture de position, Google Maps,
+                          ou saisie manuelle des coordonnées et du rayon. */}
+                      {activeEmployee.role === 'admin' && (
+                        gpsEditProjectId === proj.id ? (
+                          <div className="mt-3 p-3 bg-gray-950 border border-gray-850 rounded-xl space-y-2">
+                            <div>
+                              <label className="text-[9px] font-mono uppercase text-gray-500">{t.addressLabel}</label>
+                              <input
+                                type="text"
+                                value={gpsEditForm.address}
+                                onChange={e => setGpsEditForm({ ...gpsEditForm, address: e.target.value })}
+                                className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                              />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.latitudeLabel}</label>
+                                <input
+                                  type="number"
+                                  step="0.000001"
+                                  value={gpsEditForm.latitude}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, latitude: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.longitudeLabel}</label>
+                                <input
+                                  type="number"
+                                  step="0.000001"
+                                  value={gpsEditForm.longitude}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, longitude: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.radiusLabel}</label>
+                                <input
+                                  type="number"
+                                  value={gpsEditForm.radius}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, radius: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!navigator.geolocation) {
+                                    alert(t.geoNotSupported);
+                                    return;
+                                  }
+                                  navigator.geolocation.getCurrentPosition((pos) => {
+                                    setGpsEditForm(prev => ({
+                                      ...prev,
+                                      latitude: Number(pos.coords.latitude.toFixed(6)),
+                                      longitude: Number(pos.coords.longitude.toFixed(6))
+                                    }));
+                                    alert(fmt(t.positionCaptured, { lat: pos.coords.latitude.toFixed(6), lon: pos.coords.longitude.toFixed(6) }));
+                                  }, (err) => {
+                                    alert(fmt(t.gpsCaptureError, { msg: err.message }));
+                                  }, { enableHighAccuracy: true });
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.imOnSiteBtn}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const addr = gpsEditForm.address || proj.address || 'Montréal, QC';
+                                  window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`, '_blank');
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-300 border border-gray-800 text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.openMapsBtn}
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateProject({
+                                    ...proj,
+                                    address: gpsEditForm.address,
+                                    latitude: Number(gpsEditForm.latitude),
+                                    longitude: Number(gpsEditForm.longitude),
+                                    radius: Math.max(10, Number(gpsEditForm.radius) || 100)
+                                  });
+                                  setGpsEditProjectId(null);
+                                  alert(t.gpsUpdated);
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.saveBtn}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setGpsEditProjectId(null)}
+                                className="px-3 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-400 border border-gray-800 text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.modalCancelBtn}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGpsEditForm({ address: proj.address, latitude: proj.latitude, longitude: proj.longitude, radius: proj.radius });
+                              setGpsEditProjectId(proj.id);
+                            }}
+                            className="mt-2 px-2.5 py-1.5 bg-gray-950 hover:bg-gray-900 text-cyan-400 border border-gray-850 text-[9px] font-black rounded-lg transition"
+                          >
+                            {t.editGpsBtn}
+                          </button>
+                        )
+                      )}
 
                       {/* Workers count assigned */}
                       <div className="mt-4 pt-3 border-t border-gray-850 flex items-center justify-between">
@@ -6207,52 +6214,14 @@ Règles : n'invente JAMAIS de données (si une information essentielle manque, d
                           </div>
                         </div>
 
-                        <div className="space-y-1.5">
-                          <span className="text-[9px] text-gray-500 font-bold uppercase block font-mono">{t.apiKeyLabel}</span>
-                          <div className="flex gap-2">
-                            <input
-                              type={showAiKey ? 'text' : 'password'}
-                              placeholder={t.pasteApiKeyPh}
-                              className="flex-1 p-2 bg-gray-950 font-mono text-white text-xs rounded-lg border border-gray-850"
-                              value={aiKeyDraft}
-                              onChange={(e) => setAiKeyDraft(e.target.value)}
-                            />
-                            <button
-                              onClick={() => setShowAiKey(!showAiKey)}
-                              className="px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg transition cursor-pointer"
-                              title={showAiKey ? t.hideWord : t.showWord}
-                            >
-                              {showAiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            </button>
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => {
-                                updateCompanyInfo({ aiApiKey: aiKeyDraft });
-                                alert(t.keySavedAlert);
-                              }}
-                              className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded-xl transition cursor-pointer"
-                            >
-                              {t.saveKeyBtn}
-                            </button>
-                            {companyInfo.aiApiKey && (
-                              <button
-                                onClick={() => {
-                                  setAiKeyDraft('');
-                                  updateCompanyInfo({ aiApiKey: '' });
-                                  alert(t.keyClearedAlert);
-                                }}
-                                className="px-4 py-2 bg-gray-800 hover:bg-red-900 text-gray-300 font-black text-xs rounded-xl transition cursor-pointer"
-                                title={t.eraseKeyTitle}
-                              >
-                                {t.eraseBtn}
-                              </button>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-gray-500">
-                            {companyInfo.aiApiKey
-                              ? fmt(t.personalKeySaved, { last4: companyInfo.aiApiKey.slice(-4), provider: companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI' : 'Google Gemini' })
-                              : t.noPersonalKey}
+                        {/* La clé API ne transite plus JAMAIS par le navigateur :
+                            elle vit exclusivement dans les variables d'environnement
+                            du serveur (Vercel) et le navigateur n'appelle que
+                            l'API protégée /api/chat. */}
+                        <div className="p-3 bg-gray-950 border border-emerald-500/20 rounded-xl space-y-1.5">
+                          <span className="text-[10px] text-emerald-400 font-black uppercase block font-mono">{t.aiKeyServerTitle}</span>
+                          <p className="text-[10px] text-gray-400 leading-relaxed">
+                            {t.aiKeyServerBody}
                           </p>
                           <p className="text-[10px] text-gray-600">
                             {t.keyBadgeHint}

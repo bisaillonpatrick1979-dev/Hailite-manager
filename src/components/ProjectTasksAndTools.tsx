@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import useAppStore from '../store';
+import { genId } from '../apiClient';
 import { translations } from '../translations';
 import { Project, ProjectTask, ProjectTool } from '../types';
 import { Trash, Check, ChevronDown, ChevronUp } from 'lucide-react';
@@ -31,7 +32,7 @@ export default function ProjectTasksAndTools({ project, defaultOpen = false, bor
   const addTask = () => {
     if (!newTaskText.trim()) return;
     const task: ProjectTask = {
-      id: `task-${Date.now()}`,
+      id: genId(),
       text: newTaskText.trim(),
       done: false,
       priority: newTaskPriority,
@@ -52,7 +53,7 @@ export default function ProjectTasksAndTools({ project, defaultOpen = false, bor
 
   const addTool = () => {
     if (!newToolName.trim()) return;
-    const tool: ProjectTool = { id: `tool-${Date.now()}`, name: newToolName.trim(), brought: false };
+    const tool: ProjectTool = { id: genId(), name: newToolName.trim(), brought: false };
     updateProject({ ...project, tools: [...tools, tool] });
     setNewToolName('');
   };

@@ -23,6 +23,65 @@ export function genId(): string {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Session : jeton JWT signé par le serveur (voir auth.ts). Le NIP est vérifié
+// CÔTÉ SERVEUR ; le navigateur ne conserve que le jeton de session.
+// ---------------------------------------------------------------------------
+const TOKEN_KEY = 'gcp_authToken';
+let authToken: string | null = (() => {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+})();
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* stockage local indisponible */ }
+}
+export function getAuthToken(): string | null { return authToken; }
+
+export function authHeaders(): Record<string, string> {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+}
+
+export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
+
+// Connexion vérifiée côté serveur : retourne et mémorise le jeton de session.
+export async function authLogin(employeeId: string, nip: string):
+  Promise<{ status: AuthLoginStatus; user?: { id: string; name: string; role: string } }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId, nip })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setAuthToken(data.token);
+      return { status: 'ok', user: data.user };
+    }
+    if (res.status === 401) return { status: 'invalid' };
+    if (res.status === 429) return { status: 'throttled' };
+    return { status: 'unavailable' };
+  } catch {
+    return { status: 'unavailable' };
+  }
+}
+
+// Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
+export interface DirectoryUser { id: string; name: string; role: string; workerType: string; avatar: string }
+export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
+  try {
+    const res = await fetch('/api/auth/directory');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.users) ? data.users : [];
+  } catch {
+    return [];
+  }
+}
+
 let cloudEnabled = false;
 export function isCloudEnabled() { return cloudEnabled; }
 
@@ -30,7 +89,7 @@ let cachedCompanyId: string | null = null;
 export function getCompanyId() { return cachedCompanyId; }
 
 async function dbList(table: string): Promise<any[]> {
-  const res = await fetch(`/api/db/${table}`);
+  const res = await fetch(`/api/db/${table}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
   return res.json();
 }
@@ -38,7 +97,7 @@ async function dbList(table: string): Promise<any[]> {
 async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
   const res = await fetch(`/api/db/${table}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
   if (!res.ok) throw new Error(`POST ${table} → ${res.status}`);
@@ -48,7 +107,7 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
 async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
   const res = await fetch(`/api/db/${table}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
   if (!res.ok) throw new Error(`PUT ${table} → ${res.status}`);
@@ -58,7 +117,7 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
 async function dbUpdate(table: string, id: string, row: Record<string, any>): Promise<any> {
   const res = await fetch(`/api/db/${table}/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
   if (!res.ok) throw new Error(`PATCH ${table}/${id} → ${res.status}`);
@@ -66,13 +125,24 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
 }
 
 async function dbDelete(table: string, id: string): Promise<void> {
-  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders() });
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
 }
 
+// Horodatage de la dernière écriture locale vers le cloud. L'hydratation
+// périodique (voir store.hydrateCloud) se met en pause tant qu'une modification
+// est récente ou en vol, pour ne jamais écraser une saisie en cours avec un
+// instantané cloud encore en retard (ex: tâches de chantier tout juste ajoutées).
+let lastMutationAt = 0;
+export function noteMutation() { lastMutationAt = Date.now(); }
+export function msSinceLastMutation() { return Date.now() - lastMutationAt; }
+
 // "Best effort" : ne jamais laisser un échec réseau/Supabase casser l'interface.
 function bestEffort(promise: Promise<any>, label: string) {
-  promise.catch(err => console.warn(`[cloud-sync] ${label} a échoué (le mode local reste actif) :`, err.message));
+  noteMutation();
+  promise
+    .catch(err => console.warn(`[cloud-sync] ${label} a échoué (le mode local reste actif) :`, err.message))
+    .finally(noteMutation);
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +221,19 @@ export function rowToProject(r: any, tasks: any[], tools: any[], assignments: an
   };
 }
 
+// Les colonnes id de la base sont de type uuid : les anciens identifiants locaux
+// ("task-172...", "li-172...") faisaient échouer chaque insert en silence, et le
+// rafraîchissement cloud effaçait ensuite les listes locales. On les remplace par
+// un UUID au moment de construire la ligne (les enfants étant resynchronisés en
+// bloc "delete puis reinsert", l'identité exacte n'a pas d'importance côté cloud).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const asUuid = (id: string) => (UUID_RE.test(id) ? id : genId());
+
 export function projectTasksToRows(p: Project) {
-  return (p.tasks || []).map(t => ({ id: t.id, project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
+  return (p.tasks || []).map(t => ({ id: asUuid(t.id), project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
 }
 export function projectToolsToRows(p: Project) {
-  return (p.tools || []).map(t => ({ id: t.id, project_id: p.id, name: t.name, brought: t.brought }));
+  return (p.tools || []).map(t => ({ id: asUuid(t.id), project_id: p.id, name: t.name, brought: t.brought }));
 }
 export function projectAssignmentsToRows(p: Project) {
   return p.assignedEmployees.map(empId => ({ project_id: p.id, user_id: empId }));
@@ -165,6 +243,7 @@ export function projectAssignmentsToRows(p: Project) {
 // courant (même stratégie "delete puis reinsert" que syncDocumentLines : ces
 // sous-listes n'ont pas d'identité stable côté UI, un diff fin serait fragile).
 export async function syncProjectChildren(project: Project) {
+  noteMutation();
   try {
     const [existingTasks, existingTools, existingAssignments] = await Promise.all([
       dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
@@ -184,23 +263,29 @@ export async function syncProjectChildren(project: Project) {
     ]);
   } catch (err: any) {
     console.warn('[cloud-sync] syncProjectChildren a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
 // Insère d'abord le chantier (contrainte de clé étrangère des tables enfants),
 // puis synchronise tâches/outils/assignations — ne doivent pas partir en parallèle.
 export async function syncProjectInsert(project: Project) {
+  noteMutation();
   try {
     await dbInsert('projects', projectToRow(project));
     await syncProjectChildren(project);
   } catch (err: any) {
     console.warn('[cloud-sync] syncProjectInsert a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
 // Supprime les enfants distants d'un chantier avant sa suppression, en défense
 // contre l'absence éventuelle de ON DELETE CASCADE sur project_tasks/project_assignments.
 export async function syncDeleteProjectChildren(projectId: string) {
+  noteMutation();
   try {
     const [existingTasks, existingTools, existingAssignments] = await Promise.all([
       dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
@@ -212,6 +297,8 @@ export async function syncDeleteProjectChildren(projectId: string) {
     ]);
   } catch (err: any) {
     console.warn('[cloud-sync] syncDeleteProjectChildren a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
@@ -302,6 +389,7 @@ export function orderItemsToRows(o: SupplierOrder) {
 }
 
 export async function syncOrderItems(order: SupplierOrder) {
+  noteMutation();
   try {
     const existing = await dbList('supplier_order_items');
     const stale = existing.filter((r: any) => r.order_id === order.id);
@@ -310,6 +398,8 @@ export async function syncOrderItems(order: SupplierOrder) {
     await Promise.all(rows.map(r => dbInsert('supplier_order_items', r)));
   } catch (err: any) {
     console.warn('[cloud-sync] syncOrderItems a échoué :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
@@ -338,7 +428,7 @@ export function companyInfoToRow(c: CompanyInfo) {
     payroll_custom2_name: c.payrollCustom2Name, payroll_custom2_amount: c.payrollCustom2Amount,
     is_onboarded: c.isOnboarded, country: c.country, region: c.region, tax_rate1: c.taxRate1, tax_rate2: c.taxRate2,
     tax_rate1_name: c.taxRate1Name, tax_rate2_name: c.taxRate2Name, payment_deposit_pct: c.paymentDepositPct,
-    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider, ai_api_key: c.aiApiKey
+    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider
   };
 }
 
@@ -363,7 +453,7 @@ export function rowToCompanyInfo(r: any): Partial<CompanyInfo> {
     taxRate1: r.tax_rate1 ?? undefined, taxRate2: r.tax_rate2 ?? undefined, taxRate1Name: r.tax_rate1_name || undefined,
     taxRate2Name: r.tax_rate2_name || undefined, paymentDepositPct: r.payment_deposit_pct ?? undefined,
     paymentMidPct: r.payment_mid_pct ?? undefined, paymentFinalPct: r.payment_final_pct ?? undefined,
-    aiProvider: r.ai_provider || undefined, aiApiKey: r.ai_api_key || undefined
+    aiProvider: r.ai_provider || undefined
   };
 }
 
@@ -455,22 +545,22 @@ export function rowToPayrollPayment(r: any): PayrollPayment {
 export function documentLinesToRows(doc: GCPDocument) {
   const rows: Record<string, any>[] = [];
   doc.lineItems.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'simple', description: l.description, quantity: l.qty,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'simple', description: l.description, quantity: l.qty,
     unit: l.unit, unit_price: l.unitPrice, total: l.total, sort_order: idx
   }));
   doc.materialLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'material', cladding_type: l.claddingType, brand: l.brand,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'material', cladding_type: l.claddingType, brand: l.brand,
     thickness: l.thickness, qty_sqft: l.qtySqft, supplier: l.supplier, unit_price: l.unitPrice, total: l.total, sort_order: idx
   }));
   doc.labourLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'labour', task: l.task, estimated_hours: l.estimatedHours,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'labour', task: l.task, estimated_hours: l.estimatedHours,
     rate: l.rate, is_flat_rate: l.isFlatRate, total: l.total, sort_order: idx
   }));
   doc.otherLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'other', description: l.description, amount: l.amount, sort_order: idx
+    id: asUuid(l.id), document_id: doc.id, line_type: 'other', description: l.description, amount: l.amount, sort_order: idx
   }));
   doc.subcontractLines.forEach((l, idx) => rows.push({
-    id: l.id, document_id: doc.id, line_type: 'subcontract', company_name: l.companyName, phone: l.phone,
+    id: asUuid(l.id), document_id: doc.id, line_type: 'subcontract', company_name: l.companyName, phone: l.phone,
     work_type: l.workType, amount: l.amount, sort_order: idx
   }));
   return rows;
@@ -539,7 +629,7 @@ export function rowToDocument(r: any, items: any[], payments: any[]): GCPDocumen
 }
 
 export function documentPaymentToRow(p: any, documentId: string) {
-  return { id: p.id, document_id: documentId, date: p.date, amount: p.amount, method: p.method, notes: p.notes };
+  return { id: asUuid(p.id), document_id: documentId, date: p.date, amount: p.amount, method: p.method, notes: p.notes };
 }
 
 // ---------------------------------------------------------------------------
@@ -554,11 +644,14 @@ export function syncDelete(table: string, id: string) { bestEffort(dbDelete(tabl
 // Insère d'abord la ligne "documents" (contrainte de clé étrangère de document_items),
 // puis synchronise ses lignes — les deux appels best-effort ne doivent pas partir en parallèle.
 export async function syncDocumentInsert(doc: GCPDocument) {
+  noteMutation();
   try {
     await dbInsert('documents', documentToRow(doc));
     await syncDocumentLines(doc);
   } catch (err: any) {
     console.warn('[cloud-sync] syncDocumentInsert a échoué (le mode local reste actif) :', err.message);
+  } finally {
+    noteMutation();
   }
 }
 
@@ -578,13 +671,21 @@ export async function syncDocumentLines(doc: GCPDocument) {
 
 export interface CloudHydrateResult {
   enabled: boolean;
+  needsAuth?: boolean;
   companyId?: string;
   tables: Record<string, any[]>;
 }
 
 export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
   try {
-    const res = await fetch('/api/hydrate');
+    const res = await fetch('/api/hydrate', { headers: authHeaders() });
+    if (res.status === 401) {
+      // Session absente ou expirée : les données restent locales tant que
+      // l'utilisateur ne s'est pas connecté (le jeton périmé est purgé).
+      if (authToken) setAuthToken(null);
+      cloudEnabled = false;
+      return { enabled: false, needsAuth: true, tables: {} };
+    }
     if (!res.ok) throw new Error(`hydrate → ${res.status}`);
     const data = await res.json();
     cloudEnabled = !!data.enabled;
