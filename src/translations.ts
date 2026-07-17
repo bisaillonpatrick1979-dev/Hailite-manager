@@ -604,7 +604,7 @@ export const translations = {
 
     // Réglages — Assistant IA
     aiSettingsTitle: "🤖 Assistant IA",
-    aiSettingsDesc: "Choisissez le fournisseur d'intelligence artificielle et entrez votre propre clé API. Elle est enregistrée uniquement dans ce navigateur (LocalStorage) et sert uniquement à connecter l'assistant.",
+    aiSettingsDesc: "Choisissez le fournisseur d'intelligence artificielle utilisé par l'assistant. La clé API est gérée côté serveur : elle ne transite jamais par le navigateur.",
     aiProviderLabel: "Fournisseur IA",
     apiKeyLabel: "Clé API",
     pasteApiKeyPh: "Collez votre clé API ici...",
@@ -827,7 +827,10 @@ export const translations = {
     unsupportedFormat: "Formats supportés : images (photos) et PDF.",
     analyzePdf: "Analyse ce document PDF.",
     analyzePhoto: "Analyse cette photo de chantier.",
-    aiServerUnreachable: "Le serveur IA est injoignable et aucune clé API personnelle n'est enregistrée. Ajoutez votre clé dans Réglages > Assistant IA pour utiliser l'IA directement depuis cet appareil.",
+    aiServerUnreachable: "Le serveur IA est injoignable. Vérifiez votre connexion et réessayez plus tard.",
+    aiAuthRequired: "Session expirée : reconnectez-vous pour utiliser l'assistant IA.",
+    aiKeyServerTitle: "🔐 Clé API gérée par le serveur",
+    aiKeyServerBody: "La clé API du fournisseur d'IA est configurée exclusivement dans les variables d'environnement de l'hébergeur (ex: Vercel). Aucune clé n'est enregistrée dans le navigateur ni transmise par celui-ci : l'application appelle uniquement l'API protégée du serveur.",
     aiGenericError: "Désolé, l'agent IA a rencontré une erreur. Veuillez réessayer.",
     aiErrorWithMsg: "Désolé, l'agent IA a rencontré une erreur : {msg}",
     aiNetworkError: "Désolé, l'agent IA a rencontré une erreur réseau. Veuillez réessayer.",
@@ -1676,7 +1679,7 @@ export const translations = {
 
     // Settings — AI Assistant
     aiSettingsTitle: "🤖 AI Assistant",
-    aiSettingsDesc: "Choose the artificial intelligence provider and enter your own API key. It is stored only in this browser (LocalStorage) and is only used to connect the assistant.",
+    aiSettingsDesc: "Choose the artificial intelligence provider used by the assistant. The API key is managed server-side and never passes through the browser.",
     aiProviderLabel: "AI Provider",
     apiKeyLabel: "API Key",
     pasteApiKeyPh: "Paste your API key here...",
@@ -1899,7 +1902,10 @@ export const translations = {
     unsupportedFormat: "Supported formats: images (photos) and PDF.",
     analyzePdf: "Analyze this PDF document.",
     analyzePhoto: "Analyze this jobsite photo.",
-    aiServerUnreachable: "The AI server is unreachable and no personal API key is saved. Add your key in Settings > AI Assistant to use the AI directly from this device.",
+    aiServerUnreachable: "The AI server is unreachable. Check your connection and try again later.",
+    aiAuthRequired: "Session expired: please sign in again to use the AI assistant.",
+    aiKeyServerTitle: "🔐 Server-managed API key",
+    aiKeyServerBody: "The AI provider's API key is configured exclusively in the host's environment variables (e.g. Vercel). No key is stored in or sent from the browser: the application only calls the protected server API.",
     aiGenericError: "Sorry, the AI agent encountered an error. Please try again.",
     aiErrorWithMsg: "Sorry, the AI agent encountered an error: {msg}",
     aiNetworkError: "Sorry, the AI agent encountered a network error. Please try again.",

@@ -23,6 +23,65 @@ export function genId(): string {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Session : jeton JWT signé par le serveur (voir auth.ts). Le NIP est vérifié
+// CÔTÉ SERVEUR ; le navigateur ne conserve que le jeton de session.
+// ---------------------------------------------------------------------------
+const TOKEN_KEY = 'gcp_authToken';
+let authToken: string | null = (() => {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+})();
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* stockage local indisponible */ }
+}
+export function getAuthToken(): string | null { return authToken; }
+
+export function authHeaders(): Record<string, string> {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+}
+
+export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
+
+// Connexion vérifiée côté serveur : retourne et mémorise le jeton de session.
+export async function authLogin(employeeId: string, nip: string):
+  Promise<{ status: AuthLoginStatus; user?: { id: string; name: string; role: string } }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId, nip })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setAuthToken(data.token);
+      return { status: 'ok', user: data.user };
+    }
+    if (res.status === 401) return { status: 'invalid' };
+    if (res.status === 429) return { status: 'throttled' };
+    return { status: 'unavailable' };
+  } catch {
+    return { status: 'unavailable' };
+  }
+}
+
+// Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
+export interface DirectoryUser { id: string; name: string; role: string; workerType: string; avatar: string }
+export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
+  try {
+    const res = await fetch('/api/auth/directory');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.users) ? data.users : [];
+  } catch {
+    return [];
+  }
+}
+
 let cloudEnabled = false;
 export function isCloudEnabled() { return cloudEnabled; }
 
@@ -30,7 +89,7 @@ let cachedCompanyId: string | null = null;
 export function getCompanyId() { return cachedCompanyId; }
 
 async function dbList(table: string): Promise<any[]> {
-  const res = await fetch(`/api/db/${table}`);
+  const res = await fetch(`/api/db/${table}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
   return res.json();
 }
@@ -38,7 +97,7 @@ async function dbList(table: string): Promise<any[]> {
 async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
   const res = await fetch(`/api/db/${table}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
   if (!res.ok) throw new Error(`POST ${table} → ${res.status}`);
@@ -48,7 +107,7 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
 async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
   const res = await fetch(`/api/db/${table}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
   if (!res.ok) throw new Error(`PUT ${table} → ${res.status}`);
@@ -58,7 +117,7 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
 async function dbUpdate(table: string, id: string, row: Record<string, any>): Promise<any> {
   const res = await fetch(`/api/db/${table}/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
   if (!res.ok) throw new Error(`PATCH ${table}/${id} → ${res.status}`);
@@ -66,7 +125,7 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
 }
 
 async function dbDelete(table: string, id: string): Promise<void> {
-  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders() });
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
 }
 
@@ -338,7 +397,7 @@ export function companyInfoToRow(c: CompanyInfo) {
     payroll_custom2_name: c.payrollCustom2Name, payroll_custom2_amount: c.payrollCustom2Amount,
     is_onboarded: c.isOnboarded, country: c.country, region: c.region, tax_rate1: c.taxRate1, tax_rate2: c.taxRate2,
     tax_rate1_name: c.taxRate1Name, tax_rate2_name: c.taxRate2Name, payment_deposit_pct: c.paymentDepositPct,
-    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider, ai_api_key: c.aiApiKey
+    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider
   };
 }
 
@@ -363,7 +422,7 @@ export function rowToCompanyInfo(r: any): Partial<CompanyInfo> {
     taxRate1: r.tax_rate1 ?? undefined, taxRate2: r.tax_rate2 ?? undefined, taxRate1Name: r.tax_rate1_name || undefined,
     taxRate2Name: r.tax_rate2_name || undefined, paymentDepositPct: r.payment_deposit_pct ?? undefined,
     paymentMidPct: r.payment_mid_pct ?? undefined, paymentFinalPct: r.payment_final_pct ?? undefined,
-    aiProvider: r.ai_provider || undefined, aiApiKey: r.ai_api_key || undefined
+    aiProvider: r.ai_provider || undefined
   };
 }
 
@@ -578,13 +637,21 @@ export async function syncDocumentLines(doc: GCPDocument) {
 
 export interface CloudHydrateResult {
   enabled: boolean;
+  needsAuth?: boolean;
   companyId?: string;
   tables: Record<string, any[]>;
 }
 
 export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
   try {
-    const res = await fetch('/api/hydrate');
+    const res = await fetch('/api/hydrate', { headers: authHeaders() });
+    if (res.status === 401) {
+      // Session absente ou expirée : les données restent locales tant que
+      // l'utilisateur ne s'est pas connecté (le jeton périmé est purgé).
+      if (authToken) setAuthToken(null);
+      cloudEnabled = false;
+      return { enabled: false, needsAuth: true, tables: {} };
+    }
     if (!res.ok) throw new Error(`hydrate → ${res.status}`);
     const data = await res.json();
     cloudEnabled = !!data.enabled;

@@ -8,6 +8,7 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId,
+  authLogin, setAuthToken, fetchLoginDirectory,
   syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
@@ -49,7 +50,7 @@ interface AppState {
   // Operations / Actions
   setLanguage: (lang: 'FR' | 'EN') => void;
   setTheme: (theme: VisualTheme) => void;
-  login: (nip: string, employeeId: string) => { success: boolean; message: string };
+  login: (nip: string, employeeId: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   setIsOnboarded: (val: boolean) => void;
   
@@ -762,33 +763,65 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveState('gcp_currentTheme', currentTheme);
   },
 
-  login: (nip, employeeId) => {
+  login: async (nip, employeeId) => {
     const { employees, currentLanguage } = get();
     const emp = employees.find(e => e.id === employeeId);
-    
+
     if (!emp) {
-      return { 
-        success: false, 
-        message: currentLanguage === 'FR' ? 'Employé non trouvé.' : 'Employee not found.' 
+      return {
+        success: false,
+        message: currentLanguage === 'FR' ? 'Employé non trouvé.' : 'Employee not found.'
       };
     }
-    
-    if (emp.nip === nip) {
+
+    // Vérification du NIP CÔTÉ SERVEUR (source de vérité dès que le cloud est
+    // configuré) : le serveur émet un jeton de session signé qui accompagnera
+    // ensuite toutes les requêtes de données.
+    const server = await authLogin(employeeId, nip);
+    if (server.status === 'ok') {
       set({ activeEmployee: emp });
       saveState('gcp_activeEmployee', emp);
-      return { 
-        success: true, 
-        message: currentLanguage === 'FR' ? `Bienvenue, ${emp.name} !` : `Welcome, ${emp.name}!` 
+      // Recharge les données maintenant que la session est établie
+      get().hydrateCloud();
+      return {
+        success: true,
+        message: currentLanguage === 'FR' ? `Bienvenue, ${emp.name} !` : `Welcome, ${emp.name}!`
       };
     }
-    
-    return { 
-      success: false, 
-      message: currentLanguage === 'FR' ? 'NIP incorrect.' : 'Incorrect PIN.' 
+    if (server.status === 'invalid') {
+      return {
+        success: false,
+        message: currentLanguage === 'FR' ? 'NIP incorrect.' : 'Incorrect PIN.'
+      };
+    }
+    if (server.status === 'throttled') {
+      return {
+        success: false,
+        message: currentLanguage === 'FR'
+          ? 'Trop de tentatives. Réessayez dans quelques minutes.'
+          : 'Too many attempts. Try again in a few minutes.'
+      };
+    }
+
+    // Serveur d'authentification injoignable (hébergement statique, hors-ligne,
+    // Supabase non configuré) : repli sur la vérification locale.
+    if (emp.nip && emp.nip === nip) {
+      set({ activeEmployee: emp });
+      saveState('gcp_activeEmployee', emp);
+      return {
+        success: true,
+        message: currentLanguage === 'FR' ? `Bienvenue, ${emp.name} !` : `Welcome, ${emp.name}!`
+      };
+    }
+
+    return {
+      success: false,
+      message: currentLanguage === 'FR' ? 'NIP incorrect.' : 'Incorrect PIN.'
     };
   },
 
   logout: () => {
+    setAuthToken(null); // invalide la session côté navigateur
     set({ activeEmployee: null });
     saveState('gcp_activeEmployee', null);
   },
@@ -1818,6 +1851,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     const result = await hydrateFromCloud();
     if (!result.enabled) {
       set({ offlineSyncStatus: 'offline' });
+      // Pas encore de session : on ne récupère que l'annuaire minimal (id, nom,
+      // rôle, avatar — jamais de NIP) pour peupler l'écran de connexion.
+      if (result.needsAuth) {
+        const dir = await fetchLoginDirectory();
+        if (dir.length > 0) {
+          const { employees } = get();
+          const byId = new Map(employees.map(e => [e.id, e]));
+          const merged = [
+            ...employees.map(e => {
+              const d = dir.find(u => u.id === e.id);
+              return d ? { ...e, name: d.name || e.name, avatar: d.avatar || e.avatar, workerType: d.workerType || e.workerType } : e;
+            }),
+            ...dir.filter(u => !byId.has(u.id)).map(u => ({
+              id: u.id, name: u.name, nip: '', role: (u.role as Employee['role']) || 'employee',
+              hourlyRate: 0, workerType: u.workerType || '', asNumber: '', phone: '', address: '',
+              hireDate: '', avatar: u.avatar || '', level: 1, xp: 0
+            }) as Employee)
+          ];
+          set({ employees: merged });
+          saveState('gcp_employees', merged);
+        }
+      }
       return;
     }
     const t = result.tables;
