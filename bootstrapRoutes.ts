@@ -1,11 +1,19 @@
 import type express from 'express';
 import { resolveCompanyId, supabase, supabaseEnabled } from './db.js';
 
-/**
- * Informations publiques et non sensibles nécessaires à l'écran de démarrage.
- * Aucune adresse, coordonnée bancaire, clé API, donnée de paie ou donnée
- * d'employé n'est exposée ici.
- */
+interface PublicCompanyIdentity {
+  name?: string | null;
+  logo?: string | null;
+  country?: string | null;
+  region?: string | null;
+  is_onboarded?: boolean | null;
+  tax_rate1?: number | string | null;
+  tax_rate2?: number | string | null;
+  tax_rate1_name?: string | null;
+  tax_rate2_name?: string | null;
+}
+
+/** Informations non sensibles nécessaires à l'écran de démarrage. */
 export function registerBootstrapRoutes(app: express.Express): void {
   app.get('/api/bootstrap', async (_req, res) => {
     if (!supabaseEnabled || !supabase) {
@@ -16,35 +24,26 @@ export function registerBootstrapRoutes(app: express.Express): void {
       const companyId = await resolveCompanyId();
       const { data, error } = await supabase
         .from('companies')
-        .select([
-          'name',
-          'logo',
-          'country',
-          'region',
-          'is_onboarded',
-          'tax_rate1',
-          'tax_rate2',
-          'tax_rate1_name',
-          'tax_rate2_name'
-        ].join(','))
+        .select('name,logo,country,region,is_onboarded,tax_rate1,tax_rate2,tax_rate1_name,tax_rate2_name')
         .eq('id', companyId)
         .maybeSingle();
 
       if (error) throw error;
+      const company = data as unknown as PublicCompanyIdentity | null;
 
       return res.json({
         enabled: true,
-        company: data
+        company: company
           ? {
-              name: data.name || 'Hailite Manager',
-              logo: data.logo || '',
-              country: data.country || 'CA',
-              region: data.region || '',
-              isOnboarded: data.is_onboarded ?? false,
-              taxRate1: Number(data.tax_rate1 || 0),
-              taxRate2: Number(data.tax_rate2 || 0),
-              taxRate1Name: data.tax_rate1_name || '',
-              taxRate2Name: data.tax_rate2_name || ''
+              name: company.name || 'Hailite Manager',
+              logo: company.logo || '',
+              country: company.country || 'CA',
+              region: company.region || '',
+              isOnboarded: company.is_onboarded ?? false,
+              taxRate1: Number(company.tax_rate1 || 0),
+              taxRate2: Number(company.tax_rate2 || 0),
+              taxRate1Name: company.tax_rate1_name || '',
+              taxRate2Name: company.tax_rate2_name || ''
             }
           : null
       });
