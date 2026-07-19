@@ -1,0 +1,107 @@
+name: Tester les IA de production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-ai-production.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tester connexion, variables et fournisseurs
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+
+          base = 'https://hailite-manager.vercel.app'
+
+          def request(path, method='GET', body=None, token=None, timeout=60):
+              headers = {'Accept': 'application/json'}
+              if body is not None:
+                  headers['Content-Type'] = 'application/json'
+              if token:
+                  headers['Authorization'] = f'Bearer {token}'
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as response:
+                      raw = response.read().decode('utf-8', errors='replace')
+                      return response.status, json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as error:
+                  raw = error.read().decode('utf-8', errors='replace')
+                  try:
+                      payload = json.loads(raw) if raw else {}
+                  except Exception:
+                      payload = {'error': raw[:300]}
+                  return error.code, payload
+              except Exception as error:
+                  return 0, {'error': str(error)}
+
+          login_code, login = request('/api/auth/login', 'POST', {
+              'employeeId': 'test-admin',
+              'nip': '0000'
+          })
+          token = login.get('token', '') if isinstance(login, dict) else ''
+
+          status_code, status = request('/api/ai/status', token=token) if token else (0, {'error': 'no token'})
+          configured = {
+              key: bool(value.get('configured'))
+              for key, value in (status.get('providers', {}) if isinstance(status, dict) else {}).items()
+          }
+
+          providers = {}
+          for provider in ['anthropic', 'openai', 'gemini']:
+              code, response = request('/api/chat', 'POST', {
+                  'message': 'Réponds uniquement par le mot OK.',
+                  'provider': provider,
+                  'language': 'FR',
+                  'allowActions': False
+              }, token=token, timeout=90)
+              reply = str(response.get('reply', '')) if isinstance(response, dict) else ''
+              providers[provider] = {
+                  'http': code,
+                  'configured': configured.get(provider, False),
+                  'providerReturned': response.get('provider') if isinstance(response, dict) else None,
+                  'simulated': bool(response.get('simulated')) if isinstance(response, dict) else False,
+                  'hasReply': bool(reply.strip()),
+                  'error': response.get('error') if isinstance(response, dict) else 'invalid response'
+              }
+
+          result = {
+              'testedAt': datetime.now(timezone.utc).isoformat(),
+              'productionUrl': base,
+              'loginHttp': login_code,
+              'tokenCreated': bool(token),
+              'statusHttp': status_code,
+              'configured': configured,
+              'providers': providers
+          }
+          result['allPassed'] = (
+              login_code == 200 and bool(token) and status_code == 200 and
+              all(item['http'] == 200 and item['configured'] and item['hasReply'] and not item['simulated']
+                  for item in providers.values())
+          )
+          with open('ai-production-test-result.json', 'w', encoding='utf-8') as file:
+              json.dump(result, file, ensure_ascii=False, indent=2)
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Enregistrer le rapport non sensible
+        run: |
+          git config user.name "Hailite AI Test"
+          git config user.email "actions@users.noreply.github.com"
+          git add ai-production-test-result.json
+          git commit -m "Ajoute le rapport de test des trois IA en production"
+          git push origin HEAD:main
