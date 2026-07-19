@@ -43,10 +43,13 @@ export const TEST_DATASET = {
 };
 
 export const TEST_DATASET_SUMMARY = {
+  scenarioVersion: '2026.07-annual-v1',
+  scenarioName: 'Exercice annuel fictif complet',
   periodStart: TEST_PERIOD_START,
   periodEnd: TEST_PERIOD_END,
   employees: TEST_EMPLOYEES.length,
   currentProfiles: TEST_EMPLOYEES.filter(employee => !employee.id.startsWith('test-former-')).length,
+  formerEmployees: TEST_EMPLOYEES.filter(employee => employee.id.startsWith('test-former-')).length,
   clients: TEST_CLIENTS.length,
   projects: TEST_PROJECTS.length,
   punchSessions: TEST_PUNCH_SESSIONS.length,
