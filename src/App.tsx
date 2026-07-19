@@ -3,7 +3,8 @@ import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
 import { translations, fmt } from './translations';
-import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
+import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
+import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
@@ -17,6 +18,7 @@ const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsMa
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
 const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
+const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
 import EmployeeAvatar from './components/EmployeeAvatar';
 import SignaturePad from './components/SignaturePad';
 import {
@@ -250,6 +252,8 @@ export default function App() {
   const TOUR_STEPS = TOUR_STEPS_I18N[currentLanguage];
   const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
   const unitLabels = CATALOGUE_UNIT_LABELS[currentLanguage];
+  const credentialAlerts = getCredentialAlerts(employees);
+  const totalOpenAlerts = hrAlerts.filter(alert => !alert.resolved).length + credentialAlerts.length;
   const { country: companyCountry, region: companyRegion } = getCompanyRegion(companyInfo);
   const payrollMeta = getRegionPayrollMeta(companyRegion, companyCountry);
   const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
@@ -344,6 +348,7 @@ export default function App() {
     employeeProvince: string;
     payFrequency: 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';
     annualSalary: number;
+    credentials: EmployeeCredential[];
   }>({
     name: '',
     nip: '',
@@ -360,7 +365,8 @@ export default function App() {
     sin: '',
     employeeProvince: 'QC',
     payFrequency: 'weekly',
-    annualSalary: 0
+    annualSalary: 0,
+    credentials: []
   });
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
   // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
@@ -1525,7 +1531,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   const outstandingAmount = documents
                     .filter(document => document.type === 'invoice' && ['overdue', 'sent'].includes(document.status))
                     .reduce((sum, document) => sum + Number(document.balanceDue ?? document.total ?? 0), 0);
-                  const unresolvedHrAlertCount = hrAlerts.filter(alert => !alert.resolved).length;
+                  const unresolvedHrAlertCount = totalOpenAlerts;
                   const todayLabel = new Date().toLocaleDateString(
                     currentLanguage === 'FR' ? 'fr-CA' : 'en-CA',
                     { weekday: 'long', day: 'numeric', month: 'long' }
@@ -1603,6 +1609,26 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 {activeEmployee.role !== 'admin' ? (
                   <div className="flex flex-col items-center py-8 bg-[#16191F] border border-gray-800 rounded-2xl p-6 relative overflow-hidden">
                     
+                    {/* CERTIFICATION EXPIRY BANNER — employee and subcontractor */}
+                    {credentialAlerts.filter(item => item.employeeId === activeEmployee.id).length > 0 && (
+                      <div className="w-full mb-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-left">
+                        <h4 className="text-sm font-black text-amber-300">⚠️ {currentLanguage === 'FR' ? 'Carte à renouveler' : 'Card renewal required'}</h4>
+                        <div className="mt-2 space-y-2">
+                          {credentialAlerts.filter(item => item.employeeId === activeEmployee.id).map(item => (
+                            <div key={item.credential.id} className="rounded-xl bg-black/20 border border-amber-500/20 p-3">
+                              <p className="text-xs font-black text-white">🪪 {item.credential.name}</p>
+                              <p className={`text-[11px] mt-1 font-bold ${item.status === 'expired' ? 'text-red-400' : 'text-amber-300'}`}>
+                                {item.status === 'expired'
+                                  ? (currentLanguage === 'FR' ? `Expirée depuis ${Math.abs(item.daysRemaining)} jour(s)` : `Expired ${Math.abs(item.daysRemaining)} day(s) ago`)
+                                  : (currentLanguage === 'FR' ? `Expire dans ${item.daysRemaining} jour(s)` : `Expires in ${item.daysRemaining} day(s)`)}
+                              </p>
+                              <p className="text-[10px] text-gray-400 mt-1">{currentLanguage === 'FR' ? 'Communiquez avec l’administration pour planifier le renouvellement.' : 'Contact administration to schedule renewal.'}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Punch State Info Banner */}
                     <div className="text-center mb-8 space-y-1">
                       {activePunchSession ? (
@@ -1775,6 +1801,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       </Suspense>
                     </div>
 
+                    <div className="w-full mt-6">
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <EmployeeCredentialsManager
+                          value={activeEmployee.credentials || []}
+                          onChange={() => undefined}
+                          currentLanguage={currentLanguage}
+                          canManage={false}
+                          title={currentLanguage === 'FR' ? 'Mes cartes de compétence' : 'My competency cards'}
+                        />
+                      </Suspense>
+                    </div>
+
                   </div>
                 ) : (
                   
@@ -1938,7 +1976,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="bg-[#16191F] border border-gray-800 rounded-xl p-5 flex flex-col gap-4">
                         <div className="flex justify-between items-center border-b border-gray-800 pb-3">
                           <h4 className="text-xs uppercase font-mono font-bold tracking-wider text-orange-500">
-                            {t.hrAlertsTitle} ({hrAlerts.filter(a => !a.resolved).length})
+                            {t.hrAlertsTitle} ({totalOpenAlerts})
                           </h4>
                           <span className="px-2 py-0.5 bg-red-500/15 text-red-400 border border-red-500/30 rounded font-mono text-[9px] uppercase font-bold animate-bounce">
                             {t.hrAttention}
@@ -4200,7 +4238,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       { name: t.setTabCatalogue, idx: 8, adminOnly: true },
                       { name: t.setTabComptabilite, idx: 9, adminOnly: true },
                       { name: t.setTabGeofencing, idx: 10, adminOnly: true },
-                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length, adminOnly: true },
+                      { name: t.setTabRH, idx: 11, badge: totalOpenAlerts, adminOnly: true },
                       { name: t.setTabAI, idx: 12, adminOnly: true }
                     ].filter(tab => activeEmployee.role === 'admin' || !tab.adminOnly).map(tab => (
                       <button
@@ -5053,6 +5091,39 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           </div>
                         </div>
 
+                        {/* CREDENTIAL ALERT OVERVIEW — administration */}
+                        {credentialAlerts.length > 0 && (
+                          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <h5 className="text-sm font-black text-amber-300">⚠️ {currentLanguage === 'FR' ? 'Renouvellements à planifier' : 'Renewals to schedule'}</h5>
+                                <p className="text-[10px] text-gray-400 mt-1">{currentLanguage === 'FR' ? 'Cartes expirées ou arrivant dans leur période d’alerte.' : 'Expired cards or cards inside their reminder period.'}</p>
+                              </div>
+                              <span className="rounded-full bg-red-500 text-white min-w-7 h-7 px-2 inline-flex items-center justify-center text-xs font-black">{credentialAlerts.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {credentialAlerts.map(item => (
+                                <button
+                                  type="button"
+                                  key={`${item.employeeId}-${item.credential.id}`}
+                                  onClick={() => setEditingEmployeeId(item.employeeId)}
+                                  className="w-full text-left rounded-xl bg-gray-950/65 border border-gray-800 hover:border-amber-500/50 p-3 flex items-center justify-between gap-3"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-black text-white truncate">{item.employeeName} — {item.credential.name}</p>
+                                    <p className="text-[10px] text-gray-500 mt-1">{currentLanguage === 'FR' ? 'Expiration' : 'Expiry'} : {item.credential.expiryDate}</p>
+                                  </div>
+                                  <span className={`shrink-0 text-[10px] font-black ${item.status === 'expired' ? 'text-red-400' : 'text-amber-400'}`}>
+                                    {item.status === 'expired'
+                                      ? (currentLanguage === 'FR' ? 'EXPIRÉE' : 'EXPIRED')
+                                      : `${item.daysRemaining} ${currentLanguage === 'FR' ? 'jours' : 'days'}`}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* List employees */}
                         <div className="space-y-2.5">
                           {employees.map(emp => {
@@ -5114,7 +5185,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 payFrequency: emp.payFrequency || 'weekly',
                                 annualSalary: emp.annualSalary || 0,
                                 hireDate: emp.hireDate || '2026-06-03',
-                                avatar: emp.avatar || ''
+                                avatar: emp.avatar || '',
+                                credentials: emp.credentials || []
                               });
                             }
 
@@ -5410,6 +5482,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                       />
                                     </div>
 
+                                    <Suspense fallback={<LazySectionFallback />}>
+                                      <EmployeeCredentialsManager
+                                        value={editEmployeeForm.credentials || []}
+                                        onChange={(credentials) => setEditEmployeeForm({ ...editEmployeeForm, credentials })}
+                                        currentLanguage={currentLanguage}
+                                        canManage
+                                        title={currentLanguage === 'FR' ? `Cartes de ${emp.name}` : `${emp.name}'s cards`}
+                                      />
+                                    </Suspense>
+
                                     <div className="flex justify-between items-center pt-2">
                                       <div className="text-[10px] text-gray-500 font-mono">
                                         {isQuebec ? 'AS/CCQ' : t.certificationWord} : <input
@@ -5446,7 +5528,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               sin: editEmployeeForm.sin,
                                               employeeProvince: editEmployeeForm.employeeProvince,
                                               payFrequency: editEmployeeForm.payFrequency,
-                                              annualSalary: editEmployeeForm.annualSalary
+                                              annualSalary: editEmployeeForm.annualSalary,
+                                              credentials: editEmployeeForm.credentials || []
                                             });
                                             setEditingEmployeeId(null);
                                             setEditEmployeeForm(null);
@@ -5702,6 +5785,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             </div>
                           </div>
                           
+                          <Suspense fallback={<LazySectionFallback />}>
+                            <EmployeeCredentialsManager
+                              value={newEmployeeForm.credentials}
+                              onChange={(credentials) => setNewEmployeeForm({ ...newEmployeeForm, credentials })}
+                              currentLanguage={currentLanguage}
+                              canManage
+                              title={currentLanguage === 'FR' ? 'Cartes fournies à l’embauche' : 'Cards provided at hiring'}
+                            />
+                          </Suspense>
+
                           <button 
                             disabled={!newEmployeeForm.name || !newEmployeeForm.nip}
                             onClick={() => {
@@ -5721,7 +5814,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 sin: newEmployeeForm.sin,
                                 employeeProvince: newEmployeeForm.employeeProvince,
                                 payFrequency: newEmployeeForm.payFrequency,
-                                annualSalary: newEmployeeForm.annualSalary
+                                annualSalary: newEmployeeForm.annualSalary,
+                                credentials: newEmployeeForm.credentials
                               });
                               setNewEmployeeForm({ 
                                 name: '', 
@@ -5739,7 +5833,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 sin: '',
                                 employeeProvince: 'QC',
                                 payFrequency: 'weekly',
-                                annualSalary: 0
+                                annualSalary: 0,
+                                credentials: []
                               });
                               alert(t.employeeAddedAlert);
                             }}
@@ -6295,7 +6390,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                         {/* Active alert boxes */}
                         <div className="space-y-2 text-left">
-                          <span className="text-[9px] uppercase font-mono text-gray-500 block">{t.complianceAlerts} ({hrAlerts.filter(a => !a.resolved).length})</span>
+                          <span className="text-[9px] uppercase font-mono text-gray-500 block">{t.complianceAlerts} ({totalOpenAlerts})</span>
                           {hrAlerts.filter(a => !a.resolved).map(alertItem => (
                             <div key={alertItem.id} className="p-3 bg-red-950/40 border border-red-900/30 rounded-xl flex items-center justify-between text-xs gap-3">
                               <div className="flex items-start gap-2.5">
@@ -6317,7 +6412,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             </div>
                           ))}
 
-                          {hrAlerts.filter(a => !a.resolved).length === 0 && (
+                          {totalOpenAlerts === 0 && (
                             <div className="p-4 text-center text-gray-500 bg-gray-950 rounded-xl border border-gray-850">
                               {t.allCompliant}
                             </div>
@@ -6682,7 +6777,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               >
                 <span className="text-3xl" aria-hidden="true">⚙️</span>
                 <span className="text-[10px] uppercase font-black text-center leading-tight">{t.navShortSettings}</span>
-                {hrAlerts.filter(a => !a.resolved).length > 0 && (
+                {totalOpenAlerts > 0 && (
                   <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
@@ -6758,7 +6853,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">
                     {currentLanguage === 'FR' ? 'Plus' : 'More'}
                   </span>
-                  {hrAlerts.filter(a => !a.resolved).length > 0 && (
+                  {totalOpenAlerts > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>

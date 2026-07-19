@@ -184,7 +184,8 @@ export function employeeToRow(e: Employee, companyId?: string) {
     postal_code: e.postalCode, emergency_contact_name: e.emergencyContactName,
     emergency_contact_phone: e.emergencyContactPhone, emergency_contact_relation: e.emergencyContactRelation,
     business_name: e.businessName, gst_number: e.gstNumber, sin: e.sin, employee_province: e.employeeProvince,
-    pay_frequency: e.payFrequency, pay_period_start: e.payPeriodStart || null, annual_salary: e.annualSalary
+    pay_frequency: e.payFrequency, pay_period_start: e.payPeriodStart || null, annual_salary: e.annualSalary,
+    credentials: e.credentials || []
   };
 }
 
@@ -202,7 +203,8 @@ export function rowToEmployee(r: any): Employee {
     emergencyContactRelation: r.emergency_contact_relation || undefined, businessName: r.business_name || undefined,
     gstNumber: r.gst_number || undefined, sin: r.sin || undefined, employeeProvince: r.employee_province || undefined,
     payFrequency: r.pay_frequency || undefined, payPeriodStart: r.pay_period_start || undefined,
-    annualSalary: r.annual_salary ?? undefined
+    annualSalary: r.annual_salary ?? undefined,
+    credentials: Array.isArray(r.credentials) ? r.credentials : []
   };
 }
 

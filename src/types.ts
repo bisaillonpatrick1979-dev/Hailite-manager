@@ -4,6 +4,33 @@ export type VisualTheme = 'quantum' | 'xp' | 'deco' | 'inferno' | 'arctic' | 'ca
 
 export type PayMode = 'horaire' | 'surface' | 'forfait';
 
+
+export type EmployeeCredentialType =
+  | 'manlift'
+  | 'scissor_lift'
+  | 'first_aid_cpr'
+  | 'fall_protection'
+  | 'whmis'
+  | 'forklift'
+  | 'confined_space'
+  | 'custom';
+
+export interface EmployeeCredential {
+  id: string;
+  type: EmployeeCredentialType;
+  name: string;
+  issuer: string;
+  credentialNumber: string;
+  issuedDate: string;
+  expiryDate: string;
+  renewalReminderDays: number;
+  doesNotExpire?: boolean;
+  photoFront?: string;
+  photoBack?: string;
+  notes?: string;
+  notifiedAt?: string;
+}
+
 export interface Employee {
   id: string;
   name: string;
@@ -37,6 +64,7 @@ export interface Employee {
   payFrequency?: 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';
   payPeriodStart?: string;
   annualSalary?: number;
+  credentials?: EmployeeCredential[];
 }
 
 export interface ProjectTask {
