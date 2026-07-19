@@ -1,0 +1,39 @@
+{
+  "testedAt": "2026-07-19T19:18:15.346831+00:00",
+  "productionUrl": "https://hailite-manager.vercel.app",
+  "loginHttp": 200,
+  "tokenCreated": true,
+  "statusHttp": 200,
+  "configured": {
+    "gemini": true,
+    "anthropic": true,
+    "openai": true
+  },
+  "providers": {
+    "anthropic": {
+      "http": 200,
+      "configured": true,
+      "providerReturned": "anthropic",
+      "simulated": false,
+      "hasReply": true,
+      "error": null
+    },
+    "openai": {
+      "http": 200,
+      "configured": true,
+      "providerReturned": "openai",
+      "simulated": false,
+      "hasReply": true,
+      "error": null
+    },
+    "gemini": {
+      "http": 200,
+      "configured": true,
+      "providerReturned": "gemini",
+      "simulated": false,
+      "hasReply": true,
+      "error": null
+    }
+  },
+  "allPassed": true
+}
