@@ -181,11 +181,11 @@ if 'id="live-compensation-panel"' not in text and '<LiveCompensationPanel' not i
     text = replace_once(text, punch_comment, panel_markup, 'panneau rémunération en direct')
 
 button_metrics_pattern = re.compile(
-    r"                        /\* Real-time Dynamic Timer \*/\n"
+    r"                        \{/\* Real-time Dynamic Timer \*/\}\n"
     r"                        <span className=\"text-sm font-mono text-gray-300 mt-1 uppercase tracking-widest font-black\">\n"
     r"                          \{activePunchSession \? timerDisplay : \"00:00:00\"\}\n"
     r"                        </span>\n\n"
-    r"                        /\* Real-time earnings simulator underneath \*/\n"
+    r"                        \{/\* Real-time earnings simulator underneath \*/\}\n"
     r"                        \{activePunchSession && \(\n"
     r"                          <span className=\"text-xs uppercase font-black text-green-400 mt-1 px-2\.5 py-1 rounded bg-green-950/40 border border-green-500/20\">\n"
     r"                            \+ \{earningsSimulation\}\$\n"
