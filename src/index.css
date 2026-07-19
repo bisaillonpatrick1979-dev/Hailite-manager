@@ -130,3 +130,31 @@ textarea:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* ANIMATIONS DU CALENDRIER DES JOURNÉES */
+.calendar-day-emoji {
+  display: inline-block;
+  transform-origin: center;
+  will-change: transform, filter, opacity;
+}
+
+@keyframes calTurtle { 0%,100%{transform:translateX(-1px) rotate(-3deg)} 50%{transform:translateX(2px) rotate(3deg)} }
+@keyframes calSteam { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+@keyframes calFloat { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-4px) rotate(2deg)} }
+@keyframes calWork { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
+@keyframes calFlex { 0%,100%{transform:rotate(-6deg) scale(1)} 50%{transform:rotate(6deg) scale(1.12)} }
+@keyframes calFire { 0%,100%{transform:translateY(0) scale(1);filter:brightness(1)} 50%{transform:translateY(-3px) scale(1.12);filter:brightness(1.25)} }
+@keyframes calZap { 0%,90%,100%{transform:translateX(0);filter:brightness(1)} 92%{transform:translateX(-2px);filter:brightness(1.5)} 95%{transform:translateX(2px)} 98%{transform:translateX(-1px)} }
+@keyframes calExplode { 0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 rgba(124,58,237,0))} 50%{transform:scale(1.22);filter:drop-shadow(0 0 7px rgba(124,58,237,.8))} }
+@keyframes calSway { 0%,100%{transform:rotate(-7deg)} 50%{transform:rotate(7deg)} }
+
+.cal-turtle { animation: calTurtle 2.8s ease-in-out infinite; }
+.cal-steam { animation: calSteam 2.1s ease-in-out infinite; }
+.cal-float { animation: calFloat 2.5s ease-in-out infinite; }
+.cal-work { animation: calWork 1.8s ease-in-out infinite; }
+.cal-flex { animation: calFlex 1.6s ease-in-out infinite; }
+.cal-fire { animation: calFire 1.35s ease-in-out infinite; }
+.cal-zap { animation: calZap 2.1s linear infinite; }
+.cal-explode { animation: calExplode 1.45s ease-in-out infinite; }
+.cal-sway { animation: calSway 2.4s ease-in-out infinite; }

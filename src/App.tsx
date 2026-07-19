@@ -16,6 +16,7 @@ const MotivationTab = lazy(() => import('./components/MotivationTab'));
 const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
+const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
 import EmployeeAvatar from './components/EmployeeAvatar';
 import SignaturePad from './components/SignaturePad';
 import {
@@ -273,6 +274,7 @@ export default function App() {
     : activeSettingsTab;
   const [statsMonth, setStatsMonth] = useState<string>('2026-06');
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
+  const [teamCalendarEmployeeId, setTeamCalendarEmployeeId] = useState<string>('');
   const [statsSubTab, setStatsSubTab] = useState<'analytics' | 'payroll'>('analytics');
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [payrollFocusEmployeeId, setPayrollFocusEmployeeId] = useState<string>('');
@@ -1760,50 +1762,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       </div>
                     </div>
 
-                    {/* Calendar of worked days (vertical month block inside card) */}
+                    {/* Calendrier réel des journées travaillées — employés et secrétaire */}
                     <div className="w-full mt-6 border-t border-gray-800 pt-6">
-                      <div className="flex items-center justify-between gap-4 mb-4">
-                        <h4 className="text-xs font-bold uppercase text-gray-300">
-                          {t.monthlyCalendar}
-                        </h4>
-                        <div className="flex items-center gap-1">
-                          <button className="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-white cursor-pointer"><ChevronLeft className="w-4 h-4" /></button>
-                          <span className="text-[10px] font-mono font-bold uppercase">{t.monthNames[5]} 2026</span>
-                          <button className="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-white cursor-pointer"><ChevronRight className="w-4 h-4" /></button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-7 gap-1 text-center mb-1">
-                        {t.weekDaysShort.map((d, idx) => (
-                          <span key={idx} className="text-[9px] font-bold text-gray-600 uppercase">{d}</span>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1.5">
-                        {Array.from({ length: 30 }).map((_, idx) => {
-                          const dateNum = idx + 1;
-                          // simple highlight: Mathieu worked June 1 and 2
-                          const hasFullDay = (dateNum === 1);
-                          const hasPartDay = (dateNum === 2);
-                          const isToday = (dateNum === 3);
-
-                          return (
-                            <div
-                              key={idx}
-                              title={`${t.monthNames[5]} ${dateNum}`}
-                              className={`aspect-square text-[10px] rounded flex items-center justify-center font-bold ${
-                                hasFullDay 
-                                  ? 'bg-green-500/20 text-green-400 border border-green-500/35' 
-                                  : hasPartDay 
-                                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/35'
-                                  : isToday
-                                  ? 'bg-white text-black ring-2 ring-orange-500 shadow-md font-black'
-                                  : 'bg-gray-850 text-gray-600'
-                              }`}
-                            >
-                              {dateNum}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <EmployeeWorkCalendar
+                          employee={activeEmployee}
+                          punchSessions={punchSessions}
+                          projects={projects}
+                          currentLanguage={currentLanguage}
+                          embedded
+                        />
+                      </Suspense>
                     </div>
 
                   </div>
@@ -3317,6 +3286,41 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     </div>
 
                   </div>
+
+                  {/* Calendriers détaillés de l'équipe — accessibles au bureau sans exposer les NIP */}
+                  {activeEmployee && (activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (() => {
+                    const calendarEmployees = employees.filter(employee => employee.role !== 'admin');
+                    const selectedCalendarEmployee = calendarEmployees.find(employee => employee.id === teamCalendarEmployeeId) || calendarEmployees[0];
+                    if (!selectedCalendarEmployee) return null;
+                    return (
+                      <section id="team-work-calendars" className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div>
+                            <div className="inline-flex px-2 py-1 rounded bg-cyan-500/10 text-cyan-400 font-mono text-[9px] uppercase font-black">TEAM CALENDAR</div>
+                            <h4 className="text-sm font-black text-white mt-2">📅 {currentLanguage === 'FR' ? "Calendriers des employés" : 'Employee calendars'}</h4>
+                            <p className="text-xs text-gray-500 mt-1">{currentLanguage === 'FR' ? 'Choisissez un employé, puis touchez une journée pour ouvrir sa fiche complète.' : 'Choose an employee, then tap a day to open the complete daily record.'}</p>
+                          </div>
+                          <select
+                            value={selectedCalendarEmployee.id}
+                            onChange={event => setTeamCalendarEmployeeId(event.target.value)}
+                            className="w-full sm:w-64 p-3 bg-gray-900 border border-gray-800 rounded-xl text-white font-bold"
+                            aria-label={currentLanguage === 'FR' ? 'Choisir un employé' : 'Choose an employee'}
+                          >
+                            {calendarEmployees.map(employee => <option key={employee.id} value={employee.id}>{employee.name} — {employee.workerType}</option>)}
+                          </select>
+                        </div>
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <EmployeeWorkCalendar
+                            employee={selectedCalendarEmployee}
+                            punchSessions={punchSessions}
+                            projects={projects}
+                            currentLanguage={currentLanguage}
+                            embedded
+                          />
+                        </Suspense>
+                      </section>
+                    );
+                  })()}
 
                   {/* -------------------- DETAILED EMPLOYEE STATISTICS (ADMIN ONLY) -------------------- */}
                   {activeEmployee && activeEmployee.role === 'admin' && (
