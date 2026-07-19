@@ -263,6 +263,7 @@ export default function App() {
   // App Navigation state
   const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
+  const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
   // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
   // réglages personnels (Thème, Langue) — jamais les réglages de compagnie,
   // paie ou d'équipe. On limite l'onglet affiché sans toucher à l'état réel,
@@ -285,7 +286,15 @@ export default function App() {
 
   // Employee active session state
   const [activePunchSession, setActivePunchSession] = useState<any>(null);
-  const [homePunchProject, setHomePunchProject] = useState<string>('');
+  const [homePunchProject, setHomePunchProject] = useState<string>(() => {
+    try {
+      return activeEmployee
+        ? localStorage.getItem(`gcp_lastPunchProject_${activeEmployee.id}`) || ''
+        : '';
+    } catch {
+      return '';
+    }
+  });
   const [homePayMode, setHomePayMode] = useState<'horaire' | 'surface' | 'forfait'>('horaire');
   const [homeRateCustom, setHomeRateCustom] = useState<number>(0);
   const [timerDisplay, setTimerDisplay] = useState<string>('00:00:00');
@@ -561,6 +570,36 @@ export default function App() {
     }
   };
 
+  // Punch intelligent : mémorise et présélectionne le dernier chantier valide.
+  useEffect(() => {
+    if (!activeEmployee || activePunchSession) return;
+
+    const availableProjects = activeEmployee.role === 'admin'
+      ? projects.filter(project => project.status === 'active')
+      : projects.filter(project =>
+          project.status === 'active' && project.assignedEmployees.includes(activeEmployee.id)
+        );
+
+    if (availableProjects.length === 0) {
+      if (homePunchProject) setHomePunchProject('');
+      return;
+    }
+
+    let rememberedProject = '';
+    try {
+      rememberedProject = localStorage.getItem(`gcp_lastPunchProject_${activeEmployee.id}`) || '';
+    } catch {
+      rememberedProject = '';
+    }
+
+    const currentIsValid = availableProjects.some(project => project.id === homePunchProject);
+    const nextProject = currentIsValid
+      ? homePunchProject
+      : availableProjects.find(project => project.id === rememberedProject)?.id || availableProjects[0].id;
+
+    if (nextProject !== homePunchProject) setHomePunchProject(nextProject);
+  }, [activeEmployee, activePunchSession, homePunchProject, projects]);
+
   const handlePunchInStart = () => {
     if (!activeEmployee || !homePunchProject) return;
 
@@ -591,6 +630,12 @@ export default function App() {
       rate: homeRateCustom,
       withinGeofence: true
     });
+
+    try {
+      localStorage.setItem(`gcp_lastPunchProject_${activeEmployee.id}`, homePunchProject);
+    } catch {
+      // Le punch demeure fonctionnel si le stockage local est indisponible.
+    }
     
     playSoundCue('in');
     setShowPunchInModal(false);
@@ -1469,6 +1514,88 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     );
                   })()}
                 </div>
+
+                {activeEmployee.role === 'admin' && (() => {
+                  const activePunchCount = punchSessions.filter(punch => punch.endTime === null).length;
+                  const overdueInvoiceCount = documents.filter(document =>
+                    document.type === 'invoice' && document.status === 'overdue'
+                  ).length;
+                  const outstandingAmount = documents
+                    .filter(document => document.type === 'invoice' && ['overdue', 'sent'].includes(document.status))
+                    .reduce((sum, document) => sum + Number(document.balanceDue ?? document.total ?? 0), 0);
+                  const unresolvedHrAlertCount = hrAlerts.filter(alert => !alert.resolved).length;
+                  const todayLabel = new Date().toLocaleDateString(
+                    currentLanguage === 'FR' ? 'fr-CA' : 'en-CA',
+                    { weekday: 'long', day: 'numeric', month: 'long' }
+                  );
+
+                  return (
+                    <section id="admin-today-banner" className="bg-[#16191F] border border-gray-800 rounded-2xl p-4 space-y-4">
+                      <h3 className="text-base font-black text-white flex flex-wrap items-baseline gap-2">
+                        <span>📅 {currentLanguage === 'FR' ? "Aujourd'hui" : 'Today'}</span>
+                        <span className="text-xs text-gray-400 font-semibold capitalize">{todayLabel}</span>
+                      </h3>
+
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="rounded-xl p-3 flex flex-col gap-1 bg-gray-950/60 border border-gray-850">
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'Punchs actifs' : 'Active punches'}
+                          </span>
+                          <span className={`text-2xl font-black ${activePunchCount > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+                            {activePunchCount > 0 ? '🟢 ' : ''}{activePunchCount}
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('documents')}
+                          className={`rounded-xl p-3 flex flex-col gap-1 text-left transition ${
+                            overdueInvoiceCount > 0
+                              ? 'bg-red-950/35 border border-red-700/70 hover:bg-red-950/50'
+                              : 'bg-gray-950/60 border border-gray-850 hover:border-gray-700'
+                          }`}
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'Factures en retard' : 'Overdue invoices'}
+                          </span>
+                          <span className={`text-2xl font-black ${overdueInvoiceCount > 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                            {overdueInvoiceCount > 0 ? '🔴 ' : ''}{overdueInvoiceCount}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('documents')}
+                          className="rounded-xl p-3 flex flex-col gap-1 text-left bg-gray-950/60 border border-gray-850 hover:border-amber-600/60 transition"
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'À encaisser' : 'To collect'}
+                          </span>
+                          <span className="text-2xl font-black text-amber-400">
+                            {outstandingAmount.toLocaleString(currentLanguage === 'FR' ? 'fr-CA' : 'en-CA', { maximumFractionDigits: 0 })}$
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => { setActiveTab('settings'); setActiveSettingsTab(0); }}
+                          className={`rounded-xl p-3 flex flex-col gap-1 text-left transition ${
+                            unresolvedHrAlertCount > 0
+                              ? 'bg-amber-950/30 border border-amber-700/70 hover:bg-amber-950/45'
+                              : 'bg-gray-950/60 border border-gray-850 hover:border-gray-700'
+                          }`}
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'Alertes RH' : 'HR alerts'}
+                          </span>
+                          <span className={`text-2xl font-black ${unresolvedHrAlertCount > 0 ? 'text-amber-400' : 'text-gray-500'}`}>
+                            {unresolvedHrAlertCount > 0 ? '⚠️ ' : ''}{unresolvedHrAlertCount}
+                          </span>
+                        </button>
+                      </div>
+                    </section>
+                  );
+                })()}
 
                 {/* 2. EMPLOYEE DASHBOARD (WITH CENTRAL ROUND PUNCH BUTTON) */}
                 {activeEmployee.role !== 'admin' ? (
@@ -6500,6 +6627,69 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         )}
       </motion.div>
 
+      {/* ADMIN MORE MENU — mobile 4+1 */}
+      {activeEmployee && activeEmployee.role === 'admin' && showMoreMenu && (
+        <>
+          <button
+            type="button"
+            aria-label={currentLanguage === 'FR' ? 'Fermer le menu Plus' : 'Close More menu'}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 cursor-default"
+            onClick={() => setShowMoreMenu(false)}
+          />
+          <section
+            id="admin-more-menu"
+            className="fixed bottom-16 left-0 right-0 z-40 bg-[#16191F] border-t border-gray-800 rounded-t-3xl p-4 pb-6 shadow-2xl"
+            style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={currentLanguage === 'FR' ? 'Navigation supplémentaire' : 'More navigation'}
+          >
+            <div className="w-12 h-1.5 bg-gray-600 rounded-full mx-auto mb-4" />
+            <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+              {[
+                { tab: 'invoice' as const, icon: '🧾', label: t.navAdminInvoices },
+                { tab: 'inventory' as const, icon: '📦', label: t.navShortInventory },
+                { tab: 'commandes' as const, icon: '🚚', label: t.navShortOrders },
+                { tab: 'motivation' as const, icon: '🎯', label: t.navShortGoals }
+              ].map(item => (
+                <button
+                  key={item.tab}
+                  type="button"
+                  onClick={() => { setActiveTab(item.tab); setShowMoreMenu(false); }}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition ${
+                    activeTab === item.tab
+                      ? 'bg-orange-600/20 border-orange-600 text-orange-400'
+                      : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'
+                  }`}
+                >
+                  <span className="text-3xl" aria-hidden="true">{item.icon}</span>
+                  <span className="text-[10px] uppercase font-black text-center leading-tight">{item.label}</span>
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => { setActiveTab('settings'); setActiveSettingsTab(0); setShowMoreMenu(false); }}
+                className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border transition ${
+                  activeTab === 'settings'
+                    ? 'bg-orange-600/20 border-orange-600 text-orange-400'
+                    : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'
+                }`}
+              >
+                <span className="text-3xl" aria-hidden="true">⚙️</span>
+                <span className="text-[10px] uppercase font-black text-center leading-tight">{t.navShortSettings}</span>
+                {hrAlerts.filter(a => !a.resolved).length > 0 && (
+                  <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                  </span>
+                )}
+              </button>
+            </div>
+          </section>
+        </>
+      )}
+
       {/* -------------------- ADMIN / EMPLOYEE FIXED BOTTOM NAV BAR -------------------- */}
       {activeEmployee && (
         <nav 
@@ -6508,10 +6698,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         >
           <div className="flex-1 flex justify-around items-center max-w-4xl mx-auto">
             {activeEmployee.role === 'admin' ? (
-              /* Administrative Buttons - 9 items logically mapped as categories */
+              /* Administrative Buttons - mobile 4+1 navigation */
               <>
                 <button
-                  onClick={() => setActiveTab('home')}
+                  onClick={() => { setActiveTab('home'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'home' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
@@ -6521,27 +6711,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('invoice')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'invoice' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">🧾</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminInvoices}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('projects')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'projects' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">📋</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminProjects}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('documents')}
+                  onClick={() => { setActiveTab('documents'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'documents' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
@@ -6551,27 +6721,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('inventory')}
+                  onClick={() => { setActiveTab('projects'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'inventory' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                    activeTab === 'projects' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">📦</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortInventory}</span>
+                  <span className="text-2xl">📋</span>
+                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminProjects}</span>
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('commandes')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'commandes' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">🚚</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortOrders}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('stats')}
+                  onClick={() => { setActiveTab('stats'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
@@ -6581,23 +6741,19 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('motivation')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'motivation' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                  onClick={() => setShowMoreMenu(value => !value)}
+                  className={`relative flex flex-col items-center gap-1 cursor-pointer transition ${
+                    showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings'].includes(activeTab)
+                      ? 'text-orange-500 font-bold scale-105'
+                      : 'text-gray-400 hover:text-white'
                   }`}
+                  aria-expanded={showMoreMenu}
+                  aria-controls="admin-more-menu"
                 >
-                  <span className="text-2xl">🎯</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortGoals}</span>
-                </button>
-
-                <button
-                  onClick={() => { setActiveTab('settings'); setActiveSettingsTab(0); }}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition relative ${
-                    activeTab === 'settings' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">⚙️</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortSettings}</span>
+                  <span className="text-2xl">☰</span>
+                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">
+                    {currentLanguage === 'FR' ? 'Plus' : 'More'}
+                  </span>
                   {hrAlerts.filter(a => !a.resolved).length > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>

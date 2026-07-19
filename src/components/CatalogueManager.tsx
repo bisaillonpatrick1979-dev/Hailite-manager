@@ -539,6 +539,53 @@ export default function CatalogueManager() {
         </div>
       )}
 
+      {/* EMPTY SIDING CATALOGUE SEED */}
+      {catalogue.length === 0 && canManage && (
+        <div className="bg-gray-900/60 border-2 border-dashed border-gray-700 rounded-2xl p-8 text-center space-y-4">
+          <div className="text-6xl" aria-hidden="true">🏗️</div>
+          <div>
+            <h4 className="text-xl font-black text-white">
+              {currentLanguage === 'FR' ? 'Votre catalogue est vide' : 'Your catalog is empty'}
+            </h4>
+            <p className="mt-2 text-sm text-gray-400 max-w-lg mx-auto">
+              {currentLanguage === 'FR'
+                ? 'Chargez une base de matériaux de revêtement. Tous les noms, unités et prix pourront être modifiés ensuite.'
+                : 'Load a starter siding-material list. Every name, unit, and price can be edited afterward.'}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const seed: Array<Omit<CatalogueMaterial, 'id'>> = [
+                { name: currentLanguage === 'FR' ? 'Vinyle standard' : 'Standard vinyl', emoji: '🧱', pricePerSqFt: 1.5, supplierPrice: 1.1, clientPrice: 4.5, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Vinyle premium' : 'Premium vinyl', emoji: '🧱', pricePerSqFt: 1.75, supplierPrice: 1.6, clientPrice: 5.5, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Hardie Plank (fibre de ciment)' : 'Hardie Plank (fiber cement)', emoji: '🪨', pricePerSqFt: 2.5, supplierPrice: 2.4, clientPrice: 8, unit: 'pi2' },
+                { name: 'Hardie Panel', emoji: '🪨', pricePerSqFt: 2.5, supplierPrice: 2.6, clientPrice: 8.5, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Soffite aluminium' : 'Aluminum soffit', emoji: '🔩', pricePerSqFt: 2, supplierPrice: 1.4, clientPrice: 6, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Fascia aluminium' : 'Aluminum fascia', emoji: '📏', pricePerSqFt: 2, supplierPrice: 1.2, clientPrice: 6, unit: 'pi_lin' },
+                { name: currentLanguage === 'FR' ? 'Membrane pare-intempéries (Tyvek)' : 'Weather barrier membrane (Tyvek)', emoji: '🛡️', pricePerSqFt: 0.25, supplierPrice: 0.18, clientPrice: 0.75, unit: 'rouleau', unitNote: currentLanguage === 'FR' ? 'Rouleau 9pi x 100pi' : '9 ft x 100 ft roll' },
+                { name: 'J-Trim', emoji: '📐', pricePerSqFt: 0.5, supplierPrice: 8, clientPrice: 15, unit: 'unite', unitNote: currentLanguage === 'FR' ? 'Longueur 12pi' : '12 ft length' },
+                { name: currentLanguage === 'FR' ? 'Coin extérieur' : 'Outside corner', emoji: '📐', pricePerSqFt: 0.5, supplierPrice: 14, clientPrice: 28, unit: 'unite', unitNote: currentLanguage === 'FR' ? 'Longueur 10pi' : '10 ft length' },
+                { name: currentLanguage === 'FR' ? 'Départ (starter strip)' : 'Starter strip', emoji: '📏', pricePerSqFt: 0.4, supplierPrice: 6, clientPrice: 12, unit: 'unite' },
+                { name: currentLanguage === 'FR' ? 'Clous galvanisés 2po' : '2 in galvanized nails', emoji: '🔨', pricePerSqFt: 0.05, supplierPrice: 45, clientPrice: 70, unit: 'boite', unitNote: currentLanguage === 'FR' ? 'Boîte 50lb' : '50 lb box' },
+                { name: currentLanguage === 'FR' ? 'Scellant extérieur' : 'Exterior sealant', emoji: '🧴', pricePerSqFt: 0.1, supplierPrice: 7, clientPrice: 14, unit: 'unite', unitNote: 'Tube 300ml' }
+              ];
+              seed.forEach(item => addCatalogueMaterial(item));
+            }}
+            className="px-6 py-3.5 bg-orange-600 hover:bg-orange-500 text-white font-black rounded-xl transition shadow-lg"
+          >
+            {currentLanguage === 'FR' ? '📦 Charger le catalogue revêtement' : '📦 Load siding catalog'}
+          </button>
+
+          <p className="text-xs text-gray-500">
+            {currentLanguage === 'FR'
+              ? '12 matériaux avec prix de départ — à ajuster selon vos fournisseurs'
+              : '12 materials with starter prices — adjust them for your suppliers'}
+          </p>
+        </div>
+      )}
+
       {/* Catalogue Items List (une ligne par matériau pour rester lisible sur mobile) */}
       <div className="flex flex-col gap-3">
         {catalogue.map(cat => {
