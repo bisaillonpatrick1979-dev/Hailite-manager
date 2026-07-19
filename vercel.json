@@ -1,5 +1,5 @@
 {
-  "buildCommand": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && tsx scripts/validate_test_dataset.ts && tsc --noEmit && vite build",
+  "buildCommand": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && tsx scripts/validate_test_dataset.ts && tsc --noEmit && vite build",
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" }
