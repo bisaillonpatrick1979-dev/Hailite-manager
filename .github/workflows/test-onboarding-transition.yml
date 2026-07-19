@@ -21,25 +21,22 @@ jobs:
         with:
           node-version: 22
 
-      - name: Installer Playwright
-        run: |
-          npm install --no-save playwright@1.54.1
-          npx playwright install --with-deps chromium
+      - name: Installer Chrome stable
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Installer le pilote de navigateur
+        run: npm install --no-save puppeteer-core@24.15.0
 
       - name: Parcourir l’onboarding complet sans recharger
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
           cat > /tmp/test-onboarding.mjs <<'JS'
-          import { chromium } from 'playwright';
+          import puppeteer from 'puppeteer-core';
           import fs from 'node:fs';
-
-          const browser = await chromium.launch({ headless: true });
-          const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
-          const consoleErrors = [];
-          const pageErrors = [];
-          page.on('console', message => {
-            if (message.type() === 'error') consoleErrors.push(message.text());
-          });
-          page.on('pageerror', error => pageErrors.push(error.message));
 
           const result = {
             testedAt: new Date().toISOString(),
@@ -56,45 +53,109 @@ jobs:
             passed: false
           };
 
+          let browser;
           try {
-            await page.goto(result.url, { waitUntil: 'networkidle', timeout: 90000 });
-            await page.evaluate(() => localStorage.clear());
-            await page.reload({ waitUntil: 'networkidle', timeout: 90000 });
+            browser = await puppeteer.launch({
+              executablePath: process.env.CHROME_PATH,
+              headless: true,
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+            const page = await browser.newPage();
+            await page.setViewport({ width: 1100, height: 900 });
 
-            await page.locator('#hailite-onboarding-screen').waitFor({ state: 'visible', timeout: 30000 });
+            page.on('console', message => {
+              if (message.type() === 'error') result.consoleErrors.push(message.text());
+            });
+            page.on('pageerror', error => result.pageErrors.push(error.message));
+
+            const setLabelValue = async (fragment, value) => {
+              await page.evaluate(({ fragment, value }) => {
+                const label = [...document.querySelectorAll('label')]
+                  .find(element => (element.textContent || '').includes(fragment));
+                const input = label?.querySelector('input, textarea, select');
+                if (!input) throw new Error(`Champ introuvable: ${fragment}`);
+                const prototype = input instanceof HTMLTextAreaElement
+                  ? HTMLTextAreaElement.prototype
+                  : input instanceof HTMLSelectElement
+                    ? HTMLSelectElement.prototype
+                    : HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+                setter?.call(input, value);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              }, { fragment, value });
+            };
+
+            const checkLabel = async fragment => {
+              await page.evaluate(fragment => {
+                const label = [...document.querySelectorAll('label')]
+                  .find(element => (element.textContent || '').includes(fragment));
+                const input = label?.querySelector('input[type="checkbox"]');
+                if (!input) throw new Error(`Case introuvable: ${fragment}`);
+                if (!input.checked) input.click();
+              }, fragment);
+            };
+
+            const clickButton = async text => {
+              await page.evaluate(text => {
+                const button = [...document.querySelectorAll('button')]
+                  .find(element => (element.textContent || '').trim().includes(text) && !element.disabled);
+                if (!button) throw new Error(`Bouton actif introuvable: ${text}`);
+                button.click();
+              }, text);
+            };
+
+            const waitForText = async text => {
+              await page.waitForFunction(
+                text => (document.body.textContent || '').includes(text),
+                { timeout: 30000 },
+                text
+              );
+            };
+
+            await page.goto(result.url, { waitUntil: 'networkidle0', timeout: 90000 });
+            await page.evaluate(() => localStorage.clear());
+            await page.reload({ waitUntil: 'networkidle0', timeout: 90000 });
+
+            await page.waitForSelector('#hailite-onboarding-screen', { visible: true, timeout: 30000 });
             result.onboardingVisible = true;
 
-            await page.getByLabel('Nom légal ou commercial').fill('Hailite Test Transition');
-            await page.getByLabel('Courriel de compagnie').fill('test@hailite.example');
-            await page.getByLabel('Courriel pour les demandes de confidentialité').fill('privacy@hailite.example');
-            await page.getByRole('button', { name: 'Continuer' }).click();
+            await setLabelValue('Nom légal ou commercial', 'Hailite Test Transition');
+            await setLabelValue('Courriel de compagnie', 'test@hailite.example');
+            await setLabelValue('Courriel pour les demandes de confidentialité', 'privacy@hailite.example');
+            await clickButton('Continuer');
+            await waitForText('Pays, région et formats');
 
-            await page.getByRole('button', { name: 'Continuer' }).click();
+            await clickButton('Continuer');
+            await waitForText('Taxes à confirmer');
 
-            await page.getByLabel(/Je confirme avoir vérifié ces taux/).check();
-            await page.getByRole('button', { name: 'Continuer' }).click();
+            await checkLabel('Je confirme avoir vérifié ces taux');
+            await clickButton('Continuer');
+            await waitForText('Données, confidentialité et hébergement');
 
-            await page.getByLabel(/Avis et rôle/).check();
-            await page.getByLabel(/Je confirmerai la base juridique/).check();
-            await page.getByLabel(/Je comprends que le GPS/).check();
-            await page.getByRole('button', { name: 'Continuer' }).click();
+            await checkLabel('Avis et rôle');
+            await checkLabel('Je confirmerai la base juridique');
+            await checkLabel('Je comprends que le GPS');
+            await clickButton('Continuer');
+            await waitForText('Apparence et confirmation');
 
-            await page.getByRole('button', { name: 'Enregistrer et ouvrir' }).click();
+            await clickButton('Enregistrer et ouvrir');
             result.clickedFinish = true;
 
-            // Important : aucun page.reload() après le clic final.
-            await page.locator('#main-scaffold-container').waitFor({ state: 'visible', timeout: 30000 });
-            result.mainVisibleWithoutReload = await page.locator('#main-scaffold-container').isVisible();
-            result.loginVisibleWithoutReload = await page.locator('#login-container-wrapper').isVisible();
-            result.rootHasContent = await page.locator('#root').evaluate(element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
-            result.bodyIsNotBlank = await page.locator('body').evaluate(element => (element.innerText || '').trim().length > 100);
+            // Aucun rechargement n'est effectué après le clic final.
+            await page.waitForSelector('#main-scaffold-container', { visible: true, timeout: 30000 });
+            result.mainVisibleWithoutReload = await page.$eval('#main-scaffold-container', element => Boolean(element.offsetWidth || element.offsetHeight));
+            result.loginVisibleWithoutReload = await page.$eval('#login-container-wrapper', element => Boolean(element.offsetWidth || element.offsetHeight));
+            result.rootHasContent = await page.$eval('#root', element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
+            result.bodyIsNotBlank = await page.$eval('body', element => (element.innerText || '').trim().length > 100);
           } catch (error) {
             result.testError = String(error?.stack || error);
+          } finally {
+            if (browser) await browser.close();
           }
 
-          result.consoleErrors = consoleErrors;
-          result.pageErrors = pageErrors;
-          result.hookErrorDetected = [...consoleErrors, ...pageErrors].some(message => /Rendered more hooks|hooks than during the previous render|change in the order of Hooks/i.test(message));
+          result.hookErrorDetected = [...result.consoleErrors, ...result.pageErrors]
+            .some(message => /Rendered more hooks|hooks than during the previous render|change in the order of Hooks/i.test(message));
           result.passed = Boolean(
             result.onboardingVisible &&
             result.clickedFinish &&
@@ -108,7 +169,6 @@ jobs:
 
           fs.writeFileSync('onboarding-transition-test-result.json', JSON.stringify(result, null, 2));
           console.log(JSON.stringify(result, null, 2));
-          await browser.close();
           if (!result.passed) process.exit(1);
           JS
           node /tmp/test-onboarding.mjs
@@ -123,7 +183,7 @@ jobs:
             git commit -m "Ajoute le résultat du test de transition onboarding" || true
             git push origin HEAD:main
           else
-            echo '{"passed":false,"testError":"Le test Playwright n’a pas produit de rapport."}' > onboarding-transition-test-result.json
+            echo '{"passed":false,"testError":"Le runner Chrome n’a pas produit de rapport."}' > onboarding-transition-test-result.json
             git add onboarding-transition-test-result.json
             git commit -m "Ajoute l’échec du test de transition onboarding" || true
             git push origin HEAD:main
