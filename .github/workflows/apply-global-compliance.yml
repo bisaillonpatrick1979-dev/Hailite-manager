@@ -1,0 +1,36 @@
+name: Apply global compliance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-global-compliance.yml'
+      - 'scripts/apply_global_compliance.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Apply international compliance updates
+        run: python3 scripts/apply_global_compliance.py
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify TypeScript
+        run: npm run lint
+      - name: Verify production build
+        run: npm run build
+      - name: Commit verified files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Internationalise l’application et documente les consentements
+          file_pattern: src/App.tsx src/types.ts src/regionsData.ts src/apiClient.ts src/cloudBootstrap.ts src/store.ts src/components/ClientDocumentsManager.tsx bootstrapRoutes.ts supabase/migrations/20260719173000_add_international_compliance_and_invoice_branding.sql
