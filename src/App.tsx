@@ -768,6 +768,37 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         updateInventoryItem({ ...item, quantity: Math.max(0, Number(params.quantity)) });
         return fmt(t.aiActInventoryAdjusted, { name: item.name, qty: Math.max(0, Number(params.quantity)), unit: item.unit });
       }
+      case 'create_expense': {
+        const validCategories = ['materials', 'tools', 'fuel', 'rental', 'subcontractor', 'admin', 'other'];
+        if (!params.provider || typeof params.amount !== 'number' || !validCategories.includes(params.category)) {
+          return t.aiActMissingExpense;
+        }
+        // Associe le chantier par son nom si l'IA en a identifié un sur la facture
+        const matchedProject = params.projectName
+          ? projects.find(p => p.name.toLowerCase() === String(params.projectName).toLowerCase())
+          : undefined;
+        const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(params.date || ''))
+          ? String(params.date)
+          : new Date().toISOString().split('T')[0];
+        const amount = Math.max(0, Number(params.amount));
+        const tax = Math.max(0, Number(params.tax) || 0);
+        addExpense({
+          provider: String(params.provider),
+          category: params.category,
+          projectId: matchedProject?.id || '',
+          amount,
+          tax,
+          date: expenseDate,
+          notes: params.notes ? String(params.notes) : undefined
+        });
+        return fmt(t.aiActExpenseCreated, {
+          provider: String(params.provider),
+          amount: amount.toFixed(2),
+          tax: tax.toFixed(2),
+          category: String(params.category),
+          date: expenseDate
+        });
+      }
       case 'create_order': {
         if (!params.supplierName || !Array.isArray(params.items) || params.items.length === 0) {
           return t.aiActMissingOrder;
