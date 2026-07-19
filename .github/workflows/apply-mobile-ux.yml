@@ -1,0 +1,57 @@
+name: Apply mobile UX improvements
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-mobile-ux.yml'
+      - 'scripts/apply_mobile_ux_update.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Apply surgical updates
+        run: python3 scripts/apply_mobile_ux_update.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript verification
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Remove temporary automation
+        run: |
+          rm -f scripts/apply_mobile_ux_update.py
+          rm -f .github/workflows/apply-mobile-ux.yml
+          rmdir scripts 2>/dev/null || true
+
+      - name: Commit and push verified changes
+        run: |
+          git config user.name "Hailite UX Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Améliore l'UX mobile, la navigation et le punch intelligent"
+          git push origin HEAD:main
