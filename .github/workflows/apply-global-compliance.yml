@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/apply-global-compliance.yml'
-      - 'scripts/apply_global_compliance.py'
+      - 'scripts/**'
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,6 @@ jobs:
           node-version: '20'
           cache: npm
       - name: Apply international compliance updates
-        id: apply
         shell: bash
         run: |
           set +e
