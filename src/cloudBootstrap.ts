@@ -1,4 +1,4 @@
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SANITIZER_VERSION_KEY = 'gcp_cloudSanitizerVersion';
 const SANITIZER_VERSION = '3';
 
@@ -65,11 +65,6 @@ function applyCompanyIdentity(company: any): void {
   document.title = `${next.name} — Hailite Manager`;
 }
 
-/**
- * Prépare l'état réel de la compagnie avant l'import du store Zustand.
- * Le nom et la région sont personnalisés, puis les anciennes données de
- * démonstration sont retirées dès qu'une vraie base cloud est détectée.
- */
 export async function prepareCloudState(): Promise<void> {
   if (typeof window === 'undefined') return;
 
@@ -92,7 +87,6 @@ export async function prepareCloudState(): Promise<void> {
     const validDirectory = directory.filter((user: any) => hasUuid(user?.id));
     const directoryIds = new Set(validDirectory.map((user: any) => user.id));
 
-    // L'annuaire réel est disponible immédiatement sur l'écran de connexion.
     const existingEmployees = readArray('gcp_employees');
     write('gcp_employees', validDirectory.map((user: any) => {
       const existing = existingEmployees.find(employee => employee?.id === user.id) || {};
