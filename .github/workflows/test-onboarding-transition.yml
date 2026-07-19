@@ -1,0 +1,125 @@
+name: Tester la transition onboarding
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-onboarding-transition.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  onboarding-transition:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installer Playwright
+        run: |
+          npm install --no-save playwright@1.54.1
+          npx playwright install --with-deps chromium
+
+      - name: Parcourir l’onboarding complet sans recharger
+        run: |
+          cat > /tmp/test-onboarding.mjs <<'JS'
+          import { chromium } from 'playwright';
+          import fs from 'node:fs';
+
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+          const consoleErrors = [];
+          const pageErrors = [];
+          page.on('console', message => {
+            if (message.type() === 'error') consoleErrors.push(message.text());
+          });
+          page.on('pageerror', error => pageErrors.push(error.message));
+
+          let result = {
+            testedAt: new Date().toISOString(),
+            url: 'https://hailite-manager.vercel.app',
+            onboardingVisible: false,
+            clickedFinish: false,
+            mainVisibleWithoutReload: false,
+            loginVisibleWithoutReload: false,
+            rootHasContent: false,
+            bodyIsNotBlank: false,
+            hookErrorDetected: false,
+            consoleErrors: [],
+            pageErrors: [],
+            passed: false
+          };
+
+          try {
+            await page.goto(result.url, { waitUntil: 'networkidle', timeout: 90000 });
+            await page.evaluate(() => localStorage.clear());
+            await page.reload({ waitUntil: 'networkidle', timeout: 90000 });
+
+            await page.locator('#hailite-onboarding-screen').waitFor({ state: 'visible', timeout: 30000 });
+            result.onboardingVisible = true;
+
+            const inputs = page.locator('#hailite-onboarding-screen input');
+            await inputs.nth(0).fill('Hailite Test Transition');
+            await inputs.nth(1).fill('test@hailite.example');
+            await inputs.nth(2).fill('privacy@hailite.example');
+            await page.getByRole('button', { name: 'Continuer' }).click();
+
+            await page.getByRole('button', { name: 'Continuer' }).click();
+
+            await page.locator('#hailite-onboarding-screen input[type="checkbox"]').first().check();
+            await page.getByRole('button', { name: 'Continuer' }).click();
+
+            const privacyChecks = page.locator('#hailite-onboarding-screen input[type="checkbox"]');
+            await privacyChecks.nth(0).check();
+            await privacyChecks.nth(1).check();
+            await privacyChecks.nth(2).check();
+            await page.getByRole('button', { name: 'Continuer' }).click();
+
+            await page.getByRole('button', { name: 'Enregistrer et ouvrir' }).click();
+            result.clickedFinish = true;
+
+            // Important : aucun page.reload() après le clic final.
+            await page.locator('#main-scaffold-container').waitFor({ state: 'visible', timeout: 30000 });
+            result.mainVisibleWithoutReload = await page.locator('#main-scaffold-container').isVisible();
+            result.loginVisibleWithoutReload = await page.locator('#login-container-wrapper').isVisible();
+            result.rootHasContent = await page.locator('#root').evaluate(element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
+            result.bodyIsNotBlank = await page.locator('body').evaluate(element => (element.innerText || '').trim().length > 100);
+          } catch (error) {
+            result.testError = String(error?.stack || error);
+          }
+
+          result.consoleErrors = consoleErrors;
+          result.pageErrors = pageErrors;
+          result.hookErrorDetected = [...consoleErrors, ...pageErrors].some(message => /Rendered more hooks|hooks than during the previous render|change in the order of Hooks/i.test(message));
+          result.passed = Boolean(
+            result.onboardingVisible &&
+            result.clickedFinish &&
+            result.mainVisibleWithoutReload &&
+            result.loginVisibleWithoutReload &&
+            result.rootHasContent &&
+            result.bodyIsNotBlank &&
+            !result.hookErrorDetected &&
+            !result.testError
+          );
+
+          fs.writeFileSync('onboarding-transition-test-result.json', JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(result, null, 2));
+          await browser.close();
+          if (!result.passed) process.exit(1);
+          JS
+          node /tmp/test-onboarding.mjs
+
+      - name: Enregistrer le résultat non sensible
+        if: always()
+        run: |
+          git config user.name "Hailite UI Test"
+          git config user.email "actions@users.noreply.github.com"
+          git add onboarding-transition-test-result.json
+          git commit -m "Ajoute le résultat du test de transition onboarding" || true
+          git push origin HEAD:main
