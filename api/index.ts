@@ -6,9 +6,11 @@
 // spécificateurs sans extension (ERR_MODULE_NOT_FOUND au démarrage de la fonction).
 import express from 'express';
 import { registerApiRoutes } from '../apiRoutes.js';
+import { legacyIdGuard } from '../legacyIdGuard.js';
 
 const app = express();
 app.use(express.json({ limit: '15mb' })); // signatures tactiles encodées en base64
+app.use(legacyIdGuard);
 registerApiRoutes(app);
 
 export default app;
