@@ -22,8 +22,8 @@ if 'testMode?: boolean;' not in text:
 path.write_text(text, encoding='utf-8')
 
 # ---------------------------------------------------------------------------
-# STORE — supprime les quatre faux profils historiques et utilise 10 profils
-# locaux. Aucune lecture/écriture Supabase en mode validation.
+# STORE — retire les quatre anciens profils de démonstration et utilise les
+# profils locaux actuels et historiques. Aucune lecture/écriture Supabase.
 # ---------------------------------------------------------------------------
 path = ROOT / 'src' / 'store.ts'
 text = path.read_text(encoding='utf-8')
@@ -122,7 +122,6 @@ text = re.sub(
     count=1,
 )
 
-# La valeur initiale doit elle aussi respecter le mode test avant tout appel.
 text = text.replace(
     "let cloudSyncAllowed = (() => {\n  try {",
     "let cloudSyncAllowed = (() => {\n  if (localTestModeEnabled()) return false;\n  try {",
@@ -131,7 +130,7 @@ text = text.replace(
 path.write_text(text, encoding='utf-8')
 
 # ---------------------------------------------------------------------------
-# APP — onboarding prioritaire et aide visible pour les NIP de validation.
+# APP — onboarding prioritaire, aide NIP et profils historiques masqués.
 # ---------------------------------------------------------------------------
 path = ROOT / 'src' / 'App.tsx'
 text = path.read_text(encoding='utf-8')
@@ -139,7 +138,13 @@ text = path.read_text(encoding='utf-8')
 if "from './testProfiles'" not in text:
     text = text.replace(
         "import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';\n",
-        "import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';\nimport { LOCAL_TEST_MODE, TEST_PIN_DIRECTORY } from './testProfiles';\n",
+        "import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';\nimport { LOCAL_TEST_MODE, TEST_PIN_DIRECTORY } from './testProfiles';\nimport { TEST_DATASET_SUMMARY } from './testDataset';\n",
+        1,
+    )
+elif "from './testDataset'" not in text:
+    text = text.replace(
+        "import { LOCAL_TEST_MODE, TEST_PIN_DIRECTORY } from './testProfiles';\n",
+        "import { LOCAL_TEST_MODE, TEST_PIN_DIRECTORY } from './testProfiles';\nimport { TEST_DATASET_SUMMARY } from './testDataset';\n",
         1,
     )
 
@@ -156,12 +161,12 @@ if 'LOCAL TEST PROFILES — no Supabase' not in text:
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[10px] uppercase font-black tracking-widest text-orange-400">
-                      {currentLanguage === 'FR' ? 'Mode de validation local' : 'Local validation mode'}
+                      {currentLanguage === 'FR' ? 'Mode de validation local — exercice annuel' : 'Local validation mode — annual dataset'}
                     </p>
                     <p className="text-xs text-gray-300 mt-1">
                       {currentLanguage === 'FR'
-                        ? 'Ces profils sont enregistrés seulement sur cet appareil. Aucune donnée test n’est envoyée à Supabase.'
-                        : 'These profiles are stored only on this device. No test data is sent to Supabase.'}
+                        ? `Données fictives cohérentes du ${TEST_DATASET_SUMMARY.periodStart} au ${TEST_DATASET_SUMMARY.periodEnd} : ${TEST_DATASET_SUMMARY.projects} projets, ${TEST_DATASET_SUMMARY.payrollPayments} paies et ${TEST_DATASET_SUMMARY.expenses} dépenses. Aucune donnée test n’est envoyée à Supabase.`
+                        : `Consistent fictional data from ${TEST_DATASET_SUMMARY.periodStart} to ${TEST_DATASET_SUMMARY.periodEnd}: ${TEST_DATASET_SUMMARY.projects} projects, ${TEST_DATASET_SUMMARY.payrollPayments} payroll entries and ${TEST_DATASET_SUMMARY.expenses} expenses. No test data is sent to Supabase.`}
                     </p>
                   </div>
                   <span className="shrink-0 rounded-full bg-orange-600 px-3 py-1 text-[10px] font-black text-white">DEV TEST</span>
@@ -176,6 +181,11 @@ if 'LOCAL TEST PROFILES — no Supabase' not in text:
 
 '''
     text = replace_once(text, banner_anchor, banner + banner_anchor, 'aide NIP mode test')
+
+text = text.replace(
+    "{employees.map(emp => (",
+    "{employees.filter(emp => !emp.id.startsWith('test-former-')).map(emp => ("
+)
 path.write_text(text, encoding='utf-8')
 
 # ---------------------------------------------------------------------------
@@ -209,4 +219,4 @@ text = text.replace('bg-emerald-500 px-7', 'bg-orange-600 hover:bg-orange-500 px
 text = text.replace('text-emerald-300', 'text-orange-400')
 
 path.write_text(text, encoding='utf-8')
-print('Mode de test local, profils, connexion 0000 et onboarding Hailite appliqués.')
+print('Mode test local, exercice annuel, connexion 0000 et onboarding Hailite appliqués.')
