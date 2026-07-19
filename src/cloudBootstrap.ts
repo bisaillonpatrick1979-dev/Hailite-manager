@@ -1,4 +1,5 @@
-import { LOCAL_TEST_DATA_VERSION, LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
+import { LOCAL_TEST_DATA_VERSION, LOCAL_TEST_MODE } from './testProfiles';
+import { TEST_DATASET, TEST_DATASET_SUMMARY } from './testDataset';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SANITIZER_VERSION_KEY = 'gcp_cloudSanitizerVersion';
@@ -54,35 +55,52 @@ function prepareLocalTestEnvironment(): void {
   const alreadyPrepared = localStorage.getItem(TEST_VERSION_KEY) === LOCAL_TEST_DATA_VERSION;
   if (alreadyPrepared) return;
 
-  // Nouvelle installation de validation : aucune ancienne session, aucun ancien
-  // profil de démonstration et aucune donnée Supabase ne sont utilisés.
-  const emptyArrayKeys = [
-    'gcp_projects',
-    'gcp_punchSessions',
-    'gcp_invoices',
-    'gcp_catalogue',
-    'gcp_suppliers',
-    'gcp_inventory',
-    'gcp_orders',
-    'gcp_clients',
-    'gcp_hrAlerts',
-    'gcp_documents',
-    'gcp_expenses',
-    'gcp_payrollPayments',
-    'gcp_motivationTeams',
-    'gcp_motivationGoals',
-    'gcp_weeklyGoals'
+  // Exercice fictif complet du 1er juillet 2025 au 30 juin 2026. Toutes les
+  // relations sont locales : employés, projets, heures, paies, documents,
+  // dépenses, inventaire et commandes utilisent les mêmes identifiants.
+  const dataEntries: Array<[string, unknown]> = [
+    ['gcp_employees', TEST_DATASET.employees],
+    ['gcp_projects', TEST_DATASET.projects],
+    ['gcp_punchSessions', TEST_DATASET.punchSessions],
+    ['gcp_invoices', TEST_DATASET.invoices],
+    ['gcp_catalogue', TEST_DATASET.catalogue],
+    ['gcp_suppliers', TEST_DATASET.suppliers],
+    ['gcp_inventory', TEST_DATASET.inventory],
+    ['gcp_orders', TEST_DATASET.orders],
+    ['gcp_clients', TEST_DATASET.clients],
+    ['gcp_hrAlerts', TEST_DATASET.hrAlerts],
+    ['gcp_documents', TEST_DATASET.documents],
+    ['gcp_expenses', TEST_DATASET.expenses],
+    ['gcp_payrollPayments', TEST_DATASET.payrollPayments],
+    ['gcp_motivationTeams', TEST_DATASET.motivationTeams],
+    ['gcp_motivationGoals', TEST_DATASET.motivationGoals],
+    ['gcp_weeklyGoals', TEST_DATASET.weeklyGoals],
+    ['gcp_testDatasetSummary', TEST_DATASET_SUMMARY]
   ];
-  emptyArrayKeys.forEach(key => write(key, []));
+  dataEntries.forEach(([key, value]) => write(key, value));
 
-  write('gcp_employees', TEST_EMPLOYEES);
   write('gcp_activeEmployee', null);
   localStorage.removeItem('gcp_authToken');
   localStorage.removeItem(SANITIZER_VERSION_KEY);
 
   write('gcp_companyInfo', {
-    name: 'Hailite Manager — Test local',
+    name: 'Hailite Exteriors — Validation annuelle',
+    address: 'Calgary, Alberta',
+    phone: '403-555-0100',
+    email: 'admin.test@hailite.local',
+    gstNumber: 'TEST-GST-HX',
+    qstNumber: '',
+    wcbNumber: 'TEST-WCB-2026',
+    bnNumber: 'TEST-BN-2026',
     logo: '',
+    interacEmail: 'paiements.test@hailite.local',
+    bankDetails: { bank: 'Banque de validation', transit: '00000', institution: '000', account: '0000000' },
+    geofencingEnabled: true,
+    vacationRate: 6,
+    legalMinimumWage: 15,
+    voiceReminderVolume: 70,
+    voiceReminderSchedule: '07:00, 12:00, 17:00',
+    paymentTerms: 'Net 30 — données fictives de validation',
     country: 'CA',
     region: 'AB',
     currency: 'CAD',
@@ -92,7 +110,7 @@ function prepareLocalTestEnvironment(): void {
     taxRate2: 0,
     localTaxRate: 0,
     taxRate1Name: 'TPS (5%)',
-    taxRate2Name: 'Taxe provinciale',
+    taxRate2Name: 'Aucune taxe provinciale',
     dataStorageMode: 'local',
     cloudSyncConsent: false,
     cloudRegion: 'ca-central-1',
@@ -203,27 +221,12 @@ export async function prepareCloudState(): Promise<void> {
     if (localStorage.getItem(SANITIZER_VERSION_KEY) === SANITIZER_VERSION) return;
 
     [
-      'gcp_projects',
-      'gcp_punchSessions',
-      'gcp_invoices',
-      'gcp_catalogue',
-      'gcp_suppliers',
-      'gcp_inventory',
-      'gcp_orders',
-      'gcp_clients',
-      'gcp_hrAlerts',
-      'gcp_documents',
-      'gcp_expenses',
-      'gcp_payrollPayments',
-      'gcp_motivationTeams',
-      'gcp_motivationGoals'
+      'gcp_projects', 'gcp_punchSessions', 'gcp_invoices', 'gcp_catalogue', 'gcp_suppliers',
+      'gcp_inventory', 'gcp_orders', 'gcp_clients', 'gcp_hrAlerts', 'gcp_documents',
+      'gcp_expenses', 'gcp_payrollPayments', 'gcp_motivationTeams', 'gcp_motivationGoals'
     ].forEach(keepUuidRows);
 
-    write(
-      'gcp_weeklyGoals',
-      readArray('gcp_weeklyGoals').filter(goal => hasUuid(goal?.employeeId))
-    );
-
+    write('gcp_weeklyGoals', readArray('gcp_weeklyGoals').filter(goal => hasUuid(goal?.employeeId)));
     localStorage.setItem(SANITIZER_VERSION_KEY, SANITIZER_VERSION);
   } catch {
     // Le mode hors ligne continue de fonctionner sans interrompre l'application.
