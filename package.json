@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "prepare:app": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && python3 scripts/ensure_ai_test_session.py && tsx scripts/validate_test_dataset.ts",
+    "prepare:app": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && python3 scripts/ensure_ai_test_session.py && python3 scripts/fix_onboarding_hook_order.py && tsx scripts/validate_test_dataset.ts",
     "dev": "npm run prepare:app && tsx server.ts",
     "build": "npm run prepare:app && tsc --noEmit && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:vercel": "npm run prepare:app && tsc --noEmit && vite build",
