@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type express from 'express';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (value: unknown): value is string =>
   typeof value === 'string' && UUID_RE.test(value);
 
@@ -33,16 +33,6 @@ function tableFromRequest(req: express.Request): string | null {
   return match?.[1] || null;
 }
 
-/**
- * Dernière barrière avant les routes Supabase.
- *
- * Les anciennes versions utilisaient des identifiants comme emp-1, proj-3 ou
- * task-123. Cette garde empêche ces valeurs d'atteindre des colonnes UUID :
- * - un nouvel id principal invalide est remplacé par un UUID;
- * - une référence facultative invalide est retirée;
- * - une référence obligatoire invalide retourne une erreur claire demandant
- *   un rafraîchissement, plutôt qu'une erreur PostgreSQL 500.
- */
 export function legacyIdGuard(
   req: express.Request,
   res: express.Response,
@@ -67,8 +57,6 @@ export function legacyIdGuard(
     const value = payload[field];
     if (value === null || value === undefined || value === '') continue;
 
-    // expenses.project_id est temporairement du texte pour assurer la transition
-    // des anciennes dépenses locales vers le nouveau stockage cloud.
     if (table === 'expenses' && field === 'project_id') continue;
     if (isUuid(value)) continue;
 
