@@ -4,11 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && tsx scripts/validate_test_dataset.ts && tsx server.ts",
-    "build": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && tsx scripts/validate_test_dataset.ts && tsc --noEmit && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "dev": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && tsx scripts/validate_test_dataset.ts && tsx server.ts",
+    "build": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && tsx scripts/validate_test_dataset.ts && tsc --noEmit && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && tsx scripts/validate_test_dataset.ts && tsc --noEmit"
+    "lint": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && tsx scripts/validate_test_dataset.ts && tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
