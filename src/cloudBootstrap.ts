@@ -1,6 +1,10 @@
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { LOCAL_TEST_DATA_VERSION, LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SANITIZER_VERSION_KEY = 'gcp_cloudSanitizerVersion';
 const SANITIZER_VERSION = '3';
+const TEST_VERSION_KEY = 'gcp_localTestDataVersion';
+const TEST_MODE_KEY = 'gcp_localTestMode';
 
 function readArray(key: string): any[] {
   try {
@@ -43,6 +47,64 @@ function keepUuidRows(key: string): void {
   write(key, readArray(key).filter(row => hasUuid(row?.id)));
 }
 
+function prepareLocalTestEnvironment(): void {
+  if (!LOCAL_TEST_MODE) return;
+
+  localStorage.setItem(TEST_MODE_KEY, 'true');
+  const alreadyPrepared = localStorage.getItem(TEST_VERSION_KEY) === LOCAL_TEST_DATA_VERSION;
+  if (alreadyPrepared) return;
+
+  // Nouvelle installation de validation : aucune ancienne session, aucun ancien
+  // profil de démonstration et aucune donnée Supabase ne sont utilisés.
+  const emptyArrayKeys = [
+    'gcp_projects',
+    'gcp_punchSessions',
+    'gcp_invoices',
+    'gcp_catalogue',
+    'gcp_suppliers',
+    'gcp_inventory',
+    'gcp_orders',
+    'gcp_clients',
+    'gcp_hrAlerts',
+    'gcp_documents',
+    'gcp_expenses',
+    'gcp_payrollPayments',
+    'gcp_motivationTeams',
+    'gcp_motivationGoals',
+    'gcp_weeklyGoals'
+  ];
+  emptyArrayKeys.forEach(key => write(key, []));
+
+  write('gcp_employees', TEST_EMPLOYEES);
+  write('gcp_activeEmployee', null);
+  localStorage.removeItem('gcp_authToken');
+  localStorage.removeItem(SANITIZER_VERSION_KEY);
+
+  write('gcp_companyInfo', {
+    name: 'Hailite Manager — Test local',
+    logo: '',
+    country: 'CA',
+    region: 'AB',
+    currency: 'CAD',
+    unitSystem: 'imperial',
+    dateLocale: 'fr-CA',
+    taxRate1: 0.05,
+    taxRate2: 0,
+    localTaxRate: 0,
+    taxRate1Name: 'TPS (5%)',
+    taxRate2Name: 'Taxe provinciale',
+    dataStorageMode: 'local',
+    cloudSyncConsent: false,
+    cloudRegion: 'ca-central-1',
+    retentionMonths: 84,
+    testMode: true,
+    isOnboarded: false,
+    complianceVersion: ''
+  });
+  write('gcp_isOnboarded', false);
+  localStorage.setItem(TEST_VERSION_KEY, LOCAL_TEST_DATA_VERSION);
+}
+
 function applyCompanyIdentity(company: any): void {
   if (!company || typeof company !== 'object') return;
 
@@ -57,6 +119,12 @@ function applyCompanyIdentity(company: any): void {
     taxRate2: Number(company.taxRate2 ?? current.taxRate2 ?? 0),
     taxRate1Name: company.taxRate1Name || current.taxRate1Name || '',
     taxRate2Name: company.taxRate2Name || current.taxRate2Name || '',
+    currency: company.currency || current.currency || 'CAD',
+    unitSystem: company.unitSystem || current.unitSystem || 'imperial',
+    dateLocale: company.dateLocale || current.dateLocale || 'fr-CA',
+    dataStorageMode: company.dataStorageMode || current.dataStorageMode || 'hybrid',
+    cloudRegion: company.cloudRegion || current.cloudRegion || 'ca-central-1',
+    complianceVersion: company.complianceVersion || current.complianceVersion || '',
     isOnboarded: company.isOnboarded ?? current.isOnboarded ?? false
   };
 
@@ -67,6 +135,21 @@ function applyCompanyIdentity(company: any): void {
 
 export async function prepareCloudState(): Promise<void> {
   if (typeof window === 'undefined') return;
+
+  prepareLocalTestEnvironment();
+  if (LOCAL_TEST_MODE || localStorage.getItem(TEST_MODE_KEY) === 'true') {
+    const localCompany = readObject('gcp_companyInfo');
+    if (localCompany.dataStorageMode === 'local') {
+      document.title = `${localCompany.name || 'Hailite Manager'} — Hailite Manager`;
+    }
+    return;
+  }
+
+  const localCompany = readObject('gcp_companyInfo');
+  if (localCompany.dataStorageMode === 'local') {
+    document.title = `${localCompany.name || 'Hailite Manager'} — Hailite Manager`;
+    return;
+  }
 
   try {
     const [identityResponse, directoryResponse] = await Promise.all([
