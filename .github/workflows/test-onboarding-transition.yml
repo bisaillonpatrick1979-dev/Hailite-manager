@@ -41,7 +41,7 @@ jobs:
           });
           page.on('pageerror', error => pageErrors.push(error.message));
 
-          let result = {
+          const result = {
             testedAt: new Date().toISOString(),
             url: 'https://hailite-manager.vercel.app',
             onboardingVisible: false,
@@ -64,21 +64,19 @@ jobs:
             await page.locator('#hailite-onboarding-screen').waitFor({ state: 'visible', timeout: 30000 });
             result.onboardingVisible = true;
 
-            const inputs = page.locator('#hailite-onboarding-screen input');
-            await inputs.nth(0).fill('Hailite Test Transition');
-            await inputs.nth(1).fill('test@hailite.example');
-            await inputs.nth(2).fill('privacy@hailite.example');
+            await page.getByLabel('Nom légal ou commercial').fill('Hailite Test Transition');
+            await page.getByLabel('Courriel de compagnie').fill('test@hailite.example');
+            await page.getByLabel('Courriel pour les demandes de confidentialité').fill('privacy@hailite.example');
             await page.getByRole('button', { name: 'Continuer' }).click();
 
             await page.getByRole('button', { name: 'Continuer' }).click();
 
-            await page.locator('#hailite-onboarding-screen input[type="checkbox"]').first().check();
+            await page.getByLabel(/Je confirme avoir vérifié ces taux/).check();
             await page.getByRole('button', { name: 'Continuer' }).click();
 
-            const privacyChecks = page.locator('#hailite-onboarding-screen input[type="checkbox"]');
-            await privacyChecks.nth(0).check();
-            await privacyChecks.nth(1).check();
-            await privacyChecks.nth(2).check();
+            await page.getByLabel(/Avis et rôle/).check();
+            await page.getByLabel(/Je confirmerai la base juridique/).check();
+            await page.getByLabel(/Je comprends que le GPS/).check();
             await page.getByRole('button', { name: 'Continuer' }).click();
 
             await page.getByRole('button', { name: 'Enregistrer et ouvrir' }).click();
@@ -120,6 +118,13 @@ jobs:
         run: |
           git config user.name "Hailite UI Test"
           git config user.email "actions@users.noreply.github.com"
-          git add onboarding-transition-test-result.json
-          git commit -m "Ajoute le résultat du test de transition onboarding" || true
-          git push origin HEAD:main
+          if [ -f onboarding-transition-test-result.json ]; then
+            git add onboarding-transition-test-result.json
+            git commit -m "Ajoute le résultat du test de transition onboarding" || true
+            git push origin HEAD:main
+          else
+            echo '{"passed":false,"testError":"Le test Playwright n’a pas produit de rapport."}' > onboarding-transition-test-result.json
+            git add onboarding-transition-test-result.json
+            git commit -m "Ajoute l’échec du test de transition onboarding" || true
+            git push origin HEAD:main
+          fi
