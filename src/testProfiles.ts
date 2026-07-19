@@ -1,7 +1,7 @@
 import type { Employee } from './types';
 
 export const LOCAL_TEST_MODE = true;
-export const LOCAL_TEST_DATA_VERSION = '2026.07-test-2';
+export const LOCAL_TEST_DATA_VERSION = '2026.07-test-3';
 
 function avatar(emoji: string, background: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" rx="80" fill="${background}"/><text x="80" y="106" text-anchor="middle" font-size="82">${emoji}</text></svg>`;
