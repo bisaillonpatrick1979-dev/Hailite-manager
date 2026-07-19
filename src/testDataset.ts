@@ -43,8 +43,8 @@ export const TEST_DATASET = {
 };
 
 export const TEST_DATASET_SUMMARY = {
-  scenarioVersion: '2026.07-annual-v2',
-  scenarioName: 'Exercice annuel fictif complet et validé',
+  scenarioVersion: '2026.07-annual-v3',
+  scenarioName: 'Exercice annuel fictif complet, validé et prêt pour les essais',
   periodStart: TEST_PERIOD_START,
   periodEnd: TEST_PERIOD_END,
   employees: TEST_EMPLOYEES.length,
