@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { registerApiRoutes } from './apiRoutes.js';
+import { registerBootstrapRoutes } from './bootstrapRoutes.js';
 import { legacyIdGuard } from './legacyIdGuard.js';
 
 dotenv.config();
@@ -17,9 +18,10 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '15mb' })); // signatures tactiles encodées en base64
+  app.use(express.json({ limit: '15mb' }));
   app.use(legacyIdGuard);
 
+  registerBootstrapRoutes(app);
   registerApiRoutes(app);
 
   const isProd = process.env.NODE_ENV === 'production';
@@ -31,11 +33,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
 
-    // Serve index.html dynamically
     app.get('*', async (req, res, next) => {
       const url = req.originalUrl;
       try {
-        let template = await vite.transformIndexHtml(url, `<!doctype html>
+        const template = await vite.transformIndexHtml(url, `<!doctype html>
 <html lang="fr-CA">
   <head>
     <meta charset="UTF-8" />
@@ -55,9 +56,8 @@ async function startServer() {
       }
     });
   } else {
-    // Serve static files in production
     app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(__dirname, 'dist/index.html'));
     });
   }
