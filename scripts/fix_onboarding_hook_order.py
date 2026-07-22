@@ -4,6 +4,14 @@ import re
 path = Path(__file__).resolve().parents[1] / 'src' / 'App.tsx'
 text = path.read_text(encoding='utf-8')
 
+# Idempotent : si le garde commenté est déjà en place avec un seul rendu
+# d'OnboardingScreen, il n'y a rien à faire — retirer puis « réinsérer » ferait
+# échouer la réinsertion (le commentaire-marqueur étant déjà présent).
+if ('Le garde onboarding doit rester APRÈS tous les hooks React' in text
+        and text.count('<OnboardingScreen />') == 1):
+    print('Ordre des hooks React déjà corrigé : aucun changement nécessaire.')
+    raise SystemExit(0)
+
 # React exige que tous les hooks soient appelés dans le même ordre à chaque
 # rendu. L'ancien retour anticipé de l'onboarding se trouvait avant plusieurs
 # useEffect : terminer l'onboarding ajoutait soudainement des hooks et React

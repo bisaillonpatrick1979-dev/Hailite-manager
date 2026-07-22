@@ -8,7 +8,7 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
-  authLogin, setAuthToken, getAuthToken, fetchLoginDirectory, isUuid, normalizeAppRole,
+  authLogin, setAuthToken, getAuthToken, fetchLoginDirectory, isUuid, normalizeAppRole, setCloudSyncAllowed,
   syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
@@ -17,6 +17,7 @@ import {
   rowToSupplierOrder, rowToClient, rowToCompanyInfo, rowToWeeklyGoal, rowToMotivationTeam, rowToMotivationGoal,
   rowToHRAlert, rowToExpense, rowToPayrollPayment, rowToDocument
 } from './apiClient';
+import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
 
 interface AppState {
   // Data State
@@ -144,69 +145,9 @@ interface AppState {
   hydrateCloud: () => Promise<void>;
 }
 
-// Initial Mock Data to bootstrap the application beautifully
-const initialEmployees: Employee[] = [
-  {
-    id: 'emp-1',
-    name: 'Patrick Bisaillon',
-    nip: '0000',
-    role: 'admin',
-    hourlyRate: 45.0,
-    workerType: 'Compagnon',
-    asNumber: 'AS-88726-QC',
-    phone: '514-555-0199',
-    address: '1240 Rue de l\'Église, Montréal, QC',
-    hireDate: '2020-03-12',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 5,
-    xp: 2450
-  },
-  {
-    id: 'emp-2',
-    name: 'Mathieu Côté',
-    nip: '1234',
-    role: 'employee',
-    hourlyRate: 28.5,
-    workerType: 'Apprenti 2',
-    asNumber: 'AS-22910-QC',
-    phone: '450-555-0144',
-    address: '344 Rue Saint-Jude, Longueuil, QC',
-    hireDate: '2023-05-15',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 2,
-    xp: 680
-  },
-  {
-    id: 'emp-3',
-    name: 'Stéphane Roy',
-    nip: '5678',
-    role: 'employee',
-    hourlyRate: 38.0,
-    workerType: 'Compagnon Poseur',
-    asNumber: 'AS-66512-QC',
-    phone: '514-555-0211',
-    address: '789 Rue Sherbrooke Est, Montréal, QC',
-    hireDate: '2021-09-01',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 4,
-    xp: 1850
-  },
-  {
-    id: 'emp-4',
-    name: 'Jessica Tremblay',
-    nip: '1111',
-    role: 'secretary',
-    hourlyRate: 25.0,
-    workerType: 'Secrétaire comptable',
-    asNumber: 'AS-10294-QC',
-    phone: '514-555-0182',
-    address: '4521 Boul Rosemont, Montréal, QC',
-    hireDate: '2022-11-20',
-    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 3,
-    xp: 1200
-  }
-];
+// Profils de validation strictement locaux. Les quatre anciens profils de
+// démonstration ont été retirés et ne sont jamais envoyés à Supabase.
+const initialEmployees: Employee[] = LOCAL_TEST_MODE ? TEST_EMPLOYEES : [];
 
 const initialProjects: Project[] = [
   {
@@ -318,7 +259,10 @@ const initialCompanyInfo: CompanyInfo = {
   legalMinimumWage: 15.75, // minimum québécois
   voiceReminderVolume: 80,
   voiceReminderSchedule: '08:00, 12:00, 17:00',
-  paymentTerms: 'Paiement net 30 jours'
+  paymentTerms: 'Paiement net 30 jours',
+  country: 'CA', region: 'AB', currency: 'CAD', unitSystem: 'imperial', dateLocale: 'fr-CA',
+  taxRate1: 0.05, taxRate2: 0, localTaxRate: 0, taxRate1Name: 'TPS (5%)', taxRate2Name: 'Taxe provinciale',
+  dataStorageMode: 'hybrid', cloudSyncConsent: true, cloudRegion: 'ca-central-1', retentionMonths: 84
 };
 
 const initialHRAlerts: HRAlert[] = [
@@ -723,7 +667,7 @@ export const getLevelFromXP = (xp: number): number => {
 
 export const useAppStore = create<AppState>((set, get) => ({
   // Initialize state from local storage or mock defaults
-  employees: getSavedState('gcp_employees', initialEmployees),
+  employees: getSavedState('gcp_employees', LOCAL_TEST_MODE ? TEST_EMPLOYEES : initialEmployees),
   projects: getSavedState('gcp_projects', initialProjects),
   punchSessions: getSavedState('gcp_punchSessions', initialPunchSessions),
   invoices: getSavedState('gcp_invoices', initialInvoices),
@@ -838,7 +782,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = [...employees, newEmp];
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    syncInsert('app_users', employeeToRow(newEmp));
+    if (!LOCAL_TEST_MODE) syncInsert('app_users', employeeToRow(newEmp));
 
     // Auto trigger alert
     get().addHRAlert({
@@ -855,7 +799,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = employees.map(e => e.id === emp.id ? emp : e);
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    syncUpdate('app_users', emp.id, employeeToRow(emp));
+    if (!LOCAL_TEST_MODE) syncUpdate('app_users', emp.id, employeeToRow(emp));
 
     if (activeEmployee && activeEmployee.id === emp.id) {
       set({ activeEmployee: emp });
@@ -868,7 +812,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = employees.filter(e => e.id !== id);
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    syncDelete('app_users', id);
+    if (!LOCAL_TEST_MODE) syncDelete('app_users', id);
 
     // Nettoie les références à l'employé supprimé pour éviter des données fantômes
     const updatedProjects = projects.map(p => ({
@@ -1392,6 +1336,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = { ...companyInfo, ...info };
     set({ companyInfo: updated });
     saveState('gcp_companyInfo', updated);
+    setCloudSyncAllowed(updated.dataStorageMode !== 'local');
     const companyId = getCompanyId();
     if (companyId) syncUpdate('companies', companyId, companyInfoToRow(updated));
   },
@@ -1489,7 +1434,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (p.id === id && p.pausedAt) {
         const pauseStart = new Date(p.pausedAt).getTime();
         const pauseEnd = new Date().getTime();
-        const diffMinutes = Math.floor((pauseEnd - pauseStart) / 60000);
+        const diffMinutes = Math.max(0, (pauseEnd - pauseStart) / 60000);
         return {
           ...p,
           pausedAt: null,
@@ -1517,7 +1462,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         let totalPauseMinutes = p.totalPauseMinutes;
         if (p.pausedAt) {
           const pauseStart = new Date(p.pausedAt).getTime();
-          totalPauseMinutes += Math.floor((end - pauseStart) / 60000);
+          totalPauseMinutes += Math.max(0, (end - pauseStart) / 60000);
         }
 
         let totalWorkedHours = (end - start) / 3600000; // hours in decimal
@@ -1617,12 +1562,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const totalHours = unInvoicedPunches.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
     const amount = unInvoicedPunches.reduce((sum, p) => sum + p.revenue, 0);
     const comp = get().companyInfo;
-    const gstRate = comp.taxRate1 !== undefined ? comp.taxRate1 : 0.05;
-    const qstRate = comp.taxRate2 !== undefined ? comp.taxRate2 : 0.09975;
+    const gstRate = comp.taxRate1 !== undefined ? comp.taxRate1 : 0;
+    const qstRate = comp.taxRate2 !== undefined ? comp.taxRate2 : 0;
+    const localRate = comp.localTaxRate !== undefined ? comp.localTaxRate : 0;
     
     const gstAmount = Number((amount * gstRate).toFixed(2));
     const qstAmount = Number((amount * qstRate).toFixed(2));
-    const totalWithTaxes = Number((amount + gstAmount + qstAmount).toFixed(2));
+    const localTaxAmount = Number((amount * localRate).toFixed(2));
+    const totalWithTaxes = Number((amount + gstAmount + qstAmount + localTaxAmount).toFixed(2));
 
     const newInvoice: Invoice = {
       id: genId(),
@@ -1638,7 +1585,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       totalWithTaxes,
       status: 'draft',
       taxIncluded: false,
-      notes: `Facture brouillon auto-générée le ${new Date().toLocaleDateString('fr-CA')}.`
+      notes: `Facture brouillon auto-générée le ${new Date().toLocaleDateString('fr-CA')}.`,
+      currency: comp.currency || (comp.country === 'US' ? 'USD' : 'CAD'),
+      taxRate1: gstRate, taxRate2: qstRate, localTaxRate: localRate, localTaxAmount,
+      taxRate1Name: comp.taxRate1Name || 'Tax 1', taxRate2Name: comp.taxRate2Name || 'Tax 2',
+      issuerName: emp.businessName || emp.name, issuerAddress: emp.address,
+      issuerTaxNumber: emp.gstNumber || emp.asNumber, issuerLogo: emp.businessLogo || emp.avatar,
+      recipientName: comp.name
     };
 
     const updated = [newInvoice, ...invoices];
@@ -1848,6 +1801,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   hydrateCloud: async () => {
+    if (LOCAL_TEST_MODE) {
+      set({ offlineSyncStatus: 'offline' });
+      return;
+    }
     // Garde anti-écrasement : si l'utilisateur vient tout juste de modifier des
     // données (écriture cloud récente ou en vol), on reporte l'hydratation au
     // prochain cycle — sinon l'instantané cloud, encore en retard, écraserait la

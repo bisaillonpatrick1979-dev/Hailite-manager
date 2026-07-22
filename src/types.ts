@@ -65,6 +65,11 @@ export interface Employee {
   payPeriodStart?: string;
   annualSalary?: number;
   credentials?: EmployeeCredential[];
+  businessLogo?: string; // logo d'entreprise du sous-traitant (facturation autonome)
+  // Accusés de lecture des avis de confidentialité et de géolocalisation
+  privacyNoticeVersion?: string;
+  privacyNoticeAcknowledgedAt?: string;
+  locationNoticeAcknowledgedAt?: string;
 }
 
 export interface ProjectTask {
@@ -140,6 +145,19 @@ export interface Invoice {
   // Tactile signature required from the employee/sous-traitant before sending to the company
   employeeSignature?: string; // Base64 signature image data
   employeeSignedAt?: string;
+  // Facturation autonome : identité visuelle et fiscale de l'émetteur
+  currency?: string;
+  issuerName?: string;
+  issuerLogo?: string;
+  issuerAddress?: string;
+  issuerTaxNumber?: string;
+  recipientName?: string;
+  taxRate1Name?: string;
+  taxRate2Name?: string;
+  localTaxAmount?: number;
+  taxRate1?: number;      // taux fédéral appliqué à cette facture (fraction)
+  taxRate2?: number;      // taux provincial/état appliqué (fraction)
+  localTaxRate?: number;  // taxe locale additionnelle (fraction)
 }
 
 export interface Supplier {
@@ -246,8 +264,31 @@ export interface CompanyInfo {
   
   // Onboarding metadata
   isOnboarded?: boolean;
-  country?: 'CA' | 'US';
+  country?: 'CA' | 'US' | 'EU';
   region?: string;
+  // Localisation & format (voir OnboardingScreen / CompanyComplianceSettings)
+  currency?: string;        // ex: 'CAD', 'USD', 'EUR'
+  unitSystem?: 'imperial' | 'metric' | string;
+  dateLocale?: string;      // ex: 'fr-CA', 'en-US'
+  localTaxRate?: number;    // taxe locale/municipale additionnelle (fraction, ex 0.01)
+  // Confidentialité & stockage des données
+  dataStorageMode?: 'local' | 'cloud' | 'hybrid' | string;
+  cloudRegion?: string;     // ex: 'ca-central-1'
+  cloudSyncConsent?: boolean;
+  retentionMonths?: number;
+  privacyPolicyVersion?: string;
+  privacyContactEmail?: string;
+  privacyOfficerName?: string;
+  // Traçabilité des consentements de conformité (onboarding)
+  taxConfirmedAt?: string;
+  taxDisclaimerAcceptedAt?: string;
+  privacyPolicyAcceptedAt?: string;
+  processorTermsAcceptedAt?: string;
+  employeeDataBasisConfirmed?: boolean;
+  locationDataNoticeConfirmed?: boolean;
+  crossBorderTransferAcknowledgedAt?: string;
+  complianceVersion?: string;
+  testMode?: boolean;
   taxRate1?: number; // Federal tax rate e.g. 0.05
   taxRate2?: number; // Provincial/state tax rate e.g. 0.09975
   taxRate1Name?: string; // e.g. "GST" or "TPS"

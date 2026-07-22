@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import useAppStore from '../store';
+import CompanyLogo from './CompanyLogo';
 import { 
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, 
   GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine,
@@ -11,7 +12,7 @@ import {
   FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin,
   CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
 } from 'lucide-react';
-import { CANADIAN_REGIONS, US_REGIONS } from '../regionsData';
+import { getDefaultRegion, marketLabel, type MarketCode } from '../internationalRegions';
 import { translations, fmt } from '../translations';
 import SignaturePad from './SignaturePad';
 import { genId } from '../apiClient';
@@ -23,12 +24,14 @@ export default function ClientDocumentsManager() {
     currentTheme, currentLanguage
   } = useAppStore();
 
-  const companyCountry = companyInfo.country || 'CA';
-  const companyRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === companyInfo.region) || CANADIAN_REGIONS[0];
+  const companyCountry: MarketCode = companyInfo.country === 'US' || companyInfo.country === 'EU' ? companyInfo.country : 'CA';
+  const companyRegion = getDefaultRegion(companyCountry, companyInfo.region);
   const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
   const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
   const t = translations[currentLanguage];
-  const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
+  const dateLocale = companyInfo.dateLocale || (currentLanguage === 'FR' ? 'fr-CA' : 'en-CA');
+  const currency = companyInfo.currency || (companyCountry === 'US' ? 'USD' : companyCountry === 'EU' ? 'EUR' : 'CAD');
+  const money = (value: number) => new Intl.NumberFormat(dateLocale, { style: 'currency', currency }).format(Number(value || 0));
 
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'invoice' | 'quote' | 'contract'>('all');
   const [activeStatusTab, setActiveStatusTab] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'paid' | 'overdue'>('all');
@@ -486,15 +489,15 @@ export default function ClientDocumentsManager() {
               <div className="bg-gray-950/40 rounded-lg p-2.5 grid grid-cols-3 gap-2 text-center text-xs border border-gray-850">
                 <div>
                   <span className="text-[10px] text-gray-500 font-mono">{t.cdmSubtotal}</span>
-                  <p className="font-bold text-white mt-0.5">{doc.subtotal.toFixed(2)}$</p>
+                  <p className="font-bold text-white mt-0.5">{money(doc.subtotal)}</p>
                 </div>
                 <div>
                   <span className="text-[10px] text-gray-500 font-mono">{t.cdmTaxesTtc}</span>
-                  <p className="font-bold text-white mt-0.5">{doc.total.toFixed(2)}$</p>
+                  <p className="font-bold text-white mt-0.5">{money(doc.total)}</p>
                 </div>
                 <div>
                   <span className="text-[10px] text-gray-500 font-mono text-orange-500">{t.cdmDueShort}</span>
-                  <p className="font-black text-green-400 mt-0.5">{doc.balanceDue.toFixed(2)}$</p>
+                  <p className="font-black text-green-400 mt-0.5">{money(doc.balanceDue)}</p>
                 </div>
               </div>
 
@@ -614,23 +617,20 @@ export default function ClientDocumentsManager() {
               className="bg-white text-slate-900 rounded-xl p-8 shadow-2xl relative overflow-hidden font-sans border border-gray-200 select-all print:shadow-none print:border-none"
             >
               
-              {/* Dynamic Logo Watermark & Diagonal text overlay (from improvements spec) */}
+              {/* Logo watermark with the document type directly underneath */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
-                {/* Angular watermark */}
-                <div className="relative transform -rotate-12 opacity-[0.09] flex flex-col items-center justify-center">
-                  <div className="w-72 h-72 border-8 border-slate-900 rounded-full flex items-center justify-center p-6 mix-blend-multiply">
-                    <img 
-                      src={companyInfo.logo || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=260&q=80"}
-                      alt="Watermark Logo"
-                      className="w-48 h-48 rounded-full object-cover grayscale"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                  {/* Diagonal Type of document PAR-DESSUS exact diagonal overlay */}
-                  <span className="absolute text-5xl font-mono font-black uppercase tracking-widest text-slate-900 mt-2 filter drop-shadow">
-                    {selectedDocForView.status === 'paid' ? t.cdmWmPaid : 
-                     selectedDocForView.status === 'accepted' ? t.cdmWmAccepted : 
-                     selectedDocForView.type === 'quote' ? t.cdmWmQuote : 
+                <div className="-rotate-12 opacity-[0.075] flex flex-col items-center justify-center gap-4">
+                  <CompanyLogo
+                    logo={companyInfo.logo}
+                    companyName={companyInfo.name}
+                    className="w-72 h-72"
+                    imageClassName="w-full h-full object-contain grayscale"
+                    fallbackClassName="rounded-full border-8 border-slate-900 bg-transparent text-slate-900 text-7xl"
+                  />
+                  <span className="text-5xl font-mono font-black uppercase tracking-widest text-slate-900">
+                    {selectedDocForView.status === 'paid' ? t.cdmWmPaid :
+                     selectedDocForView.status === 'accepted' ? t.cdmWmAccepted :
+                     selectedDocForView.type === 'quote' ? t.cdmWmQuote :
                      selectedDocForView.type === 'contract' ? t.cdmWmContract : t.cdmWmInvoice}
                   </span>
                 </div>
@@ -643,7 +643,7 @@ export default function ClientDocumentsManager() {
                 <div className="flex justify-between items-start gap-4 border-b border-slate-250 pb-5">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center font-bold text-white text-xl">H</div>
+                      <CompanyLogo logo={companyInfo.logo} companyName={companyInfo.name} className="w-12 h-12 rounded-lg border border-slate-200 bg-white p-1" imageClassName="w-full h-full object-contain rounded-md" fallbackClassName="rounded-lg bg-slate-900 text-white text-lg" />
                       <div>
                         <h2 className="text-lg font-black text-slate-900 uppercase leading-none tracking-tighter">{companyInfo.name || "HAILITE XTERIORS"}</h2>
                         <span className="text-[9px] uppercase tracking-wider font-mono text-gray-500">{t.cdmTagline}</span>
@@ -654,8 +654,8 @@ export default function ClientDocumentsManager() {
                       {t.cdmTelColon} {companyInfo.phone || "(514) 876-0000"} | {t.cdmEmailColon} {companyInfo.email || "info@hailitexteriors.ca"}
                     </p>
                     <div className="text-[10px] text-gray-500 font-mono space-y-0.5 mt-1">
-                      {companyInfo.gstNumber && <p>TPS / GST : {companyInfo.gstNumber}</p>}
-                      {companyInfo.qstNumber && <p>TVQ / QST : {companyInfo.qstNumber}</p>}
+                      {companyInfo.gstNumber && <p>{companyInfo.taxRate1Name || (currentLanguage === 'FR' ? companyRegion.taxRate1NameFR : companyRegion.taxRate1NameEN)} : {companyInfo.gstNumber}</p>}
+                      {companyInfo.qstNumber && <p>{companyInfo.taxRate2Name || (currentLanguage === 'FR' ? companyRegion.taxRate2NameFR : companyRegion.taxRate2NameEN)} : {companyInfo.qstNumber}</p>}
                     </div>
                   </div>
 
@@ -727,8 +727,8 @@ export default function ClientDocumentsManager() {
                             <td className="py-2.5 font-medium text-slate-800">{item.description}</td>
                             <td className="py-2.5 text-center font-mono">{item.qty}</td>
                             <td className="py-2.5 text-center text-slate-500">{item.unit}</td>
-                            <td className="py-2.5 text-right font-mono">{item.unitPrice.toFixed(2)}$</td>
-                            <td className="py-2.5 text-right font-mono font-bold">{item.total.toFixed(2)}$</td>
+                            <td className="py-2.5 text-right font-mono">{money(item.unitPrice)}</td>
+                            <td className="py-2.5 text-right font-mono font-bold">{money(item.total)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -757,8 +757,8 @@ export default function ClientDocumentsManager() {
                                     {m.claddingType} — {m.brand} <span className="text-slate-400 font-normal">({m.thickness})</span>
                                   </td>
                                   <td className="py-1.5 text-center font-mono">{m.qtySqft} pi²</td>
-                                  <td className="py-1.5 text-right font-mono">{m.unitPrice.toFixed(2)}$</td>
-                                  <td className="py-1.5 text-right font-mono font-bold">{m.total.toFixed(2)}$</td>
+                                  <td className="py-1.5 text-right font-mono">{money(m.unitPrice)}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold">{money(m.total)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -784,8 +784,8 @@ export default function ClientDocumentsManager() {
                                 <tr key={lb.id}>
                                   <td className="py-1.5 text-slate-800 font-medium">{lb.task}</td>
                                   <td className="py-1.5 text-center font-mono">{lb.isFlatRate ? 'N/A' : lb.estimatedHours} h</td>
-                                  <td className="py-1.5 text-right font-mono">{lb.rate.toFixed(2)}$ {lb.isFlatRate ? t.cdmFixedWord : '/h'}</td>
-                                  <td className="py-1.5 text-right font-mono font-bold">{lb.total.toFixed(2)}$</td>
+                                  <td className="py-1.5 text-right font-mono">{money(lb.rate)} {lb.isFlatRate ? t.cdmFixedWord : '/h'}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold">{money(lb.total)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -801,7 +801,7 @@ export default function ClientDocumentsManager() {
                             {selectedDocForView.otherLines.map(o => (
                               <div key={o.id} className="flex justify-between items-center py-1">
                                 <span className="text-slate-800 font-medium">{o.description}</span>
-                                <span className="font-mono font-bold">{o.amount.toFixed(2)}$</span>
+                                <span className="font-mono font-bold">{money(o.amount)}</span>
                               </div>
                             ))}
                           </div>
@@ -828,7 +828,7 @@ export default function ClientDocumentsManager() {
                             <span className="font-bold text-slate-800">{p.date}</span>
                             <span className="text-slate-500 italic ml-2">({p.method.toUpperCase()} — {p.notes})</span>
                           </div>
-                          <span className="font-mono font-bold text-emerald-800">-{p.amount.toFixed(2)}$</span>
+                          <span className="font-mono font-bold text-emerald-800">-{money(p.amount)}</span>
                         </div>
                       ))}
                     </div>
@@ -850,7 +850,7 @@ export default function ClientDocumentsManager() {
                   <div className="space-y-1.5 text-xs text-right pr-2">
                     <div className="flex justify-between items-center">
                       <span className="text-slate-500">{t.cdmGrossSubtotal}</span>
-                      <span className="font-mono">{selectedDocForView.subtotal.toFixed(2)}$</span>
+                      <span className="font-mono">{money(selectedDocForView.subtotal)}</span>
                     </div>
 
                     {selectedDocForView.discountPct > 0 && (
@@ -862,24 +862,24 @@ export default function ClientDocumentsManager() {
 
                     <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
                       <span className="text-slate-500">{fmt(t.cdmCombinedTaxes, { rate: selectedDocForView.taxRate })}</span>
-                      <span className="font-mono">+{selectedDocForView.taxAmount.toFixed(2)}$</span>
+                      <span className="font-mono">+{money(selectedDocForView.taxAmount)}</span>
                     </div>
 
                     <div className="flex justify-between items-center font-bold text-slate-900 text-sm">
                       <span>{t.cdmGrandTotal}</span>
-                      <span className="font-mono font-black">{selectedDocForView.total.toFixed(2)}$</span>
+                      <span className="font-mono font-black">{money(selectedDocForView.total)}</span>
                     </div>
 
                     {selectedDocForView.holdbackPct > 0 && (
                       <div className="flex justify-between items-center text-amber-800">
                         <span>{fmt(t.cdmLegalHoldback2, { ccq: isQuebec ? ' CCQ' : '', pct: selectedDocForView.holdbackPct })}</span>
-                        <span className="font-mono font-semibold">-{selectedDocForView.holdbackAmount.toFixed(2)}$</span>
+                        <span className="font-mono font-semibold">-{money(selectedDocForView.holdbackAmount)}</span>
                       </div>
                     )}
 
                     <div className="flex justify-between items-center font-black text-green-650 text-base border-t border-slate-205 pt-2">
                       <span className="text-slate-900">{t.cdmBalanceDue}</span>
-                      <span className="font-mono text-green-600">{selectedDocForView.balanceDue.toFixed(2)}$ CAD</span>
+                      <span className="font-mono text-green-600">{money(selectedDocForView.balanceDue)} CAD</span>
                     </div>
                   </div>
 

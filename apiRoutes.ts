@@ -445,6 +445,39 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI'
 };
 
+// Variables reconnues pour chaque fournisseur. La première est le nom officiel
+// affiché dans l'interface ; les alias Gemini permettent de conserver les noms
+// de variables déjà utilisés dans certains anciens déploiements.
+const PROVIDER_ENV_ALIASES: Record<string, string[]> = {
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+  anthropic: ['ANTHROPIC_API_KEY'],
+  openai: ['OPENAI_API_KEY']
+};
+
+function resolveProviderApiKey(provider: string): string | undefined {
+  for (const envName of PROVIDER_ENV_ALIASES[provider] || []) {
+    const value = process.env[envName];
+    if (value && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+// Profils exclusivement fictifs du scénario annuel. Ils reçoivent une vraie
+// session signée afin d'appeler /api/chat sans ouvrir publiquement les clés IA.
+const LOCAL_TEST_AUTH_USERS: Record<string, { nip: string; name: string; role: AppRole }> = {
+  'test-admin': { nip: '0000', name: 'Administrateur Test', role: 'admin' },
+  'test-secretary': { nip: '1001', name: 'Sophie Bureau', role: 'secretary' },
+  'test-accountant': { nip: '1002', name: 'Marc Comptable', role: 'accountant' },
+  'test-employee-1': { nip: '1003', name: 'Liam Tremblay', role: 'employee' },
+  'test-employee-2': { nip: '1004', name: 'Emma Roy', role: 'employee' },
+  'test-employee-3': { nip: '1005', name: 'Noah Gagnon', role: 'employee' },
+  'test-employee-4': { nip: '1006', name: 'Olivia Martin', role: 'employee' },
+  'test-contractor-1': { nip: '2001', name: 'Éric Cladding', role: 'employee' },
+  'test-contractor-2': { nip: '2002', name: 'Nadia Exteriors', role: 'employee' },
+  'test-contractor-3': { nip: '2003', name: 'Samuel Roofing', role: 'employee' }
+};
+const LOCAL_TEST_COMPANY_ID = '00000000-0000-4000-8000-000000000001';
+
 function requireKnownTable(table: string, res: express.Response): boolean {
   if (!KNOWN_TABLES.includes(table)) {
     res.status(404).json({ error: `Table inconnue : ${table}` });
@@ -462,12 +495,34 @@ export function registerApiRoutes(app: express.Express): void {
   // données ; le navigateur ne reçoit jamais les NIP des autres utilisateurs.
   // -------------------------------------------------------------------------
   app.post('/api/auth/login', async (req, res) => {
-    if (!supabaseEnabled) {
-      return res.status(503).json({ error: 'Authentification indisponible (base de données non configurée)', code: 'AUTH_UNAVAILABLE' });
-    }
     const { employeeId, nip } = req.body || {};
     if (typeof employeeId !== 'string' || typeof nip !== 'string' || !/^\d{4}$/.test(nip)) {
       return res.status(400).json({ error: 'Requête invalide' });
+    }
+
+    const localUser = LOCAL_TEST_AUTH_USERS[employeeId];
+    if (localUser) {
+      const throttleKey = `${req.ip || 'noip'}|${employeeId}`;
+      if (isLoginThrottled(throttleKey)) {
+        return res.status(429).json({ error: 'Trop de tentatives. Réessayez dans quelques minutes.', code: 'THROTTLED' });
+      }
+      if (nip !== localUser.nip) {
+        recordLoginFailure(throttleKey);
+        return res.status(401).json({ error: 'NIP incorrect', code: 'INVALID_CREDENTIALS' });
+      }
+      clearLoginFailures(throttleKey);
+      const ctx: AuthContext = {
+        userId: employeeId,
+        companyId: LOCAL_TEST_COMPANY_ID,
+        role: localUser.role,
+        name: localUser.name
+      };
+      const { token, expiresAt } = signSession(ctx);
+      return res.json({ token, expiresAt, user: { id: ctx.userId, name: ctx.name, role: ctx.role } });
+    }
+
+    if (!supabaseEnabled) {
+      return res.status(503).json({ error: 'Authentification indisponible (base de données non configurée)', code: 'AUTH_UNAVAILABLE' });
     }
     const throttleKey = `${req.ip || 'noip'}|${employeeId}`;
     if (isLoginThrottled(throttleKey)) {
@@ -520,6 +575,22 @@ export function registerApiRoutes(app: express.Express): void {
     }
   });
 
+  // État des fournisseurs, sans jamais retourner la valeur d'une clé.
+  app.get('/api/ai/status', attachAuthOptional, (req: AuthedRequest, res) => {
+    if (supabaseEnabled && !req.auth) {
+      return res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
+    }
+    return res.json({
+      providers: Object.fromEntries(
+        Object.keys(PROVIDER_ENV_KEYS).map(provider => [provider, {
+          configured: Boolean(resolveProviderApiKey(provider)),
+          envNames: PROVIDER_ENV_ALIASES[provider],
+          label: PROVIDER_LABELS[provider]
+        }])
+      )
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Assistant IA. La clé API vit EXCLUSIVEMENT dans les variables
   // d'environnement du serveur (Vercel) : toute clé envoyée par le navigateur
@@ -536,7 +607,7 @@ export function registerApiRoutes(app: express.Express): void {
 
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
       // Clé serveur uniquement : req.body.apiKey (ancienne version) est ignoré.
-      const apiKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
+      const apiKey = resolveProviderApiKey(selectedProvider);
 
       // Les outils (actions) ne sont proposés au modèle que pour un rôle de
       // bureau vérifié par jeton — jamais sur la seule foi du client.

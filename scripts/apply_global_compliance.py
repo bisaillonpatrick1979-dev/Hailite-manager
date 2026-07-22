@@ -5,6 +5,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
+    # Idempotent : si le remplacement est déjà présent (appliqué lors d'un build
+    # précédent ou intégré manuellement au code source), ne rien faire.
+    if new in text:
+        return text
     count = text.count(old)
     if count != 1:
         raise RuntimeError(f'{label}: ancre trouvée {count} fois')

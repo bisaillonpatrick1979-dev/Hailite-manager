@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
-import { authHeaders } from './apiClient';
+import { authHeaders, genId, authLogin, getAuthToken, setCloudSyncAllowed } from './apiClient';
 import { translations, fmt } from './translations';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
+import { LOCAL_TEST_MODE, TEST_PIN_DIRECTORY } from './testProfiles';
+import { TEST_DATASET_SUMMARY } from './testDataset';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
+import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -19,7 +22,13 @@ const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
 const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
 const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
+const UserPrivacyNotice = lazy(() => import('./components/UserPrivacyNotice'));
+const BusinessLogoField = lazy(() => import('./components/BusinessLogoField'));
+const SubcontractorInvoicePreview = lazy(() => import('./components/SubcontractorInvoicePreview'));
+const CompanyComplianceSettings = lazy(() => import('./components/CompanyComplianceSettings'));
 import EmployeeAvatar from './components/EmployeeAvatar';
+import LiveCompensationPanel from './components/LiveCompensationPanel';
+import CompanyLogo from './components/CompanyLogo';
 import SignaturePad from './components/SignaturePad';
 import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
@@ -205,7 +214,9 @@ const TOUR_STEPS_I18N: Record<'FR' | 'EN', Array<{ title: string; description: s
 // été configuré), pour que les libellés et calculs de paie s'adaptent au bon
 // endroit au lieu de présumer le Québec partout.
 function getCompanyRegion(companyInfo: CompanyInfo): { country: 'CA' | 'US'; region: TaxRegion } {
-  const country = companyInfo.country || 'CA';
+  // Les barèmes de paie/taxes ne couvrent que le Canada et les États-Unis ;
+  // les autres juridictions (ex: EU) retombent sur les libellés canadiens.
+  const country: 'CA' | 'US' = companyInfo.country === 'US' ? 'US' : 'CA';
   const list = country === 'US' ? US_REGIONS : CANADIAN_REGIONS;
   const region = list.find(r => r.code === companyInfo.region) || list[0];
   return { country, region };
@@ -223,7 +234,7 @@ export default function App() {
     resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
-    hydrateCloud
+    hydrateCloud, setIsOnboarded
   } = useAppStore();
 
   // Hydratation depuis Supabase au démarrage (best effort, non bloquant : l'app
@@ -232,25 +243,32 @@ export default function App() {
   // temps réel sans dépendre de connexions persistantes (compatible hébergement serverless).
   const [cloudSyncing, setCloudSyncing] = useState(true);
   useEffect(() => {
-    hydrateCloud().finally(() => setCloudSyncing(false));
+    const cloudAllowed = companyInfo.dataStorageMode !== 'local';
+    setCloudSyncAllowed(cloudAllowed);
+    if (!cloudAllowed) {
+      setCloudSyncing(false);
+      return;
+    }
 
+    hydrateCloud().finally(() => setCloudSyncing(false));
     const interval = setInterval(() => { hydrateCloud(); }, 45000);
     const onFocus = () => hydrateCloud();
     const onVisibility = () => { if (!document.hidden) hydrateCloud(); };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
-
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, []);
+  }, [companyInfo.dataStorageMode]);
 
   const dragControls = useDragControls();
   const t = translations[currentLanguage];
   const TOUR_STEPS = TOUR_STEPS_I18N[currentLanguage];
-  const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
+  const dateLocale = companyInfo.dateLocale || (currentLanguage === 'FR' ? 'fr-CA' : 'en-CA');
+  const currency = companyInfo.currency || (companyInfo.country === 'US' ? 'USD' : companyInfo.country === 'EU' ? 'EUR' : 'CAD');
+  const money = (value: number) => new Intl.NumberFormat(dateLocale, { style: 'currency', currency }).format(Number(value || 0));
   const unitLabels = CATALOGUE_UNIT_LABELS[currentLanguage];
   const credentialAlerts = getCredentialAlerts(employees);
   const totalOpenAlerts = hrAlerts.filter(alert => !alert.resolved).length + credentialAlerts.length;
@@ -305,6 +323,7 @@ export default function App() {
   const [homeRateCustom, setHomeRateCustom] = useState<number>(0);
   const [timerDisplay, setTimerDisplay] = useState<string>('00:00:00');
   const [earningsSimulation, setEarningsSimulation] = useState<number>(0);
+  const [elapsedWorkSeconds, setElapsedWorkSeconds] = useState<number>(0);
 
   // Accounting management local inputs
   const [accountingViewMode, setAccountingViewMode] = useState<'expenses' | 'payroll'>('expenses');
@@ -324,6 +343,7 @@ export default function App() {
   // Signature tactile requise avant l'envoi d'une facture sous-traitant à la compagnie
   const [invoiceToSign, setInvoiceToSign] = useState<Invoice | null>(null);
   const [invoiceSignatureData, setInvoiceSignatureData] = useState<string | null>(null);
+  const [invoicePreview, setInvoicePreview] = useState<Invoice | null>(null);
 
   // Punch-Out Surface materials reporting state
   const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string; unit: string }>>([]);
@@ -343,6 +363,7 @@ export default function App() {
     hireDate: string;
     avatar: string;
     businessName: string;
+    businessLogo: string;
     gstNumber: string;
     sin: string;
     employeeProvince: string;
@@ -361,14 +382,18 @@ export default function App() {
     hireDate: '2026-06-03',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
     businessName: '',
+    businessLogo: '',
     gstNumber: '',
     sin: '',
-    employeeProvince: 'QC',
+    employeeProvince: companyInfo.region || 'AB',
     payFrequency: 'weekly',
     annualSalary: 0,
     credentials: []
   });
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+  // Tâches et outils saisis directement à la création du chantier (une entrée par ligne)
+  const [newProjectTasksText, setNewProjectTasksText] = useState('');
+  const [newProjectToolsText, setNewProjectToolsText] = useState('');
   // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
   const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
   const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
@@ -391,6 +416,35 @@ export default function App() {
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiProviderStatus, setAiProviderStatus] = useState<Record<string, { configured: boolean; envNames: string[]; label: string }> | null>(null);
+  const [aiProviderStatusError, setAiProviderStatusError] = useState<boolean>(false);
+
+  // Les versions précédentes du scénario annuel pouvaient restaurer un profil
+  // local sans jeton serveur. On répare automatiquement cette session afin que
+  // l'assistant retrouve immédiatement les clés Vercel, sans nouvelle connexion.
+  useEffect(() => {
+    if (!activeEmployee?.id.startsWith('test-') || !activeEmployee.nip || getAuthToken()) return;
+    authLogin(activeEmployee.id, activeEmployee.nip).catch(() => undefined);
+  }, [activeEmployee?.id, activeEmployee?.nip]);
+
+  useEffect(() => {
+    if (!activeEmployee || visibleSettingsTab !== 12) return;
+    let cancelled = false;
+    setAiProviderStatusError(false);
+    fetch('/api/ai/status', { headers: authHeaders() })
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.providers) throw new Error('AI status unavailable');
+        if (!cancelled) setAiProviderStatus(data.providers);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAiProviderStatus(null);
+          setAiProviderStatusError(true);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activeEmployee?.id, visibleSettingsTab, companyInfo.aiProvider]);
 
   // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
   const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
@@ -405,73 +459,84 @@ export default function App() {
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
 
-  // Time tracker for active punch
+  // Chronomètre de travail et compteur de rémunération, actualisés à la
+  // seconde. Une pause en cours est retranchée immédiatement et le compteur
+  // reste figé jusqu'à la reprise.
   const timerIntervalRef = useRef<any>(null);
 
   useEffect(() => {
-    // Sync current active session
-    if (activeEmployee) {
-      const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && p.endTime === null);
-      setActivePunchSession(liveSession || null);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
 
-      if (liveSession && !liveSession.pausedAt) {
-        // Run timer
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        
-        timerIntervalRef.current = setInterval(() => {
-          const start = new Date(liveSession.startTime).getTime();
-          const now = new Date().getTime();
-          // subtract cumulative pause
-          let elapsedMs = now - start;
-          const pauseMinutes = liveSession.totalPauseMinutes || 0;
-          elapsedMs = elapsedMs - (pauseMinutes * 60 * 1000);
-          
-          if (elapsedMs < 0) elapsedMs = 0;
+    if (!activeEmployee) {
+      setActivePunchSession(null);
+      setTimerDisplay('00:00:00');
+      setElapsedWorkSeconds(0);
+      setEarningsSimulation(0);
+      return;
+    }
 
-          const totalSeconds = Math.floor(elapsedMs / 1000);
-          const hrs = Math.floor(totalSeconds / 3600);
-          const mins = Math.floor((totalSeconds % 3600) / 60);
-          const secs = totalSeconds % 60;
-          const display = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-          
-          setTimerDisplay(display);
+    const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && p.endTime === null) || null;
+    setActivePunchSession(liveSession);
 
-          // Simulate earnings in real-time
-          let currentEarnings = 0;
-          const hoursDecimal = elapsedMs / 3600000;
-          if (liveSession.payMode === 'horaire') {
-            currentEarnings = hoursDecimal * liveSession.rate;
-          } else if (liveSession.payMode === 'forfait') {
-            currentEarnings = liveSession.rate;
-          } else if (liveSession.payMode === 'surface') {
-            currentEarnings = Number(liveSession.rate); // base starting rate, addition occurs on materials submit
-          }
-          setEarningsSimulation(Number(currentEarnings.toFixed(2)));
-        }, 1000);
-      } else {
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current);
-          timerIntervalRef.current = null;
-        }
-        if (liveSession && liveSession.pausedAt) {
-          setTimerDisplay(translations[currentLanguage].pausedWord);
-        } else {
-          setTimerDisplay("00:00:00");
-          setEarningsSimulation(0);
-        }
+    if (!liveSession) {
+      setTimerDisplay('00:00:00');
+      setElapsedWorkSeconds(0);
+      setEarningsSimulation(0);
+      return;
+    }
+
+    const updateLiveCounters = () => {
+      const now = Date.now();
+      const start = new Date(liveSession.startTime).getTime();
+      let pausedMs = Math.max(0, Number(liveSession.totalPauseMinutes || 0)) * 60 * 1000;
+      if (liveSession.pausedAt) {
+        pausedMs += Math.max(0, now - new Date(liveSession.pausedAt).getTime());
       }
-    } else {
+
+      const elapsedMs = Math.max(0, now - start - pausedMs);
+      const totalSeconds = Math.floor(elapsedMs / 1000);
+      const hrs = Math.floor(totalSeconds / 3600);
+      const mins = Math.floor((totalSeconds % 3600) / 60);
+      const secs = totalSeconds % 60;
+      setElapsedWorkSeconds(totalSeconds);
+      setTimerDisplay(`${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+
+      const hoursDecimal = elapsedMs / 3600000;
+      const grossAmount = liveSession.payMode === 'horaire'
+        ? hoursDecimal * Math.max(0, Number(liveSession.rate || 0))
+        : liveSession.payMode === 'forfait'
+          ? Math.max(0, Number(liveSession.rate || 0))
+          : 0;
+      setEarningsSimulation(Number(grossAmount.toFixed(2)));
+    };
+
+    updateLiveCounters();
+    if (!liveSession.pausedAt) {
+      timerIntervalRef.current = setInterval(updateLiveCounters, 1000);
+    }
+
+    return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
         timerIntervalRef.current = null;
       }
-      setActivePunchSession(null);
-    }
-
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
   }, [activeEmployee, punchSessions]);
+
+  // Présélectionne automatiquement le mode prévu au dossier de l'employé ou
+  // du sous-traitant. Un profil sans préférence demeure payé à l'heure.
+  useEffect(() => {
+    if (!activeEmployee || activePunchSession) return;
+    const preferredMode = activeEmployee.workMode === 'sqft'
+      ? 'surface'
+      : activeEmployee.workMode === 'flat'
+        ? 'forfait'
+        : 'horaire';
+    setHomePayMode(preferredMode);
+  }, [activeEmployee?.id, activeEmployee?.workMode, activePunchSession?.id]);
 
   // If active project is selected, set Default rates based on employee or mode
   useEffect(() => {
@@ -479,20 +544,17 @@ export default function App() {
       const selectedProj = projects.find(p => p.id === homePunchProject);
       if (selectedProj && activeEmployee) {
         if (homePayMode === 'horaire') {
-          setHomeRateCustom(activeEmployee.hourlyRate);
-        } else if (homePayMode === 'forfait') {
-          setHomeRateCustom(250); // General daily forfeit
+          setHomeRateCustom(Math.max(0, activeEmployee.hourlyRate));
         } else {
-          setHomeRateCustom(12); // Mode surface default rate per pi²
+          // Surface : la valeur vient des produits déclarés au Punch Out.
+          // Forfait : le montant total de la job doit être confirmé avant le départ.
+          setHomeRateCustom(0);
         }
       }
     }
   }, [homePunchProject, homePayMode, activeEmployee, projects]);
 
   // If the company is not onboarded, redirect to the custom onboarding flow
-  if (!isOnboarded) {
-    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
-  }
 
   const handleSelectProfile = (empId: string) => {
     setSelectedEmpId(empId);
@@ -1006,7 +1068,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     setIsAiLoading(true);
 
     const provider = companyInfo.aiProvider || 'gemini';
-    const regionLabel = `${regionName} (${companyCountry === 'US' ? (currentLanguage === 'FR' ? 'États-Unis' : 'United States') : 'Canada'})`;
+    const regionLabel = `${regionName} (${marketLabel(companyCountry, currentLanguage)})`;
     // Contexte de gestion (données agrégées, sans données sensibles) : réservé aux admins/secrétaires
     const appContext = aiPrivileged ? buildAiAppContext() : undefined;
 
@@ -1082,7 +1144,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // au lieu de présumer le Québec. Pour les États-Unis, l'impôt fédéral/état n'est
   // pas modélisé en détail (affiché avec une mention "à valider" dans l'UI).
   const calculateProgressiveTax = (annualGross: number, isFederal: boolean) => {
-    if (companyCountry === 'US') {
+    if (companyCountry !== 'CA') {
       return 0;
     }
     if (isFederal) {
@@ -1196,8 +1258,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // Simule les déductions à la source pour un salaire brut ponctuel, avec les
   // taux et le régime de retraite adaptés à la province/état de la compagnie.
   const calculateSimulatedDeductions = (gross: number) => {
-    const provRate = companyCountry === 'US' ? 0 : (CA_PROVINCIAL_BRACKETS[companyRegion.code]?.[0].rate ?? CA_PROVINCIAL_FALLBACK_RATE);
-    const fedTax = companyCountry === 'US' ? 0 : gross * CA_FEDERAL_BRACKETS[0].rate;
+    const provRate = companyCountry !== 'CA' ? 0 : (CA_PROVINCIAL_BRACKETS[companyRegion.code]?.[0].rate ?? CA_PROVINCIAL_FALLBACK_RATE);
+    const fedTax = companyCountry !== 'CA' ? 0 : gross * CA_FEDERAL_BRACKETS[0].rate;
     const provTax = gross * provRate;
     const rrq = gross * payrollMeta.pensionRate;
     const ae = gross * payrollMeta.secondaryDeductionRate;
@@ -1211,11 +1273,28 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     };
   };
 
+  // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
+  // avant un useEffect provoque « Rendered more hooks than during the previous
+  // render » et un écran noir au moment de terminer la configuration.
+  if (!isOnboarded || companyInfo.complianceVersion !== '2026.07') {
+    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
+  }
+
   return (
     <div 
       id="main-scaffold-container"
       className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 pt-16 flex flex-col relative select-none"
     >
+      {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.07' && (
+        <Suspense fallback={<LazySectionFallback />}>
+          <UserPrivacyNotice
+            employee={activeEmployee}
+            companyInfo={companyInfo}
+            currentLanguage={currentLanguage}
+            onAccept={updateEmployee}
+          />
+        </Suspense>
+      )}
       {cloudSyncing && (
         <div className="fixed top-1 right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
           {t.cloudSyncing}
@@ -1224,9 +1303,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       {/* Top Navbar */}
       <nav id="navbar-scaffold" className="fixed top-0 left-0 right-0 h-16 border-b border-gray-800 bg-[#16191F] px-4 flex items-center justify-between z-40">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-orange-600 rounded flex items-center justify-center font-bold text-white shadow-md">
-            HX
-          </div>
+          <CompanyLogo
+            logo={companyInfo.logo}
+            companyName={companyInfo.name}
+            className="w-10 h-10 rounded-xl border border-gray-700 bg-white p-1 shadow-md"
+            imageClassName="w-full h-full object-contain rounded-lg"
+            fallbackClassName="rounded-xl bg-orange-600 text-white text-sm"
+          />
           <div>
             <h1 className="text-sm font-black uppercase tracking-tight text-white leading-none">
               {companyInfo.name}
@@ -1297,10 +1380,34 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </p>
             </div>
 
+            {/* LOCAL TEST PROFILES — no Supabase */}
+            {LOCAL_TEST_MODE && (
+              <div className="mb-6 rounded-2xl border border-orange-500/35 bg-orange-500/10 p-4 text-left">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase font-black tracking-widest text-orange-400">
+                      {currentLanguage === 'FR' ? 'Mode de validation local — exercice annuel' : 'Local validation mode — annual dataset'}
+                    </p>
+                    <p className="text-xs text-gray-300 mt-1">
+                      {currentLanguage === 'FR'
+                        ? `Données fictives cohérentes du ${TEST_DATASET_SUMMARY.periodStart} au ${TEST_DATASET_SUMMARY.periodEnd} : ${TEST_DATASET_SUMMARY.projects} projets, ${TEST_DATASET_SUMMARY.payrollPayments} paies et ${TEST_DATASET_SUMMARY.expenses} dépenses. Aucune donnée test n’est envoyée à Supabase.`
+                        : `Consistent fictional data from ${TEST_DATASET_SUMMARY.periodStart} to ${TEST_DATASET_SUMMARY.periodEnd}: ${TEST_DATASET_SUMMARY.projects} projects, ${TEST_DATASET_SUMMARY.payrollPayments} payroll entries and ${TEST_DATASET_SUMMARY.expenses} expenses. No test data is sent to Supabase.`}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-orange-600 px-3 py-1 text-[10px] font-black text-white">DEV TEST</span>
+                </div>
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {TEST_PIN_DIRECTORY.map(item => (
+                    <div key={item} className="rounded-lg border border-gray-800 bg-[#0F1115] px-3 py-2 text-[10px] font-mono text-gray-300">{item}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Profile Selection Grid */}
             {!selectedEmpId ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-                {employees.map(emp => (
+                {employees.filter(emp => !emp.id.startsWith('test-former-')).map(emp => (
                   <button
                     key={emp.id}
                     onClick={() => handleSelectProfile(emp.id)}
@@ -1638,7 +1745,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             {t.punchActiveOn} {activePunchSession.projectName}
                           </span>
                           <p className="text-sm font-bold text-gray-300 font-mono tracking-wide">
-                            {t.sessionRate} {activePunchSession.rate}$ / {activePunchSession.payMode}
+                            {activePunchSession.payMode === 'horaire'
+                              ? `${activePunchSession.rate.toFixed(2)} $/h`
+                              : activePunchSession.payMode === 'forfait'
+                                ? `${currentLanguage === 'FR' ? 'Forfait' : 'Fixed price'} : ${activePunchSession.rate.toFixed(2)} $`
+                                : (currentLanguage === 'FR' ? 'Produits et quantités à déclarer au Punch Out' : 'Products and quantities declared at Punch Out')}
                           </p>
                         </>
                       ) : (
@@ -1664,6 +1775,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         </div>
                       ) : null;
                     })()}
+
+                    {activePunchSession && (
+                      <div className="w-full max-w-3xl mb-7">
+                        <LiveCompensationPanel
+                          session={activePunchSession}
+                          elapsedSeconds={elapsedWorkSeconds}
+                          grossAmount={earningsSimulation}
+                          currentLanguage={currentLanguage}
+                          currency={companyInfo.currency || 'CAD'}
+                        />
+                      </div>
+                    )}
 
                     {/* CENTRAL PUNCH BUTTON with Theme Styles */}
                     <div className="relative w-[230px] h-[230px] flex items-center justify-center mb-8">
@@ -1721,15 +1844,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {activePunchSession ? t.punchOut : t.punchIn}
                         </span>
 
-                        {/* Real-time Dynamic Timer */}
+                        {/* Le temps reste visible dans le bouton; l'argent, plus important,
+                            occupe le grand panneau doré juste au-dessus. */}
                         <span className="text-sm font-mono text-gray-300 mt-1 uppercase tracking-widest font-black">
-                          {activePunchSession ? timerDisplay : "00:00:00"}
+                          {activePunchSession ? timerDisplay : '00:00:00'}
                         </span>
-
-                        {/* Real-time earnings simulator underneath */}
                         {activePunchSession && (
-                          <span className="text-xs uppercase font-black text-green-400 mt-1 px-2.5 py-1 rounded bg-green-950/40 border border-green-500/20">
-                            + {earningsSimulation}$
+                          <span className="mt-2 rounded-full border border-amber-400/25 bg-black/25 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-amber-200">
+                            {activePunchSession.payMode === 'horaire'
+                              ? (currentLanguage === 'FR' ? 'Argent en direct ↑' : 'Live money ↑')
+                              : activePunchSession.payMode === 'forfait'
+                                ? (currentLanguage === 'FR' ? 'Rendement $/h' : 'Hourly yield')
+                                : (currentLanguage === 'FR' ? 'Déclaration à la fin' : 'Declare at finish')}
                           </span>
                         )}
                       </button>
@@ -2115,12 +2241,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                           <div className="text-right space-y-2">
                             <div>
-                              <p className="text-[10px] text-gray-400">{t.grossShort} {inv.amount.toFixed(2)}$</p>
+                              <p className="text-[10px] text-gray-400">{t.grossShort} {money(inv.amount)}</p>
                               <p className="text-[10px] text-gray-500">{currentLanguage === 'FR' ? companyRegion.taxRate1NameFR : companyRegion.taxRate1NameEN} + {currentLanguage === 'FR' ? companyRegion.taxRate2NameFR : companyRegion.taxRate2NameEN} {t.estimatedShort}</p>
                               <p className="text-base font-black text-green-400 mt-1">
-                                {inv.totalWithTaxes.toFixed(2)}$ <span className="text-[10px] text-gray-400">{t.ttcLabel}</span>
+                                {money(inv.totalWithTaxes)} <span className="text-[10px] text-gray-400">{t.ttcLabel}</span>
                               </p>
                             </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setInvoicePreview(inv)}
+                              className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-[9px] font-bold uppercase rounded border border-cyan-500/30 cursor-pointer"
+                            >
+                              {currentLanguage === 'FR' ? 'Aperçu / PDF' : 'Preview / PDF'}
+                            </button>
 
                             {/* Actions on Invoice for Admin */}
                             {activeEmployee.role === 'admin' && (
@@ -2174,6 +2308,21 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </div>
             )}
 
+            {invoicePreview && (() => {
+              const issuer = employees.find(employee => employee.id === invoicePreview.employeeId) || activeEmployee;
+              return issuer ? (
+                <Suspense fallback={<LazySectionFallback />}>
+                  <SubcontractorInvoicePreview
+                    invoice={invoicePreview}
+                    issuer={issuer}
+                    companyInfo={companyInfo}
+                    currentLanguage={currentLanguage}
+                    onClose={() => setInvoicePreview(null)}
+                  />
+                </Suspense>
+              ) : null;
+            })()}
+
             {/* -------------------- VIEW CONTAINER : PROJETS -------------------- */}
             {activeTab === 'projects' && (
               <div id="view-projects-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
@@ -2193,6 +2342,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   <form 
                     onSubmit={(e) => {
                       e.preventDefault();
+                      // Tâches et outils saisis dès la création : une entrée par ligne
+                      const initialTasks = newProjectTasksText
+                        .split('\n').map(l => l.trim()).filter(Boolean)
+                        .map(text => ({ id: genId(), text, done: false, priority: 'normal' as const, createdAt: new Date().toISOString() }));
+                      const initialTools = newProjectToolsText
+                        .split('\n').map(l => l.trim()).filter(Boolean)
+                        .map(name => ({ id: genId(), name, brought: false }));
                       addProject({
                         name: newProjectForm.name,
                         clientName: newProjectForm.clientName,
@@ -2201,10 +2357,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         longitude: Number(newProjectForm.longitude),
                         radius: Number(newProjectForm.radius),
                         assignedEmployees: [],
-                        status: 'active'
+                        status: 'active',
+                        tasks: initialTasks,
+                        tools: initialTools
                       });
                       alert(t.projectAddedAlert);
                       setNewProjectForm({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+                      setNewProjectTasksText('');
+                      setNewProjectToolsText('');
                     }}
                     className="p-4 bg-gray-950 border border-gray-850 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4"
                   >
@@ -2318,8 +2478,30 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       </div>
                     </div>
 
+                    {/* Tâches et outils initiaux : saisis en même temps que le chantier */}
+                    <div>
+                      <label className="text-[10px] font-mono uppercase text-gray-500">{t.projInitTasksLabel}</label>
+                      <textarea
+                        value={newProjectTasksText}
+                        onChange={e => setNewProjectTasksText(e.target.value)}
+                        rows={4}
+                        placeholder={t.projInitTasksPh}
+                        className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left resize-y"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-mono uppercase text-gray-500">{t.projInitToolsLabel}</label>
+                      <textarea
+                        value={newProjectToolsText}
+                        onChange={e => setNewProjectToolsText(e.target.value)}
+                        rows={4}
+                        placeholder={t.projInitToolsPh}
+                        className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left resize-y"
+                      />
+                    </div>
+
                     <div className="flex items-end md:col-span-2">
-                      <button 
+                      <button
                         type="submit"
                         className="w-full p-2.5 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded transition cursor-pointer"
                       >
@@ -4271,56 +4453,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-[10px] text-gray-400 mt-0.5">{fmt(t.companySubtitle, { region: regionName })}</p>
                         </div>
 
-                        {/* Pays / Province ou État — pilote tous les libellés et calculs de paie de l'application */}
-                        <div className="p-3 bg-gray-950 border border-orange-500/20 rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">{t.countryLabel}</label>
-                            <select
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
-                              value={companyCountry}
-                              onChange={(e) => {
-                                const nextCountry = e.target.value as 'CA' | 'US';
-                                const nextRegion = (nextCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS)[0];
-                                updateCompanyInfo({
-                                  country: nextCountry,
-                                  region: nextRegion.code,
-                                  taxRate1: nextRegion.taxRate1,
-                                  taxRate2: nextRegion.taxRate2,
-                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
-                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
-                                });
-                              }}
-                            >
-                              <option value="CA">Canada</option>
-                              <option value="US">{t.usOption}</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">{t.provinceStateLabel}</label>
-                            <select
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
-                              value={companyRegion.code}
-                              onChange={(e) => {
-                                const nextRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === e.target.value);
-                                if (!nextRegion) return;
-                                updateCompanyInfo({
-                                  region: nextRegion.code,
-                                  taxRate1: nextRegion.taxRate1,
-                                  taxRate2: nextRegion.taxRate2,
-                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
-                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
-                                });
-                              }}
-                            >
-                              {(companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).map(r => (
-                                <option key={r.code} value={r.code}>{currentLanguage === 'FR' ? r.nameFR : r.nameEN}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <p className="sm:col-span-2 text-[9px] text-gray-500">
-                            {fmt(t.regionDetermines, { wc: workersCompName })}
-                          </p>
-                        </div>
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <CompanyComplianceSettings />
+                        </Suspense>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
@@ -4330,16 +4465,6 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.name}
                               onChange={(e) => updateCompanyInfo({ name: e.target.value })}
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">{t.logoLabel}</label>
-                            <input
-                              type="text"
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
-                              defaultValue={companyInfo.logo || "📐 Hailite Xteriors Pro"}
-                              onChange={(e) => updateCompanyInfo({ logo: e.target.value })}
                             />
                           </div>
 
@@ -5179,9 +5304,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 phone: emp.phone || '',
                                 address: emp.address || '',
                                 businessName: emp.businessName || '',
+                                businessLogo: emp.businessLogo || '',
                                 gstNumber: emp.gstNumber || '',
                                 sin: emp.sin || '',
-                                employeeProvince: emp.employeeProvince || 'QC',
+                                employeeProvince: emp.employeeProvince || companyRegion.code,
                                 payFrequency: emp.payFrequency || 'weekly',
                                 annualSalary: emp.annualSalary || 0,
                                 hireDate: emp.hireDate || '2026-06-03',
@@ -5372,10 +5498,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               value={editEmployeeForm.employeeProvince}
                                               onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, employeeProvince: e.target.value })}
                                             >
-                                              <option value="QC">{t.provQuebec}</option>
-                                              <option value="AB">{t.provAlberta}</option>
-                                              <option value="ON">{t.provOntario}</option>
-                                              <option value="BC">{t.provBC}</option>
+                                      {getRegionsForMarket(companyCountry).map(region => (
+                                        <option key={region.code} value={region.code}>{currentLanguage === 'FR' ? region.nameFR : region.nameEN}</option>
+                                      ))}
                                             </select>
                                           </div>
                                           <div>
@@ -5447,6 +5572,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           </div>
                                         </div>
                                       </div>
+                                    )}
+
+                                    {editEmployeeForm.workerType === 'contractor' && (
+                                      <Suspense fallback={<LazySectionFallback />}>
+                                        <BusinessLogoField
+                                          value={editEmployeeForm.businessLogo || ''}
+                                          onChange={(businessLogo) => setEditEmployeeForm({ ...editEmployeeForm, businessLogo })}
+                                          businessName={editEmployeeForm.businessName || editEmployeeForm.name}
+                                          currentLanguage={currentLanguage}
+                                          inputId={`business-logo-edit-${emp.id}`}
+                                        />
+                                      </Suspense>
                                     )}
 
                                     {/* Avatar Custom Photo selection inside edit form */}
@@ -5524,6 +5661,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               address: editEmployeeForm.address,
                                               avatar: editEmployeeForm.avatar || emp.avatar,
                                               businessName: editEmployeeForm.businessName,
+                                              businessLogo: editEmployeeForm.businessLogo,
                                               gstNumber: editEmployeeForm.gstNumber,
                                               sin: editEmployeeForm.sin,
                                               employeeProvince: editEmployeeForm.employeeProvince,
@@ -5626,10 +5764,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     value={newEmployeeForm.employeeProvince}
                                     onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, employeeProvince: e.target.value })}
                                   >
-                                    <option value="QC">{t.provQuebec}</option>
-                                    <option value="AB">{t.provAlberta}</option>
-                                    <option value="ON">{t.provOntario}</option>
-                                    <option value="BC">{t.provBC}</option>
+                                      {getRegionsForMarket(companyCountry).map(region => (
+                                        <option key={region.code} value={region.code}>{currentLanguage === 'FR' ? region.nameFR : region.nameEN}</option>
+                                      ))}
                                   </select>
                                 </div>
                                 <div>
@@ -5701,6 +5838,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 </div>
                               </div>
                             </div>
+                          )}
+
+                          {newEmployeeForm.workerType === 'contractor' && (
+                            <Suspense fallback={<LazySectionFallback />}>
+                              <BusinessLogoField
+                                value={newEmployeeForm.businessLogo}
+                                onChange={(businessLogo) => setNewEmployeeForm({ ...newEmployeeForm, businessLogo })}
+                                businessName={newEmployeeForm.businessName || newEmployeeForm.name}
+                                currentLanguage={currentLanguage}
+                                inputId="business-logo-new"
+                              />
+                            </Suspense>
                           )}
 
                           {/* Avatar Selection Row */}
@@ -5810,6 +5959,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 phone: newEmployeeForm.phone || '(418) 555-0199',
                                 address: newEmployeeForm.address || `${companyRegion.nameFR}, ${companyRegion.code}`,
                                 businessName: newEmployeeForm.businessName,
+                                businessLogo: newEmployeeForm.businessLogo,
                                 gstNumber: newEmployeeForm.gstNumber,
                                 sin: newEmployeeForm.sin,
                                 employeeProvince: newEmployeeForm.employeeProvince,
@@ -5829,9 +5979,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 hireDate: '2026-06-03',
                                 avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
                                 businessName: '',
+                                businessLogo: '',
                                 gstNumber: '',
                                 sin: '',
-                                employeeProvince: 'QC',
+                                employeeProvince: companyInfo.region || 'AB',
                                 payFrequency: 'weekly',
                                 annualSalary: 0,
                                 credentials: []
@@ -6260,7 +6411,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     onChange={(e) => setNewPayrollFormSetting({ ...newPayrollFormSetting, employeeId: e.target.value })}
                                   >
                                     <option value="">{t.selectEmployeeOption}</option>
-                                    {employees.map(emp => (
+                                    {employees.filter(emp => !emp.id.startsWith('test-former-')).map(emp => (
                                       <option key={emp.id} value={emp.id}>{emp.name}</option>
                                     ))}
                                   </select>
@@ -6465,7 +6616,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-700'
                                 }`}
                               >
-                                {p.label}
+                                <span className="block">{p.label}</span>
+                                <span className={`block mt-1 text-[9px] font-mono ${
+                                  aiProviderStatus?.[p.id]?.configured ? 'text-green-200' : 'text-orange-100/80'
+                                }`}>
+                                  {aiProviderStatus?.[p.id]?.configured
+                                    ? (currentLanguage === 'FR' ? 'Clé Vercel détectée' : 'Vercel key detected')
+                                    : (currentLanguage === 'FR' ? 'Clé non détectée' : 'Key not detected')}
+                                </span>
                               </button>
                             ))}
                           </div>
@@ -6482,6 +6640,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           </p>
                           <p className="text-[10px] text-gray-600">
                             {t.keyBadgeHint}
+                          </p>
+                          {aiProviderStatusError && (
+                            <p className="text-[10px] text-red-300">
+                              {currentLanguage === 'FR'
+                                ? 'Impossible de vérifier les clés : reconnectez-vous au profil, puis revenez dans Réglages IA.'
+                                : 'Unable to verify keys: sign in again, then return to AI Settings.'}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-gray-500">
+                            {currentLanguage === 'FR'
+                              ? `Fournisseur actif : ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI ChatGPT' : 'Google Gemini'}. La variable Vercel correspondante sera utilisée automatiquement.`
+                              : `Active provider: ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI ChatGPT' : 'Google Gemini'}. Its matching Vercel variable will be used automatically.`}
                           </p>
                         </div>
                       </div>
@@ -7010,16 +7180,35 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </div>
               </div>
 
-              {/* Custom rate value */}
-              <div>
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.modalConfirmRate}</label>
-                <input 
-                  type="number"
-                  value={homeRateCustom}
-                  onChange={e => setHomeRateCustom(Number(e.target.value))}
-                  className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs font-mono font-semibold text-white"
-                />
-              </div>
+              {/* Le montant demandé dépend du mode de rémunération. */}
+              {homePayMode !== 'surface' ? (
+                <div className="rounded-xl border border-gray-800 bg-gray-950/55 p-3">
+                  <label className="text-[10px] text-gray-400 font-mono uppercase font-black">
+                    {homePayMode === 'horaire'
+                      ? (currentLanguage === 'FR' ? 'Taux horaire confirmé ($/h)' : 'Confirmed hourly rate ($/h)')
+                      : (currentLanguage === 'FR' ? 'Montant total du forfait ($)' : 'Total fixed job amount ($)')}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={homeRateCustom || ''}
+                    onChange={e => setHomeRateCustom(Number(e.target.value))}
+                    className="w-full mt-2 p-3 bg-gray-900 rounded-xl border border-gray-700 text-lg font-mono font-black text-amber-300 text-center"
+                  />
+                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+                    {homePayMode === 'horaire'
+                      ? (currentLanguage === 'FR' ? 'Le compteur d’argent augmentera à chaque seconde selon ce taux.' : 'The money counter will increase every second using this rate.')
+                      : (currentLanguage === 'FR' ? 'Le rendement horaire restera à 0 pendant la première heure, puis le forfait sera divisé par le temps réellement travaillé.' : 'Hourly yield stays at 0 during the first hour, then the fixed amount is divided by actual worked time.')}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-[11px] leading-relaxed text-blue-200">
+                  {currentLanguage === 'FR'
+                    ? 'Aucun faux montant ne sera affiché pendant la journée. Au Punch Out, vous pourrez déclarer plusieurs produits, leurs quantités et leurs prix; le total et le rendement horaire seront calculés automatiquement.'
+                    : 'No estimated amount is shown during the day. At Punch Out, declare multiple products, quantities and prices; total and hourly yield are calculated automatically.'}
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3 pt-3 border-t border-gray-850">
@@ -7031,7 +7220,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </button>
               <button 
                 onClick={handlePunchInStart}
-                disabled={!homePunchProject}
+                disabled={!homePunchProject || (homePayMode !== 'surface' && homeRateCustom <= 0)}
                 className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-40"
               >
                 {t.modalConfirmBtn}
@@ -7087,8 +7276,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                   <div className="space-y-2">
                     {/* Catalog Material choices quick click */}
-                    <div className="grid grid-cols-2 gap-2">
-                      {catalogue.slice(0, 4).map(catItem => {
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
+                      {catalogue.map(catItem => {
                         const unitLabel = unitLabels[catItem.unit || 'pi2'];
                         return (
                           <button
@@ -7110,9 +7299,49 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-gray-500 text-center py-2 italic font-sans animate-none">{t.noMaterialsDeclared}</p>
                         ) : (
                           reportedMaterials.map((m, idx) => (
-                            <div key={idx} className="flex justify-between items-center text-gray-300 font-mono">
-                              <span className="font-sans">{m.emoji} {m.name} ({m.quantity} {m.unit || unitLabels['pi2']})</span>
-                              <span className="font-bold">{(m.quantity * m.unitPrice).toFixed(2)}$</span>
+                            <div key={`${m.name}-${idx}`} className="rounded-xl border border-gray-800 bg-gray-900 p-3 space-y-2">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="font-sans text-xs font-black text-white">{m.emoji} {m.name}</p>
+                                  <p className="text-[9px] text-gray-500">{m.unit || unitLabels['pi2']}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setReportedMaterials(current => current.filter((_, itemIndex) => itemIndex !== idx))}
+                                  className="rounded-lg border border-red-500/20 bg-red-500/10 p-1.5 text-red-400 hover:bg-red-500/20"
+                                  aria-label={currentLanguage === 'FR' ? 'Retirer ce produit' : 'Remove this product'}
+                                >
+                                  <Trash className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-[9px] font-black uppercase text-gray-500">
+                                  {currentLanguage === 'FR' ? 'Quantité' : 'Quantity'}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={m.quantity || ''}
+                                    onChange={event => setReportedMaterials(current => current.map((item, itemIndex) => itemIndex === idx ? { ...item, quantity: Math.max(0, Number(event.target.value)) } : item))}
+                                    className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 p-2 text-right font-mono text-xs font-black text-white"
+                                  />
+                                </label>
+                                <label className="text-[9px] font-black uppercase text-gray-500">
+                                  {currentLanguage === 'FR' ? 'Prix unitaire' : 'Unit price'}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={m.unitPrice || ''}
+                                    onChange={event => setReportedMaterials(current => current.map((item, itemIndex) => itemIndex === idx ? { ...item, unitPrice: Math.max(0, Number(event.target.value)) } : item))}
+                                    className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 p-2 text-right font-mono text-xs font-black text-amber-300"
+                                  />
+                                </label>
+                              </div>
+                              <div className="flex items-center justify-between border-t border-gray-800 pt-2 text-[10px]">
+                                <span className="font-bold text-gray-500">{currentLanguage === 'FR' ? 'Sous-total' : 'Subtotal'}</span>
+                                <span className="font-mono text-sm font-black text-amber-300">{(m.quantity * m.unitPrice).toFixed(2)} $</span>
+                              </div>
                             </div>
                           ))
                         )}
@@ -7122,15 +7351,35 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 )}
               </div>
 
-              {/* Total simulated earnings displaying large */}
-              <div className="p-3 bg-green-950/20 border border-green-500/20 rounded-xl text-center font-sans animate-none mt-3">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest block">{t.modalRevenueEarned}</span>
-                <span className="text-2xl font-black text-green-400 font-mono">
-                  {activePunchSession.payMode === 'surface'
-                    ? reportedMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0).toFixed(2)
-                    : earningsSimulation}$
-                </span>
-              </div>
+              {/* Résumé financier : total réel et rendement horaire selon le mode. */}
+              {(() => {
+                const declaredSurfaceTotal = reportedMaterials.reduce((sum, material) => sum + (material.quantity * material.unitPrice), 0);
+                return (
+                  <div className="mt-3 space-y-3">
+                    <LiveCompensationPanel
+                      session={activePunchSession}
+                      elapsedSeconds={elapsedWorkSeconds}
+                      grossAmount={activePunchSession.payMode === 'surface' ? declaredSurfaceTotal : earningsSimulation}
+                      surfaceTotal={declaredSurfaceTotal}
+                      currentLanguage={currentLanguage}
+                      currency={companyInfo.currency || 'CAD'}
+                      compact
+                    />
+                    {activePunchSession.payMode === 'surface' && reportedMaterials.length > 0 && (
+                      <div className="grid grid-cols-2 gap-2 text-center">
+                        <div className="rounded-xl border border-gray-800 bg-gray-900 p-3">
+                          <p className="text-[9px] font-black uppercase text-gray-500">{currentLanguage === 'FR' ? 'Produits déclarés' : 'Declared products'}</p>
+                          <p className="mt-1 text-xl font-black text-white">{reportedMaterials.length}</p>
+                        </div>
+                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
+                          <p className="text-[9px] font-black uppercase text-amber-200/70">{currentLanguage === 'FR' ? 'Total de la journée' : 'Day total'}</p>
+                          <p className="mt-1 font-mono text-xl font-black text-amber-300">{declaredSurfaceTotal.toFixed(2)} $</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
               <button 
