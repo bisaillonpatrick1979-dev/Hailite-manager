@@ -223,6 +223,7 @@ export default function App() {
     resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
+    personalExpenses, addPersonalExpense, deletePersonalExpense,
     hydrateCloud
   } = useAppStore();
 
@@ -320,6 +321,15 @@ export default function App() {
   // Modals state
   const [showPunchInModal, setShowPunchInModal] = useState<boolean>(false);
   const [showPunchOutModal, setShowPunchOutModal] = useState<boolean>(false);
+
+  // Dépense de chantier photographiée (reçu/outil) par un employé/sous-traitant :
+  // envoyée à l'administration de la compagnie ou gardée dans ses dossiers personnels
+  const [showExpenseModal, setShowExpenseModal] = useState<boolean>(false);
+  const [expensePhoto, setExpensePhoto] = useState<string | null>(null);
+  const [expenseDesc, setExpenseDesc] = useState<string>('');
+  const [expenseAmount, setExpenseAmount] = useState<string>('');
+  const [expenseCategory, setExpenseCategory] = useState<'materials' | 'tools' | 'fuel' | 'other'>('tools');
+  const expensePhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Signature tactile requise avant l'envoi d'une facture sous-traitant à la compagnie
   const [invoiceToSign, setInvoiceToSign] = useState<Invoice | null>(null);
@@ -608,8 +618,79 @@ export default function App() {
     if (nextProject !== homePunchProject) setHomePunchProject(nextProject);
   }, [activeEmployee, activePunchSession, homePunchProject, projects]);
 
+  // Photo de reçu/outil : réduite côté client (max 1280px, JPEG) comme les photos IA
+  const handleExpensePhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert(t.unsupportedFormat);
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1280;
+        const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setExpensePhoto(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Enregistre la dépense selon le choix : compagnie (remboursable, envoyée à
+  // l'administration) ou personnelle (reste dans les informations de l'employé)
+  const submitFieldExpense = (dest: 'company' | 'personal') => {
+    if (!activeEmployee) return;
+    const amount = parseFloat(expenseAmount);
+    if (!expenseDesc.trim() || !Number.isFinite(amount) || amount <= 0) {
+      alert(t.expMissingFields);
+      return;
+    }
+    const record = {
+      provider: expenseDesc.trim(),
+      category: expenseCategory,
+      projectId: homePunchProject || '',
+      amount: Number(amount.toFixed(2)),
+      tax: 0,
+      date: new Date().toISOString().split('T')[0],
+      photoUrl: expensePhoto || undefined,
+      submittedById: activeEmployee.id,
+      submittedByName: activeEmployee.name
+    };
+    if (dest === 'company') {
+      addExpense(record);
+      alert(t.expSentCompanyAlert);
+    } else {
+      addPersonalExpense(record);
+      alert(t.expSavedPersonalAlert);
+    }
+    setShowExpenseModal(false);
+    setExpensePhoto(null);
+    setExpenseDesc('');
+    setExpenseAmount('');
+  };
+
   const handlePunchInStart = () => {
     if (!activeEmployee || !homePunchProject) return;
+
+    // Garde-fou appareil partagé : le chantier présélectionné doit être actif
+    // et assigné à l'utilisateur courant (les admins voient tous les chantiers).
+    const punchTarget = projects.find(project => project.id === homePunchProject);
+    if (!punchTarget || punchTarget.status !== 'active' ||
+        (activeEmployee.role !== 'admin' && !punchTarget.assignedEmployees.includes(activeEmployee.id))) {
+      setHomePunchProject('');
+      return;
+    }
 
     // Check geofencing on current design before allowing punch-in
     const validation = evaluateProjectGeofence(homePunchProject);
@@ -1786,6 +1867,54 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {geofencingBypass ? t.distanceFromSiteDemo : t.gpsActive}
                         </span>
                       </div>
+                    </div>
+
+                    {/* Dépenses de chantier : reçu photographié → compagnie ou personnel */}
+                    <div className="w-full mt-6 border-t border-gray-800 pt-6 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-xs font-bold uppercase text-gray-300">{t.expCardTitle}</h4>
+                          <p className="text-[10px] text-gray-500 mt-0.5 max-w-sm">{t.expCardHint}</p>
+                        </div>
+                        <button
+                          onClick={() => setShowExpenseModal(true)}
+                          className="px-4 py-2.5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-xs font-black rounded-xl transition shadow-lg cursor-pointer"
+                        >
+                          {t.expAddBtn}
+                        </button>
+                      </div>
+                      {(() => {
+                        const mine = [
+                          ...personalExpenses.filter(e => e.submittedById === activeEmployee.id).map(e => ({ ...e, personal: true })),
+                          ...expenses.filter(e => e.submittedById === activeEmployee.id).map(e => ({ ...e, personal: false }))
+                        ].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 4);
+                        if (mine.length === 0) return null;
+                        return (
+                          <div className="space-y-1.5">
+                            <span className="text-[9px] uppercase font-mono text-gray-500 block">{t.expMyRecent}</span>
+                            {mine.map(exp => (
+                              <div key={exp.id} className="p-2 bg-gray-950/60 border border-gray-850 rounded-lg flex items-center gap-2 text-[11px]">
+                                {exp.photoUrl && (
+                                  <img src={exp.photoUrl} alt={t.expReceiptAlt} className="w-9 h-9 rounded object-cover border border-gray-800 flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0 text-left">
+                                  <p className="font-bold text-white truncate">{exp.provider}</p>
+                                  <p className="text-[9px] text-gray-500 font-mono">{exp.date} · {exp.personal ? t.expPersonalTag : t.expCompanyTag}</p>
+                                </div>
+                                <span className="font-mono font-bold text-amber-400 flex-shrink-0">{exp.amount.toFixed(2)}$</span>
+                                {exp.personal && (
+                                  <button
+                                    onClick={() => { if (confirm(t.expDeletePersonalConfirm)) deletePersonalExpense(exp.id); }}
+                                    className="p-1 text-gray-600 hover:text-red-400 cursor-pointer flex-shrink-0"
+                                  >
+                                    <Trash className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Calendrier réel des journées travaillées — employés et secrétaire */}
@@ -6215,13 +6344,23 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               {expenses?.map(exp => {
                                 const matchedProj = projects.find(p => p.id === exp.projectId);
                                 return (
-                                  <div key={exp.id} className="p-2.5 bg-gray-900 rounded-lg border border-gray-850 flex items-center justify-between text-[11px]">
-                                    <div className="text-left">
+                                  <div key={exp.id} className="p-2.5 bg-gray-900 rounded-lg border border-gray-850 flex items-center justify-between gap-2 text-[11px]">
+                                    {exp.photoUrl && (
+                                      <a href={exp.photoUrl} target="_blank" rel="noreferrer" className="flex-shrink-0">
+                                        <img src={exp.photoUrl} alt={t.expReceiptAlt} className="w-10 h-10 rounded object-cover border border-gray-800" />
+                                      </a>
+                                    )}
+                                    <div className="text-left flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <span className="font-bold text-white">{exp.provider}</span>
                                         <span className="px-1 text-[8px] bg-gray-800 text-gray-400 rounded uppercase font-mono">
                                           {exp.category}
                                         </span>
+                                        {exp.submittedByName && (
+                                          <span className="px-1 py-0.5 text-[8px] bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded font-bold">
+                                            {t.expSubmittedBy} {exp.submittedByName}
+                                          </span>
+                                        )}
                                       </div>
                                       <p className="text-[9px] text-gray-500 mt-0.5">
                                         {exp.date} — {matchedProj ? `${t.projectPrefix} ${matchedProj.name}` : t.adminFees}
@@ -6944,6 +7083,115 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </nav>
       )}
 
+
+      {/* -------------------- MODAL : DÉPENSE DE CHANTIER (PHOTO DE REÇU) -------------------- */}
+      {showExpenseModal && activeEmployee && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4 my-8">
+            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
+              <h4 className="text-sm font-black text-white uppercase tracking-wider">
+                {t.expModalTitle}
+              </h4>
+              <button
+                onClick={() => { setShowExpenseModal(false); setExpensePhoto(null); }}
+                className="text-gray-500 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Photo du reçu / de l'article */}
+            <div className="space-y-2">
+              <label className="text-[10px] text-gray-500 font-mono uppercase">{t.expPhotoLabel}</label>
+              <input
+                ref={expensePhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleExpensePhotoSelected}
+              />
+              {expensePhoto ? (
+                <div className="space-y-2">
+                  <img src={expensePhoto} alt={t.expReceiptAlt} className="w-full max-h-48 object-contain rounded-xl border border-gray-800 bg-gray-950" />
+                  <button
+                    onClick={() => expensePhotoInputRef.current?.click()}
+                    className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg transition cursor-pointer"
+                  >
+                    {t.expRetakePhoto}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => expensePhotoInputRef.current?.click()}
+                  className="w-full py-6 bg-gray-950 hover:bg-gray-900 border-2 border-dashed border-gray-700 hover:border-orange-500/50 text-gray-300 text-sm font-bold rounded-xl transition cursor-pointer"
+                >
+                  {t.expTakePhoto}
+                </button>
+              )}
+            </div>
+
+            {/* Description + montant + catégorie */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.descriptionLabel}</label>
+                <input
+                  type="text"
+                  placeholder={t.expDescPh}
+                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs text-white"
+                  value={expenseDesc}
+                  onChange={(e) => setExpenseDesc(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.expAmountLabel}</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs font-mono font-bold text-white"
+                  value={expenseAmount}
+                  onChange={(e) => setExpenseAmount(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.categoryLabel}</label>
+                <select
+                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs text-white cursor-pointer"
+                  value={expenseCategory}
+                  onChange={(e) => setExpenseCategory(e.target.value as any)}
+                >
+                  <option value="tools">{t.catTools}</option>
+                  <option value="materials">{t.catMaterials}</option>
+                  <option value="fuel">{t.catFuel}</option>
+                  <option value="other">{t.catOther}</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Choix de destination : compagnie (remboursable) ou personnel */}
+            <div className="space-y-2 pt-2 border-t border-gray-850">
+              <span className="text-[10px] text-orange-500 font-mono uppercase font-bold block">{t.expDestQuestion}</span>
+              <button
+                onClick={() => submitFieldExpense('company')}
+                className="w-full p-3.5 bg-orange-600 hover:bg-orange-500 rounded-xl text-left transition cursor-pointer"
+              >
+                <span className="text-sm font-black text-white block">{t.expDestCompany}</span>
+                <span className="text-[10px] text-orange-100/80 block mt-0.5">{t.expDestCompanyHint}</span>
+              </button>
+              <button
+                onClick={() => submitFieldExpense('personal')}
+                className="w-full p-3.5 bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-xl text-left transition cursor-pointer"
+              >
+                <span className="text-sm font-black text-gray-200 block">{t.expDestPersonal}</span>
+                <span className="text-[10px] text-gray-500 block mt-0.5">{t.expDestPersonalHint}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* -------------------- MODAL : PUNCH IN START -------------------- */}
       {showPunchInModal && activeEmployee && (

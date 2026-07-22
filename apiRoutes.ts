@@ -53,7 +53,9 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
   clients: MANAGERS, documents: MANAGERS, document_items: MANAGERS, document_payments: MANAGERS,
   payroll_entries: ALL_ROLES, payroll_payments: ADMIN_ONLY, production_entries: MANAGERS,
   weekly_goals: ALL_ROLES, motivation_teams: ADMIN_ONLY, motivation_goals: ADMIN_ONLY,
-  hr_alerts: ALL_ROLES, expenses: OFFICE
+  // expenses : les employés/sous-traitants soumettent leurs dépenses de terrain
+  // (INSERT seulement — voir allowExpenseMethod) ; gestion complète pour le bureau
+  hr_alerts: ALL_ROLES, expenses: ALL_ROLES
 };
 
 // Colonne "propriétaire" pour les contraintes de ligne des rôles non gestionnaires
@@ -670,6 +672,12 @@ export function registerApiRoutes(app: express.Express): void {
     return method === 'POST' || isManager(auth.role);
   }
 
+  // expenses : un employé/sous-traitant peut SOUMETTRE une dépense (photo de reçu)
+  // mais seule l'équipe de bureau peut la modifier ou la supprimer.
+  function allowExpenseMethod(auth: AuthContext, method: string): boolean {
+    return method === 'POST' || OFFICE.includes(auth.role);
+  }
+
   // Création d'une ligne
   app.post('/api/db/:table', requireAuth, async (req: AuthedRequest, res) => {
     if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
@@ -683,6 +691,37 @@ export function registerApiRoutes(app: express.Express): void {
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
+      }
+      if (table === 'expenses' && !OFFICE.includes(auth.role)) {
+        // L'identité du soumissionnaire vient du jeton, jamais du client
+        payload.submitted_by = auth.userId;
+        payload.submitted_by_name = auth.name;
+        // Validation stricte des dépenses soumises du terrain : montant positif,
+        // taxe non négative, catégorie connue, chantier appartenant à la compagnie
+        const amount = Number(payload.amount);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
+          return res.status(400).json({ error: 'Montant de dépense invalide' });
+        }
+        payload.amount = amount;
+        const tax = payload.tax == null || payload.tax === '' ? 0 : Number(payload.tax);
+        if (!Number.isFinite(tax) || tax < 0 || tax > amount) {
+          return res.status(400).json({ error: 'Taxe de dépense invalide' });
+        }
+        payload.tax = tax;
+        const EXPENSE_CATEGORIES = ['materials', 'tools', 'fuel', 'rental', 'subcontractor', 'admin', 'other'];
+        if (!EXPENSE_CATEGORIES.includes(String(payload.category))) {
+          return res.status(400).json({ error: 'Catégorie de dépense invalide' });
+        }
+        if (payload.project_id) {
+          const { data: proj } = await supabase
+            .from('projects')
+            .select('id, company_id')
+            .eq('id', payload.project_id)
+            .maybeSingle();
+          if (!proj || (proj.company_id && String(proj.company_id) !== auth.companyId)) {
+            return res.status(400).json({ error: 'Chantier inconnu pour cette compagnie' });
+          }
+        }
       }
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
@@ -705,6 +744,7 @@ export function registerApiRoutes(app: express.Express): void {
     const auth = req.auth as AuthContext;
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'expenses' && !allowExpenseMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const payload = { ...req.body };
       if (TABLES_WITH_COMPANY_ID.has(table)) {
@@ -731,6 +771,7 @@ export function registerApiRoutes(app: express.Express): void {
     const auth = req.auth as AuthContext;
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'expenses' && !allowExpenseMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
       // Rôles non gestionnaires : la ligne visée doit leur appartenir
@@ -765,6 +806,7 @@ export function registerApiRoutes(app: express.Express): void {
     const auth = req.auth as AuthContext;
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'expenses' && !allowExpenseMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
       if (WRITE_OWN_ONLY.has(table) && !isManager(auth.role)) {

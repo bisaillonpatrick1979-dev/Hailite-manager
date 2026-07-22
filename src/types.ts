@@ -445,6 +445,9 @@ export interface ExpenseRecord {
   tax: number;
   date: string;
   notes?: string;
+  photoUrl?: string;        // photo du reçu/article (data URL redimensionnée côté client)
+  submittedById?: string;   // employé/sous-traitant qui a soumis la dépense du terrain
+  submittedByName?: string;
 }
 
 export interface PayrollPayment {

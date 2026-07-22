@@ -526,13 +526,15 @@ export function rowToHRAlert(r: any): HRAlert {
 export function expenseToRow(e: ExpenseRecord, companyId?: string) {
   return {
     id: e.id, company_id: companyId, provider: e.provider, category: e.category, project_id: e.projectId || null,
-    amount: e.amount, tax: e.tax, date: e.date, notes: e.notes
+    amount: e.amount, tax: e.tax, date: e.date, notes: e.notes,
+    photo_url: e.photoUrl || null, submitted_by: e.submittedById || null, submitted_by_name: e.submittedByName || null
   };
 }
 export function rowToExpense(r: any): ExpenseRecord {
   return {
     id: r.id, provider: r.provider || '', category: r.category, projectId: r.project_id || '', amount: r.amount || 0,
-    tax: r.tax || 0, date: r.date || '', notes: r.notes || undefined
+    tax: r.tax || 0, date: r.date || '', notes: r.notes || undefined,
+    photoUrl: r.photo_url || undefined, submittedById: r.submitted_by || undefined, submittedByName: r.submitted_by_name || undefined
   };
 }
 

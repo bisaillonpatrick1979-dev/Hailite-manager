@@ -59,3 +59,10 @@ end $$;
 -- d'environnement du serveur — jamais en base ni dans le navigateur).
 -- -----------------------------------------------------------------------------
 update companies set ai_api_key = null where ai_api_key is not null;
+
+-- -----------------------------------------------------------------------------
+-- 4) Dépenses soumises du terrain (photo de reçu par un employé/sous-traitant)
+-- -----------------------------------------------------------------------------
+alter table expenses add column if not exists photo_url text;
+alter table expenses add column if not exists submitted_by uuid;
+alter table expenses add column if not exists submitted_by_name text;
