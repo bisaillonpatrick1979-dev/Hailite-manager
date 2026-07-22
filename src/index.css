@@ -48,3 +48,45 @@
 .text-\[12px\] {
   font-size: 16px !important;
 }
+
+/* ============================================================
+   Ergonomie chantier (mobile) — ajouts UX
+   Cibles tactiles confortables, pas de zoom ni de surbrillance
+   parasite au tap, respect des zones sûres (encoche iOS/Android).
+   ============================================================ */
+
+/* Supprime le flash gris/bleu au tap et le délai de double-tap */
+button, a, [role="button"], select, input, textarea {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Empêche le grossissement automatique du texte et le rebond de page */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  overscroll-behavior-y: none;
+}
+
+/* La barre de navigation du bas respecte la zone sûre (iPhone à encoche) */
+#fixed-bottom-navigation-main {
+  height: auto;
+  min-height: 4rem;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Écrans tactiles (gants de chantier) : cibles minimales confortables
+   dans la navigation et défilement fluide des listes */
+@media (pointer: coarse) {
+  #fixed-bottom-navigation-main button {
+    min-width: 3rem;
+    min-height: 3rem;
+    justify-content: center;
+  }
+  .overflow-y-auto,
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}

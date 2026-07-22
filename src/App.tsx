@@ -220,6 +220,7 @@ export default function App() {
     resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
+    personalExpenses, addPersonalExpense, deletePersonalExpense,
     hydrateCloud
   } = useAppStore();
 
@@ -263,6 +264,8 @@ export default function App() {
   // App Navigation state
   const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
+  // Navigation admin 4+1 : les onglets secondaires vivent dans un menu coulissant "Plus"
+  const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
   // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
   // réglages personnels (Thème, Langue) — jamais les réglages de compagnie,
   // paie ou d'équipe. On limite l'onglet affiché sans toucher à l'état réel,
@@ -285,7 +288,11 @@ export default function App() {
 
   // Employee active session state
   const [activePunchSession, setActivePunchSession] = useState<any>(null);
-  const [homePunchProject, setHomePunchProject] = useState<string>('');
+  // Punch intelligent : le dernier chantier utilisé est mémorisé et proposé
+  // par défaut au prochain punch (persiste au rechargement de la page).
+  const [homePunchProject, setHomePunchProject] = useState<string>(() => {
+    try { return localStorage.getItem('gcp_lastPunchProjectId') || ''; } catch { return ''; }
+  });
   const [homePayMode, setHomePayMode] = useState<'horaire' | 'surface' | 'forfait'>('horaire');
   const [homeRateCustom, setHomeRateCustom] = useState<number>(0);
   const [timerDisplay, setTimerDisplay] = useState<string>('00:00:00');
@@ -305,6 +312,15 @@ export default function App() {
   // Modals state
   const [showPunchInModal, setShowPunchInModal] = useState<boolean>(false);
   const [showPunchOutModal, setShowPunchOutModal] = useState<boolean>(false);
+
+  // Dépense de chantier photographiée (reçu/outil) par un employé/sous-traitant :
+  // envoyée à l'administration de la compagnie ou gardée dans ses dossiers personnels
+  const [showExpenseModal, setShowExpenseModal] = useState<boolean>(false);
+  const [expensePhoto, setExpensePhoto] = useState<string | null>(null);
+  const [expenseDesc, setExpenseDesc] = useState<string>('');
+  const [expenseAmount, setExpenseAmount] = useState<string>('');
+  const [expenseCategory, setExpenseCategory] = useState<'materials' | 'tools' | 'fuel' | 'other'>('tools');
+  const expensePhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Signature tactile requise avant l'envoi d'une facture sous-traitant à la compagnie
   const [invoiceToSign, setInvoiceToSign] = useState<Invoice | null>(null);
@@ -506,7 +522,14 @@ export default function App() {
       setPinBuffer('');
       setLoginError(null);
       // Pre-select some visual options
-      const preSelProj = projects.find(p => p.assignedEmployees.includes(selectedEmpId)) || projects[0];
+      // Punch intelligent : privilégie le dernier chantier utilisé s'il existe
+      // toujours, sinon le premier chantier assigné à l'employé.
+      const rememberedId = (() => {
+        try { return localStorage.getItem('gcp_lastPunchProjectId') || ''; } catch { return ''; }
+      })();
+      const preSelProj = projects.find(p => p.id === rememberedId)
+        || projects.find(p => p.assignedEmployees.includes(selectedEmpId))
+        || projects[0];
       if (preSelProj) {
         setHomePunchProject(preSelProj.id);
       }
@@ -558,6 +581,73 @@ export default function App() {
     }
   };
 
+  // Photo de reçu/outil : réduite côté client (max 1280px, JPEG) comme les photos IA
+  const handleExpensePhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert(t.unsupportedFormat);
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1280;
+        const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setExpensePhoto(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Enregistre la dépense selon le choix : compagnie (remboursable, envoyée à
+  // l'administration) ou personnelle (reste dans les informations de l'employé)
+  const submitFieldExpense = (dest: 'company' | 'personal') => {
+    if (!activeEmployee) return;
+    const amount = parseFloat(expenseAmount);
+    if (!expenseDesc.trim() || !Number.isFinite(amount) || amount <= 0) {
+      alert(t.expMissingFields);
+      return;
+    }
+    const record = {
+      provider: expenseDesc.trim(),
+      category: expenseCategory,
+      projectId: homePunchProject || '',
+      amount: Number(amount.toFixed(2)),
+      tax: 0,
+      date: new Date().toISOString().split('T')[0],
+      photoUrl: expensePhoto || undefined,
+      submittedById: activeEmployee.id,
+      submittedByName: activeEmployee.name
+    };
+    if (dest === 'company') {
+      addExpense(record);
+      alert(t.expSentCompanyAlert);
+    } else {
+      addPersonalExpense(record);
+      alert(t.expSavedPersonalAlert);
+    }
+    setShowExpenseModal(false);
+    setExpensePhoto(null);
+    setExpenseDesc('');
+    setExpenseAmount('');
+  };
+
+  // Mémorise le chantier du punch réussi pour le proposer au prochain punch
+  const rememberLastPunchProject = (projectId: string) => {
+    try { localStorage.setItem('gcp_lastPunchProjectId', projectId); } catch { /* stockage indisponible */ }
+  };
+
   const handlePunchInStart = () => {
     if (!activeEmployee || !homePunchProject) return;
 
@@ -588,6 +678,7 @@ export default function App() {
       rate: homeRateCustom,
       withinGeofence: true
     });
+    rememberLastPunchProject(homePunchProject);
     
     playSoundCue('in');
     setShowPunchInModal(false);
@@ -1436,6 +1527,66 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   })()}
                 </div>
 
+                {/* Bandeau « Aujourd'hui » : vue d'ensemble admin de la journée */}
+                {activeEmployee.role === 'admin' && (() => {
+                  const activePunchCount = punchSessions.filter(p => p.endTime === null).length;
+                  const overdueInvoices = documents.filter(d => d.type === 'invoice' && d.status === 'overdue');
+                  const toCollect = documents
+                    .filter(d => d.type === 'invoice' && (d.status === 'overdue' || d.status === 'sent'))
+                    .reduce((sum, d) => sum + (d.balanceDue || d.total), 0);
+                  const openAlerts = hrAlerts.filter(a => !a.resolved).length;
+                  const todayLabel = new Date().toLocaleDateString(currentLanguage === 'FR' ? 'fr-CA' : 'en-CA', { weekday: 'long', day: 'numeric', month: 'long' });
+                  return (
+                    <div id="admin-today-banner" className="bg-[#16191F] border border-gray-800 rounded-2xl p-4">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-orange-500">
+                          📅 {currentLanguage === 'FR' ? "Aujourd'hui" : 'Today'}
+                        </h4>
+                        <span className="text-[11px] text-gray-400 font-mono capitalize">{todayLabel}</span>
+                      </div>
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="rounded-xl p-3 flex flex-col gap-1 bg-gray-950/60 border border-gray-850">
+                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'Punchs actifs' : 'Active punches'}</span>
+                          <span className={`text-2xl font-black ${activePunchCount > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                            {activePunchCount > 0 ? '🟢 ' : ''}{activePunchCount}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setActiveTab('documents')}
+                          className={`rounded-xl p-3 flex flex-col gap-1 text-left cursor-pointer transition ${
+                            overdueInvoices.length > 0 ? 'bg-red-950/40 border border-red-500/40' : 'bg-gray-950/60 border border-gray-850'
+                          }`}
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'Factures en retard' : 'Overdue invoices'}</span>
+                          <span className={`text-2xl font-black ${overdueInvoices.length > 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                            {overdueInvoices.length > 0 ? '🔴 ' : ''}{overdueInvoices.length}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => setActiveTab('documents')}
+                          className="rounded-xl p-3 flex flex-col gap-1 text-left cursor-pointer transition bg-gray-950/60 border border-gray-850"
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'À encaisser' : 'To collect'}</span>
+                          <span className="text-2xl font-black text-amber-400">
+                            {Math.round(toCollect).toLocaleString(dateLocale)} $
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => { setActiveTab('settings'); setActiveSettingsTab(11); }}
+                          className={`rounded-xl p-3 flex flex-col gap-1 text-left cursor-pointer transition ${
+                            openAlerts > 0 ? 'bg-amber-950/40 border border-amber-500/40' : 'bg-gray-950/60 border border-gray-850'
+                          }`}
+                        >
+                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'Alertes RH' : 'HR Alerts'}</span>
+                          <span className={`text-2xl font-black ${openAlerts > 0 ? 'text-amber-400' : 'text-gray-400'}`}>
+                            {openAlerts > 0 ? '⚠️ ' : ''}{openAlerts}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 2. EMPLOYEE DASHBOARD (WITH CENTRAL ROUND PUNCH BUTTON) */}
                 {activeEmployee.role !== 'admin' ? (
                   <div className="flex flex-col items-center py-8 bg-[#16191F] border border-gray-800 rounded-2xl p-6 relative overflow-hidden">
@@ -1597,6 +1748,54 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {geofencingBypass ? t.distanceFromSiteDemo : t.gpsActive}
                         </span>
                       </div>
+                    </div>
+
+                    {/* Dépenses de chantier : reçu photographié → compagnie ou personnel */}
+                    <div className="w-full mt-6 border-t border-gray-800 pt-6 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-xs font-bold uppercase text-gray-300">{t.expCardTitle}</h4>
+                          <p className="text-[10px] text-gray-500 mt-0.5 max-w-sm">{t.expCardHint}</p>
+                        </div>
+                        <button
+                          onClick={() => setShowExpenseModal(true)}
+                          className="px-4 py-2.5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-xs font-black rounded-xl transition shadow-lg cursor-pointer"
+                        >
+                          {t.expAddBtn}
+                        </button>
+                      </div>
+                      {(() => {
+                        const mine = [
+                          ...personalExpenses.filter(e => e.submittedById === activeEmployee.id).map(e => ({ ...e, personal: true })),
+                          ...expenses.filter(e => e.submittedById === activeEmployee.id).map(e => ({ ...e, personal: false }))
+                        ].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 4);
+                        if (mine.length === 0) return null;
+                        return (
+                          <div className="space-y-1.5">
+                            <span className="text-[9px] uppercase font-mono text-gray-500 block">{t.expMyRecent}</span>
+                            {mine.map(exp => (
+                              <div key={exp.id} className="p-2 bg-gray-950/60 border border-gray-850 rounded-lg flex items-center gap-2 text-[11px]">
+                                {exp.photoUrl && (
+                                  <img src={exp.photoUrl} alt={t.expReceiptAlt} className="w-9 h-9 rounded object-cover border border-gray-800 flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0 text-left">
+                                  <p className="font-bold text-white truncate">{exp.provider}</p>
+                                  <p className="text-[9px] text-gray-500 font-mono">{exp.date} · {exp.personal ? t.expPersonalTag : t.expCompanyTag}</p>
+                                </div>
+                                <span className="font-mono font-bold text-amber-400 flex-shrink-0">{exp.amount.toFixed(2)}$</span>
+                                {exp.personal && (
+                                  <button
+                                    onClick={() => { if (confirm(t.expDeletePersonalConfirm)) deletePersonalExpense(exp.id); }}
+                                    className="p-1 text-gray-600 hover:text-red-400 cursor-pointer flex-shrink-0"
+                                  >
+                                    <Trash className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Calendar of worked days (vertical month block inside card) */}
@@ -5831,13 +6030,23 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               {expenses?.map(exp => {
                                 const matchedProj = projects.find(p => p.id === exp.projectId);
                                 return (
-                                  <div key={exp.id} className="p-2.5 bg-gray-900 rounded-lg border border-gray-850 flex items-center justify-between text-[11px]">
-                                    <div className="text-left">
+                                  <div key={exp.id} className="p-2.5 bg-gray-900 rounded-lg border border-gray-850 flex items-center justify-between gap-2 text-[11px]">
+                                    {exp.photoUrl && (
+                                      <a href={exp.photoUrl} target="_blank" rel="noreferrer" className="flex-shrink-0">
+                                        <img src={exp.photoUrl} alt={t.expReceiptAlt} className="w-10 h-10 rounded object-cover border border-gray-800" />
+                                      </a>
+                                    )}
+                                    <div className="text-left flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         <span className="font-bold text-white">{exp.provider}</span>
                                         <span className="px-1 text-[8px] bg-gray-800 text-gray-400 rounded uppercase font-mono">
                                           {exp.category}
                                         </span>
+                                        {exp.submittedByName && (
+                                          <span className="px-1 py-0.5 text-[8px] bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded font-bold">
+                                            {t.expSubmittedBy} {exp.submittedByName}
+                                          </span>
+                                        )}
                                       </div>
                                       <p className="text-[9px] text-gray-500 mt-0.5">
                                         {exp.date} — {matchedProj ? `${t.projectPrefix} ${matchedProj.name}` : t.adminFees}
@@ -6342,6 +6551,54 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         )}
       </motion.div>
 
+      {/* -------------------- MENU "PLUS" ADMIN (NAVIGATION 4+1) -------------------- */}
+      {activeEmployee && activeEmployee.role === 'admin' && showMoreMenu && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+            onClick={() => setShowMoreMenu(false)}
+          />
+          <div
+            className="fixed bottom-16 left-0 right-0 z-40 bg-[#16191F] border-t border-gray-800 rounded-t-3xl p-4 pb-6 shadow-2xl"
+            style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+          >
+            <div className="w-10 h-1 bg-gray-700 rounded-full mx-auto mb-4"></div>
+            <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+              {([
+                { tab: 'invoice', emoji: '🧾', label: t.navAdminInvoices },
+                { tab: 'inventory', emoji: '📦', label: t.navShortInventory },
+                { tab: 'commandes', emoji: '🚚', label: t.navShortOrders },
+                { tab: 'motivation', emoji: '🎯', label: t.navShortGoals },
+                { tab: 'settings', emoji: '⚙️', label: t.navShortSettings }
+              ] as const).map(item => (
+                <button
+                  key={item.tab}
+                  onClick={() => {
+                    setActiveTab(item.tab);
+                    if (item.tab === 'settings') setActiveSettingsTab(0);
+                    setShowMoreMenu(false);
+                  }}
+                  className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border cursor-pointer transition ${
+                    activeTab === item.tab
+                      ? 'bg-orange-600/20 border-orange-600 text-orange-400'
+                      : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'
+                  }`}
+                >
+                  <span className="text-3xl">{item.emoji}</span>
+                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{item.label}</span>
+                  {item.tab === 'settings' && hrAlerts.filter(a => !a.resolved).length > 0 && (
+                    <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* -------------------- ADMIN / EMPLOYEE FIXED BOTTOM NAV BAR -------------------- */}
       {activeEmployee && (
         <nav 
@@ -6350,10 +6607,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         >
           <div className="flex-1 flex justify-around items-center max-w-4xl mx-auto">
             {activeEmployee.role === 'admin' ? (
-              /* Administrative Buttons - 9 items logically mapped as categories */
+              /* Administrative Buttons - navigation 4+1 : 4 onglets principaux + menu "Plus" */
               <>
                 <button
-                  onClick={() => setActiveTab('home')}
+                  onClick={() => { setActiveTab('home'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'home' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
@@ -6363,27 +6620,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('invoice')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'invoice' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">🧾</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminInvoices}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('projects')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'projects' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">📋</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminProjects}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('documents')}
+                  onClick={() => { setActiveTab('documents'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'documents' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
@@ -6393,27 +6630,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('inventory')}
+                  onClick={() => { setActiveTab('projects'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'inventory' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                    activeTab === 'projects' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">📦</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortInventory}</span>
+                  <span className="text-2xl">📋</span>
+                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminProjects}</span>
                 </button>
 
                 <button
-                  onClick={() => setActiveTab('commandes')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'commandes' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">🚚</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortOrders}</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('stats')}
+                  onClick={() => { setActiveTab('stats'); setShowMoreMenu(false); }}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
@@ -6422,24 +6649,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortStats}</span>
                 </button>
 
+                {/* Menu "Plus" : Factures, Inventaire, Commandes, Cibles, Réglages */}
                 <button
-                  onClick={() => setActiveTab('motivation')}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'motivation' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">🎯</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortGoals}</span>
-                </button>
-
-                <button
-                  onClick={() => { setActiveTab('settings'); setActiveSettingsTab(0); }}
+                  onClick={() => setShowMoreMenu(v => !v)}
                   className={`flex flex-col items-center gap-1 cursor-pointer transition relative ${
-                    activeTab === 'settings' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
+                    showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings'].includes(activeTab)
+                      ? 'text-orange-500 font-bold scale-105'
+                      : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">⚙️</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortSettings}</span>
+                  <span className="text-2xl">☰</span>
+                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{currentLanguage === 'FR' ? 'Plus' : 'More'}</span>
                   {hrAlerts.filter(a => !a.resolved).length > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -6531,6 +6751,115 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </nav>
       )}
 
+
+      {/* -------------------- MODAL : DÉPENSE DE CHANTIER (PHOTO DE REÇU) -------------------- */}
+      {showExpenseModal && activeEmployee && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4 my-8">
+            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
+              <h4 className="text-sm font-black text-white uppercase tracking-wider">
+                {t.expModalTitle}
+              </h4>
+              <button
+                onClick={() => { setShowExpenseModal(false); setExpensePhoto(null); }}
+                className="text-gray-500 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Photo du reçu / de l'article */}
+            <div className="space-y-2">
+              <label className="text-[10px] text-gray-500 font-mono uppercase">{t.expPhotoLabel}</label>
+              <input
+                ref={expensePhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleExpensePhotoSelected}
+              />
+              {expensePhoto ? (
+                <div className="space-y-2">
+                  <img src={expensePhoto} alt={t.expReceiptAlt} className="w-full max-h-48 object-contain rounded-xl border border-gray-800 bg-gray-950" />
+                  <button
+                    onClick={() => expensePhotoInputRef.current?.click()}
+                    className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg transition cursor-pointer"
+                  >
+                    {t.expRetakePhoto}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => expensePhotoInputRef.current?.click()}
+                  className="w-full py-6 bg-gray-950 hover:bg-gray-900 border-2 border-dashed border-gray-700 hover:border-orange-500/50 text-gray-300 text-sm font-bold rounded-xl transition cursor-pointer"
+                >
+                  {t.expTakePhoto}
+                </button>
+              )}
+            </div>
+
+            {/* Description + montant + catégorie */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.descriptionLabel}</label>
+                <input
+                  type="text"
+                  placeholder={t.expDescPh}
+                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs text-white"
+                  value={expenseDesc}
+                  onChange={(e) => setExpenseDesc(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.expAmountLabel}</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs font-mono font-bold text-white"
+                  value={expenseAmount}
+                  onChange={(e) => setExpenseAmount(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.categoryLabel}</label>
+                <select
+                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs text-white cursor-pointer"
+                  value={expenseCategory}
+                  onChange={(e) => setExpenseCategory(e.target.value as any)}
+                >
+                  <option value="tools">{t.catTools}</option>
+                  <option value="materials">{t.catMaterials}</option>
+                  <option value="fuel">{t.catFuel}</option>
+                  <option value="other">{t.catOther}</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Choix de destination : compagnie (remboursable) ou personnel */}
+            <div className="space-y-2 pt-2 border-t border-gray-850">
+              <span className="text-[10px] text-orange-500 font-mono uppercase font-bold block">{t.expDestQuestion}</span>
+              <button
+                onClick={() => submitFieldExpense('company')}
+                className="w-full p-3.5 bg-orange-600 hover:bg-orange-500 rounded-xl text-left transition cursor-pointer"
+              >
+                <span className="text-sm font-black text-white block">{t.expDestCompany}</span>
+                <span className="text-[10px] text-orange-100/80 block mt-0.5">{t.expDestCompanyHint}</span>
+              </button>
+              <button
+                onClick={() => submitFieldExpense('personal')}
+                className="w-full p-3.5 bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-xl text-left transition cursor-pointer"
+              >
+                <span className="text-sm font-black text-gray-200 block">{t.expDestPersonal}</span>
+                <span className="text-[10px] text-gray-500 block mt-0.5">{t.expDestPersonalHint}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* -------------------- MODAL : PUNCH IN START -------------------- */}
       {showPunchInModal && activeEmployee && (

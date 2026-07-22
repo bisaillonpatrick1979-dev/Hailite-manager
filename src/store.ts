@@ -33,6 +33,8 @@ interface AppState {
   hrAlerts: HRAlert[];
   documents: GCPDocument[];
   expenses: ExpenseRecord[];
+  // Dépenses personnelles de l'employé : locales à l'appareil, jamais synchronisées
+  personalExpenses: ExpenseRecord[];
   payrollPayments: PayrollPayment[];
   
   // Motivation & Teams State
@@ -137,6 +139,8 @@ interface AppState {
   // Accounting CRUD
   addExpense: (exp: Omit<ExpenseRecord, 'id'>) => void;
   deleteExpense: (id: string) => void;
+  addPersonalExpense: (exp: Omit<ExpenseRecord, 'id'>) => void;
+  deletePersonalExpense: (id: string) => void;
   addPayrollPayment: (pay: Omit<PayrollPayment, 'id'>) => void;
   deletePayrollPayment: (id: string) => void;
 
@@ -736,6 +740,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   hrAlerts: getSavedState('gcp_hrAlerts', initialHRAlerts),
   documents: getSavedState('gcp_documents', initialDocuments),
   expenses: getSavedState('gcp_expenses', initialExpenses),
+  personalExpenses: getSavedState('gcp_personalExpenses', []),
   payrollPayments: getSavedState('gcp_payrollPayments', initialPayrollPayments),
   motivationTeams: getSavedState('gcp_motivationTeams', initialMotivationTeams),
   motivationGoals: getSavedState('gcp_motivationGoals', initialMotivationGoals),
@@ -1825,6 +1830,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ expenses: updated });
     saveState('gcp_expenses', updated);
     syncDelete('expenses', id);
+  },
+
+  // Dépense personnelle : reste dans les informations de l'employé, sur cet
+  // appareil seulement — aucune synchronisation cloud, par choix de vie privée.
+  addPersonalExpense: (exp) => {
+    const { personalExpenses } = get();
+    const updated: ExpenseRecord[] = [{ ...exp, id: genId() }, ...personalExpenses];
+    set({ personalExpenses: updated });
+    saveState('gcp_personalExpenses', updated);
+  },
+
+  deletePersonalExpense: (id) => {
+    const { personalExpenses } = get();
+    const updated = personalExpenses.filter(e => e.id !== id);
+    set({ personalExpenses: updated });
+    saveState('gcp_personalExpenses', updated);
   },
 
   addPayrollPayment: (pay) => {
