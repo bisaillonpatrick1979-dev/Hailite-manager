@@ -539,48 +539,52 @@ export default function CatalogueManager() {
         </div>
       )}
 
-      {/* État vide : proposer un catalogue revêtement pré-rempli en un clic */}
-      {catalogue.length === 0 && canManage && (() => {
-        const isFR = currentLanguage === 'FR';
-        const seed: Array<Omit<CatalogueMaterial, 'id'>> = [
-          { name: isFR ? 'Vinyle standard' : 'Standard vinyl', emoji: '🧱', pricePerSqFt: 1.5, supplierPrice: 1.1, clientPrice: 4.5, unit: 'pi2' },
-          { name: isFR ? 'Vinyle premium' : 'Premium vinyl', emoji: '🧱', pricePerSqFt: 1.75, supplierPrice: 1.6, clientPrice: 5.5, unit: 'pi2' },
-          { name: isFR ? 'Hardie Plank (fibre de ciment)' : 'Hardie Plank (fiber cement)', emoji: '🪨', pricePerSqFt: 2.5, supplierPrice: 2.4, clientPrice: 8, unit: 'pi2' },
-          { name: 'Hardie Panel', emoji: '🪨', pricePerSqFt: 2.5, supplierPrice: 2.6, clientPrice: 8.5, unit: 'pi2' },
-          { name: isFR ? 'Soffite aluminium' : 'Aluminum soffit', emoji: '🔩', pricePerSqFt: 2, supplierPrice: 1.4, clientPrice: 6, unit: 'pi2' },
-          { name: isFR ? 'Fascia aluminium' : 'Aluminum fascia', emoji: '📏', pricePerSqFt: 2, supplierPrice: 1.2, clientPrice: 6, unit: 'pi_lin' },
-          { name: isFR ? 'Membrane pare-intempéries (Tyvek)' : 'Weather barrier membrane (Tyvek)', emoji: '🛡️', pricePerSqFt: 0.25, supplierPrice: 0.18, clientPrice: 0.75, unit: 'rouleau', unitNote: isFR ? 'Rouleau 9pi x 100pi' : '9ft x 100ft roll' },
-          { name: 'J-Trim', emoji: '📐', pricePerSqFt: 0.5, supplierPrice: 8, clientPrice: 15, unit: 'unite', unitNote: isFR ? 'Longueur 12pi' : '12ft length' },
-          { name: isFR ? 'Coin extérieur' : 'Outside corner', emoji: '📐', pricePerSqFt: 0.5, supplierPrice: 14, clientPrice: 28, unit: 'unite', unitNote: isFR ? 'Longueur 10pi' : '10ft length' },
-          { name: isFR ? 'Départ (starter strip)' : 'Starter strip', emoji: '📏', pricePerSqFt: 0.4, supplierPrice: 6, clientPrice: 12, unit: 'unite' },
-          { name: isFR ? 'Clous galvanisés 2po' : 'Galvanized nails 2in', emoji: '🔨', pricePerSqFt: 0.05, supplierPrice: 45, clientPrice: 70, unit: 'boite', unitNote: isFR ? 'Boîte 50lb' : '50lb box' },
-          { name: isFR ? 'Scellant extérieur' : 'Exterior sealant', emoji: '🧴', pricePerSqFt: 0.1, supplierPrice: 7, clientPrice: 14, unit: 'unite', unitNote: 'Tube 300ml' }
-        ];
-        return (
-          <div className="bg-gray-900/60 border-2 border-dashed border-gray-700 rounded-2xl p-8 text-center space-y-4">
-            <div className="text-6xl">🏗️</div>
-            <h4 className="text-lg font-black text-white">
-              {isFR ? 'Votre catalogue est vide' : 'Your catalog is empty'}
+      {/* EMPTY SIDING CATALOGUE SEED */}
+      {catalogue.length === 0 && canManage && (
+        <div className="bg-gray-900/60 border-2 border-dashed border-gray-700 rounded-2xl p-8 text-center space-y-4">
+          <div className="text-6xl" aria-hidden="true">🏗️</div>
+          <div>
+            <h4 className="text-xl font-black text-white">
+              {currentLanguage === 'FR' ? 'Votre catalogue est vide' : 'Your catalog is empty'}
             </h4>
-            <p className="text-xs text-gray-400 max-w-md mx-auto">
-              {isFR
-                ? 'Chargez un catalogue de départ pour le revêtement extérieur : chaque nom, prix et unité restera modifiable par la suite.'
-                : 'Load a starter siding catalog: every name, price and unit can be edited afterwards.'}
-            </p>
-            <button
-              onClick={() => seed.forEach(item => addCatalogueMaterial(item))}
-              className="px-6 py-3.5 bg-orange-600 hover:bg-orange-500 text-white text-sm font-black rounded-xl transition cursor-pointer"
-            >
-              {isFR ? '📦 Charger le catalogue revêtement' : '📦 Load siding catalog'}
-            </button>
-            <p className="text-[10px] text-gray-500">
-              {isFR
-                ? '12 matériaux avec prix de départ — à ajuster selon vos fournisseurs'
-                : '12 materials with starter prices — adjust to your suppliers'}
+            <p className="mt-2 text-sm text-gray-400 max-w-lg mx-auto">
+              {currentLanguage === 'FR'
+                ? 'Chargez une base de matériaux de revêtement. Tous les noms, unités et prix pourront être modifiés ensuite.'
+                : 'Load a starter siding-material list. Every name, unit, and price can be edited afterward.'}
             </p>
           </div>
-        );
-      })()}
+
+          <button
+            type="button"
+            onClick={() => {
+              const seed: Array<Omit<CatalogueMaterial, 'id'>> = [
+                { name: currentLanguage === 'FR' ? 'Vinyle standard' : 'Standard vinyl', emoji: '🧱', pricePerSqFt: 1.5, supplierPrice: 1.1, clientPrice: 4.5, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Vinyle premium' : 'Premium vinyl', emoji: '🧱', pricePerSqFt: 1.75, supplierPrice: 1.6, clientPrice: 5.5, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Hardie Plank (fibre de ciment)' : 'Hardie Plank (fiber cement)', emoji: '🪨', pricePerSqFt: 2.5, supplierPrice: 2.4, clientPrice: 8, unit: 'pi2' },
+                { name: 'Hardie Panel', emoji: '🪨', pricePerSqFt: 2.5, supplierPrice: 2.6, clientPrice: 8.5, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Soffite aluminium' : 'Aluminum soffit', emoji: '🔩', pricePerSqFt: 2, supplierPrice: 1.4, clientPrice: 6, unit: 'pi2' },
+                { name: currentLanguage === 'FR' ? 'Fascia aluminium' : 'Aluminum fascia', emoji: '📏', pricePerSqFt: 2, supplierPrice: 1.2, clientPrice: 6, unit: 'pi_lin' },
+                { name: currentLanguage === 'FR' ? 'Membrane pare-intempéries (Tyvek)' : 'Weather barrier membrane (Tyvek)', emoji: '🛡️', pricePerSqFt: 0.25, supplierPrice: 0.18, clientPrice: 0.75, unit: 'rouleau', unitNote: currentLanguage === 'FR' ? 'Rouleau 9pi x 100pi' : '9 ft x 100 ft roll' },
+                { name: 'J-Trim', emoji: '📐', pricePerSqFt: 0.5, supplierPrice: 8, clientPrice: 15, unit: 'unite', unitNote: currentLanguage === 'FR' ? 'Longueur 12pi' : '12 ft length' },
+                { name: currentLanguage === 'FR' ? 'Coin extérieur' : 'Outside corner', emoji: '📐', pricePerSqFt: 0.5, supplierPrice: 14, clientPrice: 28, unit: 'unite', unitNote: currentLanguage === 'FR' ? 'Longueur 10pi' : '10 ft length' },
+                { name: currentLanguage === 'FR' ? 'Départ (starter strip)' : 'Starter strip', emoji: '📏', pricePerSqFt: 0.4, supplierPrice: 6, clientPrice: 12, unit: 'unite' },
+                { name: currentLanguage === 'FR' ? 'Clous galvanisés 2po' : '2 in galvanized nails', emoji: '🔨', pricePerSqFt: 0.05, supplierPrice: 45, clientPrice: 70, unit: 'boite', unitNote: currentLanguage === 'FR' ? 'Boîte 50lb' : '50 lb box' },
+                { name: currentLanguage === 'FR' ? 'Scellant extérieur' : 'Exterior sealant', emoji: '🧴', pricePerSqFt: 0.1, supplierPrice: 7, clientPrice: 14, unit: 'unite', unitNote: 'Tube 300ml' }
+              ];
+              seed.forEach(item => addCatalogueMaterial(item));
+            }}
+            className="px-6 py-3.5 bg-orange-600 hover:bg-orange-500 text-white font-black rounded-xl transition shadow-lg"
+          >
+            {currentLanguage === 'FR' ? '📦 Charger le catalogue revêtement' : '📦 Load siding catalog'}
+          </button>
+
+          <p className="text-xs text-gray-500">
+            {currentLanguage === 'FR'
+              ? '12 matériaux avec prix de départ — à ajuster selon vos fournisseurs'
+              : '12 materials with starter prices — adjust them for your suppliers'}
+          </p>
+        </div>
+      )}
 
       {/* Catalogue Items List (une ligne par matériau pour rester lisible sur mobile) */}
       <div className="flex flex-col gap-3">

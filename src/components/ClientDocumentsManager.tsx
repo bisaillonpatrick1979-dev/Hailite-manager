@@ -14,6 +14,7 @@ import {
 import { CANADIAN_REGIONS, US_REGIONS } from '../regionsData';
 import { translations, fmt } from '../translations';
 import SignaturePad from './SignaturePad';
+import { genId } from '../apiClient';
 
 export default function ClientDocumentsManager() {
   const {
@@ -140,7 +141,7 @@ export default function ClientDocumentsManager() {
 
     // Format Simple lines
     const lineItems: GCPDocumentLineItem[] = simpleLines.map((l, idx) => ({
-      id: `li-${Date.now()}-${idx}`,
+      id: genId(),
       description: l.desc,
       qty: Number(l.qty) || 0,
       unit: l.unit,
@@ -150,7 +151,7 @@ export default function ClientDocumentsManager() {
 
     // Format Rich lines
     const materialLines: GCPDocumentMaterialLine[] = richMaterials.map((m, idx) => ({
-      id: `m-${Date.now()}-${idx}`,
+      id: genId(),
       claddingType: m.claddingType,
       brand: m.brand,
       thickness: m.thickness,
@@ -161,7 +162,7 @@ export default function ClientDocumentsManager() {
     }));
 
     const labourLines: GCPDocumentLabourLine[] = richLabours.map((lb, idx) => ({
-      id: `lb-${Date.now()}-${idx}`,
+      id: genId(),
       task: lb.task,
       estimatedHours: Number(lb.hours) || 0,
       rate: Number(lb.rate) || 0,
@@ -170,13 +171,13 @@ export default function ClientDocumentsManager() {
     }));
 
     const otherLines: GCPDocumentOtherLine[] = richOthers.map((o, idx) => ({
-      id: `o-${Date.now()}-${idx}`,
+      id: genId(),
       description: o.desc,
       amount: Number(o.amount) || 0
     }));
 
     const subcontractLines: GCPDocumentSubcontractLine[] = richSubcontracts.map((s, idx) => ({
-      id: `sub-${Date.now()}-${idx}`,
+      id: genId(),
       companyName: s.companyName,
       phone: s.phone,
       workType: s.workType,
@@ -248,7 +249,7 @@ export default function ClientDocumentsManager() {
     if (currentDoc) {
       // Re-trigger visual preview synchronicity
       const updatedHistory = [...(currentDoc.paymentsHistory || []), {
-        id: `pay-${Date.now()}`,
+        id: genId(),
         date: new Date().toISOString().split('T')[0],
         amount,
         method: payMethod,

@@ -114,6 +114,7 @@ function buildSystemInstruction(regionLabel?: string, language?: string): string
     Donne des conseils professionnels et clairs.
     Réponds de manière concise, polie et technique pour les calculs de toiture, la rentabilité de chantier, la sécurité ou la gestion de l'inventaire.
     Si une photo est jointe (chantier, toiture, revêtement, matériau, dommage, document), analyse-la en détail : état, matériaux visibles, problèmes potentiels, sécurité, estimation des travaux.
+    Si la pièce jointe est une FACTURE ou un REÇU d'achat (magasin, quincaillerie, station-service, location d'équipement) et que l'outil create_expense est disponible : extrais le nom du fournisseur, la date, le sous-total avant taxes et le total des taxes (TPS/TVQ ou GST), choisis la catégorie appropriée, appelle create_expense, puis résume ce que tu as enregistré (fournisseur, montant, taxes, catégorie). Si le total seul est visible, estime le sous-total en retirant les taxes affichées ; ne devine jamais un montant illisible — demande plutôt confirmation.
     Si un document PDF est joint (soumission, plan, devis, facture, contrat), lis-le et résume ou analyse son contenu selon la question posée.
     Ne demande jamais et ne révèle jamais de NIP, de numéro d'assurance sociale (NAS/SIN), de clé API ni de coordonnées bancaires.
     N'utilise les outils (fonctions) QUE si l'utilisateur a clairement demandé l'action correspondante ; sinon réponds simplement en texte.
@@ -210,6 +211,28 @@ const AI_TOOL_DEFS: AiToolDef[] = [
         quantity: { type: 'number', description: 'Nouvelle quantité (valeur absolue)' }
       },
       required: ['name', 'quantity'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'create_expense',
+    description: "Enregistre une dépense d'entreprise. À utiliser notamment quand l'utilisateur joint la photo ou le PDF d'une facture/reçu d'achat : extrais le fournisseur, la date, le montant avant taxes, les taxes, et choisis la catégorie appropriée.",
+    parameters: {
+      type: 'object',
+      properties: {
+        provider: { type: 'string', description: 'Nom du fournisseur/magasin (ex: Rona, Petro-Canada)' },
+        category: {
+          type: 'string',
+          enum: ['materials', 'tools', 'fuel', 'rental', 'subcontractor', 'admin', 'other'],
+          description: 'Catégorie : materials=matériaux/quincaillerie, tools=outils/équipement, fuel=carburant, rental=location d\'équipement, subcontractor=sous-traitance, admin=frais administratifs, other=autres/repas'
+        },
+        amount: { type: 'number', description: 'Montant AVANT taxes en dollars (sous-total)' },
+        tax: { type: 'number', description: 'Total des taxes (TPS+TVQ/GST) en dollars' },
+        date: { type: 'string', description: 'Date de la facture au format AAAA-MM-JJ' },
+        notes: { type: 'string', description: 'Description courte des articles achetés' },
+        projectName: { type: 'string', description: 'Nom du chantier associé si mentionné (sinon omettre)' }
+      },
+      required: ['provider', 'category', 'amount'],
       additionalProperties: false
     }
   },

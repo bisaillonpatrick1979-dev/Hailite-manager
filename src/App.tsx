@@ -3,7 +3,8 @@ import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
 import { translations, fmt } from './translations';
-import { Employee, CompanyInfo, EmployeeRole, Invoice } from './types';
+import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
+import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
@@ -16,6 +17,8 @@ const MotivationTab = lazy(() => import('./components/MotivationTab'));
 const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
+const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
+const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
 import EmployeeAvatar from './components/EmployeeAvatar';
 import SignaturePad from './components/SignaturePad';
 import {
@@ -250,6 +253,8 @@ export default function App() {
   const TOUR_STEPS = TOUR_STEPS_I18N[currentLanguage];
   const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
   const unitLabels = CATALOGUE_UNIT_LABELS[currentLanguage];
+  const credentialAlerts = getCredentialAlerts(employees);
+  const totalOpenAlerts = hrAlerts.filter(alert => !alert.resolved).length + credentialAlerts.length;
   const { country: companyCountry, region: companyRegion } = getCompanyRegion(companyInfo);
   const payrollMeta = getRegionPayrollMeta(companyRegion, companyCountry);
   const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
@@ -264,7 +269,6 @@ export default function App() {
   // App Navigation state
   const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
-  // Navigation admin 4+1 : les onglets secondaires vivent dans un menu coulissant "Plus"
   const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
   // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
   // réglages personnels (Thème, Langue) — jamais les réglages de compagnie,
@@ -275,6 +279,7 @@ export default function App() {
     : activeSettingsTab;
   const [statsMonth, setStatsMonth] = useState<string>('2026-06');
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
+  const [teamCalendarEmployeeId, setTeamCalendarEmployeeId] = useState<string>('');
   const [statsSubTab, setStatsSubTab] = useState<'analytics' | 'payroll'>('analytics');
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [payrollFocusEmployeeId, setPayrollFocusEmployeeId] = useState<string>('');
@@ -288,10 +293,14 @@ export default function App() {
 
   // Employee active session state
   const [activePunchSession, setActivePunchSession] = useState<any>(null);
-  // Punch intelligent : le dernier chantier utilisé est mémorisé et proposé
-  // par défaut au prochain punch (persiste au rechargement de la page).
   const [homePunchProject, setHomePunchProject] = useState<string>(() => {
-    try { return localStorage.getItem('gcp_lastPunchProjectId') || ''; } catch { return ''; }
+    try {
+      return activeEmployee
+        ? localStorage.getItem(`gcp_lastPunchProject_${activeEmployee.id}`) || ''
+        : '';
+    } catch {
+      return '';
+    }
   });
   const [homePayMode, setHomePayMode] = useState<'horaire' | 'surface' | 'forfait'>('horaire');
   const [homeRateCustom, setHomeRateCustom] = useState<number>(0);
@@ -349,6 +358,7 @@ export default function App() {
     employeeProvince: string;
     payFrequency: 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';
     annualSalary: number;
+    credentials: EmployeeCredential[];
   }>({
     name: '',
     nip: '',
@@ -365,9 +375,13 @@ export default function App() {
     sin: '',
     employeeProvince: 'QC',
     payFrequency: 'weekly',
-    annualSalary: 0
+    annualSalary: 0,
+    credentials: []
   });
   const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+  // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
+  const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
+  const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
   const [newClientForm, setNewClientForm] = useState({ name: '', company: '', email: '', phone: '', address: '' });
   const [newInventoryForm, setNewInventoryForm] = useState({ name: '', quantity: 10, unit: 'pqt', emoji: '📦', minThreshold: 5 });
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
@@ -522,14 +536,7 @@ export default function App() {
       setPinBuffer('');
       setLoginError(null);
       // Pre-select some visual options
-      // Punch intelligent : privilégie le dernier chantier utilisé s'il existe
-      // toujours, sinon le premier chantier assigné à l'employé.
-      const rememberedId = (() => {
-        try { return localStorage.getItem('gcp_lastPunchProjectId') || ''; } catch { return ''; }
-      })();
-      const preSelProj = projects.find(p => p.id === rememberedId)
-        || projects.find(p => p.assignedEmployees.includes(selectedEmpId))
-        || projects[0];
+      const preSelProj = projects.find(p => p.assignedEmployees.includes(selectedEmpId)) || projects[0];
       if (preSelProj) {
         setHomePunchProject(preSelProj.id);
       }
@@ -580,6 +587,36 @@ export default function App() {
       console.warn("Web Audio API not supported or user gesture required first.");
     }
   };
+
+  // Punch intelligent : mémorise et présélectionne le dernier chantier valide.
+  useEffect(() => {
+    if (!activeEmployee || activePunchSession) return;
+
+    const availableProjects = activeEmployee.role === 'admin'
+      ? projects.filter(project => project.status === 'active')
+      : projects.filter(project =>
+          project.status === 'active' && project.assignedEmployees.includes(activeEmployee.id)
+        );
+
+    if (availableProjects.length === 0) {
+      if (homePunchProject) setHomePunchProject('');
+      return;
+    }
+
+    let rememberedProject = '';
+    try {
+      rememberedProject = localStorage.getItem(`gcp_lastPunchProject_${activeEmployee.id}`) || '';
+    } catch {
+      rememberedProject = '';
+    }
+
+    const currentIsValid = availableProjects.some(project => project.id === homePunchProject);
+    const nextProject = currentIsValid
+      ? homePunchProject
+      : availableProjects.find(project => project.id === rememberedProject)?.id || availableProjects[0].id;
+
+    if (nextProject !== homePunchProject) setHomePunchProject(nextProject);
+  }, [activeEmployee, activePunchSession, homePunchProject, projects]);
 
   // Photo de reçu/outil : réduite côté client (max 1280px, JPEG) comme les photos IA
   const handleExpensePhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -643,11 +680,6 @@ export default function App() {
     setExpenseAmount('');
   };
 
-  // Mémorise le chantier du punch réussi pour le proposer au prochain punch
-  const rememberLastPunchProject = (projectId: string) => {
-    try { localStorage.setItem('gcp_lastPunchProjectId', projectId); } catch { /* stockage indisponible */ }
-  };
-
   const handlePunchInStart = () => {
     if (!activeEmployee || !homePunchProject) return;
 
@@ -678,7 +710,12 @@ export default function App() {
       rate: homeRateCustom,
       withinGeofence: true
     });
-    rememberLastPunchProject(homePunchProject);
+
+    try {
+      localStorage.setItem(`gcp_lastPunchProject_${activeEmployee.id}`, homePunchProject);
+    } catch {
+      // Le punch demeure fonctionnel si le stockage local est indisponible.
+    }
     
     playSoundCue('in');
     setShowPunchInModal(false);
@@ -855,6 +892,37 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         if (typeof params.quantity !== 'number') return t.aiActMissingQty;
         updateInventoryItem({ ...item, quantity: Math.max(0, Number(params.quantity)) });
         return fmt(t.aiActInventoryAdjusted, { name: item.name, qty: Math.max(0, Number(params.quantity)), unit: item.unit });
+      }
+      case 'create_expense': {
+        const validCategories = ['materials', 'tools', 'fuel', 'rental', 'subcontractor', 'admin', 'other'];
+        if (!params.provider || typeof params.amount !== 'number' || !validCategories.includes(params.category)) {
+          return t.aiActMissingExpense;
+        }
+        // Associe le chantier par son nom si l'IA en a identifié un sur la facture
+        const matchedProject = params.projectName
+          ? projects.find(p => p.name.toLowerCase() === String(params.projectName).toLowerCase())
+          : undefined;
+        const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(params.date || ''))
+          ? String(params.date)
+          : new Date().toISOString().split('T')[0];
+        const amount = Math.max(0, Number(params.amount));
+        const tax = Math.max(0, Number(params.tax) || 0);
+        addExpense({
+          provider: String(params.provider),
+          category: params.category,
+          projectId: matchedProject?.id || '',
+          amount,
+          tax,
+          date: expenseDate,
+          notes: params.notes ? String(params.notes) : undefined
+        });
+        return fmt(t.aiActExpenseCreated, {
+          provider: String(params.provider),
+          amount: amount.toFixed(2),
+          tax: tax.toFixed(2),
+          category: String(params.category),
+          date: expenseDate
+        });
       }
       case 'create_order': {
         if (!params.supplierName || !Array.isArray(params.items) || params.items.length === 0) {
@@ -1527,63 +1595,85 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   })()}
                 </div>
 
-                {/* Bandeau « Aujourd'hui » : vue d'ensemble admin de la journée */}
                 {activeEmployee.role === 'admin' && (() => {
-                  const activePunchCount = punchSessions.filter(p => p.endTime === null).length;
-                  const overdueInvoices = documents.filter(d => d.type === 'invoice' && d.status === 'overdue');
-                  const toCollect = documents
-                    .filter(d => d.type === 'invoice' && (d.status === 'overdue' || d.status === 'sent'))
-                    .reduce((sum, d) => sum + (d.balanceDue || d.total), 0);
-                  const openAlerts = hrAlerts.filter(a => !a.resolved).length;
-                  const todayLabel = new Date().toLocaleDateString(currentLanguage === 'FR' ? 'fr-CA' : 'en-CA', { weekday: 'long', day: 'numeric', month: 'long' });
+                  const activePunchCount = punchSessions.filter(punch => punch.endTime === null).length;
+                  const overdueInvoiceCount = documents.filter(document =>
+                    document.type === 'invoice' && document.status === 'overdue'
+                  ).length;
+                  const outstandingAmount = documents
+                    .filter(document => document.type === 'invoice' && ['overdue', 'sent'].includes(document.status))
+                    .reduce((sum, document) => sum + Number(document.balanceDue ?? document.total ?? 0), 0);
+                  const unresolvedHrAlertCount = totalOpenAlerts;
+                  const todayLabel = new Date().toLocaleDateString(
+                    currentLanguage === 'FR' ? 'fr-CA' : 'en-CA',
+                    { weekday: 'long', day: 'numeric', month: 'long' }
+                  );
+
                   return (
-                    <div id="admin-today-banner" className="bg-[#16191F] border border-gray-800 rounded-2xl p-4">
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <h4 className="text-xs font-black uppercase tracking-wider text-orange-500">
-                          📅 {currentLanguage === 'FR' ? "Aujourd'hui" : 'Today'}
-                        </h4>
-                        <span className="text-[11px] text-gray-400 font-mono capitalize">{todayLabel}</span>
-                      </div>
+                    <section id="admin-today-banner" className="bg-[#16191F] border border-gray-800 rounded-2xl p-4 space-y-4">
+                      <h3 className="text-base font-black text-white flex flex-wrap items-baseline gap-2">
+                        <span>📅 {currentLanguage === 'FR' ? "Aujourd'hui" : 'Today'}</span>
+                        <span className="text-xs text-gray-400 font-semibold capitalize">{todayLabel}</span>
+                      </h3>
+
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                         <div className="rounded-xl p-3 flex flex-col gap-1 bg-gray-950/60 border border-gray-850">
-                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'Punchs actifs' : 'Active punches'}</span>
-                          <span className={`text-2xl font-black ${activePunchCount > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'Punchs actifs' : 'Active punches'}
+                          </span>
+                          <span className={`text-2xl font-black ${activePunchCount > 0 ? 'text-green-400' : 'text-gray-500'}`}>
                             {activePunchCount > 0 ? '🟢 ' : ''}{activePunchCount}
                           </span>
                         </div>
+
                         <button
+                          type="button"
                           onClick={() => setActiveTab('documents')}
-                          className={`rounded-xl p-3 flex flex-col gap-1 text-left cursor-pointer transition ${
-                            overdueInvoices.length > 0 ? 'bg-red-950/40 border border-red-500/40' : 'bg-gray-950/60 border border-gray-850'
+                          className={`rounded-xl p-3 flex flex-col gap-1 text-left transition ${
+                            overdueInvoiceCount > 0
+                              ? 'bg-red-950/35 border border-red-700/70 hover:bg-red-950/50'
+                              : 'bg-gray-950/60 border border-gray-850 hover:border-gray-700'
                           }`}
                         >
-                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'Factures en retard' : 'Overdue invoices'}</span>
-                          <span className={`text-2xl font-black ${overdueInvoices.length > 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                            {overdueInvoices.length > 0 ? '🔴 ' : ''}{overdueInvoices.length}
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'Factures en retard' : 'Overdue invoices'}
+                          </span>
+                          <span className={`text-2xl font-black ${overdueInvoiceCount > 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                            {overdueInvoiceCount > 0 ? '🔴 ' : ''}{overdueInvoiceCount}
                           </span>
                         </button>
+
                         <button
+                          type="button"
                           onClick={() => setActiveTab('documents')}
-                          className="rounded-xl p-3 flex flex-col gap-1 text-left cursor-pointer transition bg-gray-950/60 border border-gray-850"
+                          className="rounded-xl p-3 flex flex-col gap-1 text-left bg-gray-950/60 border border-gray-850 hover:border-amber-600/60 transition"
                         >
-                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'À encaisser' : 'To collect'}</span>
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'À encaisser' : 'To collect'}
+                          </span>
                           <span className="text-2xl font-black text-amber-400">
-                            {Math.round(toCollect).toLocaleString(dateLocale)} $
+                            {outstandingAmount.toLocaleString(currentLanguage === 'FR' ? 'fr-CA' : 'en-CA', { maximumFractionDigits: 0 })}$
                           </span>
                         </button>
+
                         <button
-                          onClick={() => { setActiveTab('settings'); setActiveSettingsTab(11); }}
-                          className={`rounded-xl p-3 flex flex-col gap-1 text-left cursor-pointer transition ${
-                            openAlerts > 0 ? 'bg-amber-950/40 border border-amber-500/40' : 'bg-gray-950/60 border border-gray-850'
+                          type="button"
+                          onClick={() => { setActiveTab('settings'); setActiveSettingsTab(0); }}
+                          className={`rounded-xl p-3 flex flex-col gap-1 text-left transition ${
+                            unresolvedHrAlertCount > 0
+                              ? 'bg-amber-950/30 border border-amber-700/70 hover:bg-amber-950/45'
+                              : 'bg-gray-950/60 border border-gray-850 hover:border-gray-700'
                           }`}
                         >
-                          <span className="text-[10px] uppercase font-bold text-gray-500">{currentLanguage === 'FR' ? 'Alertes RH' : 'HR Alerts'}</span>
-                          <span className={`text-2xl font-black ${openAlerts > 0 ? 'text-amber-400' : 'text-gray-400'}`}>
-                            {openAlerts > 0 ? '⚠️ ' : ''}{openAlerts}
+                          <span className="text-[10px] uppercase font-bold text-gray-500">
+                            {currentLanguage === 'FR' ? 'Alertes RH' : 'HR alerts'}
+                          </span>
+                          <span className={`text-2xl font-black ${unresolvedHrAlertCount > 0 ? 'text-amber-400' : 'text-gray-500'}`}>
+                            {unresolvedHrAlertCount > 0 ? '⚠️ ' : ''}{unresolvedHrAlertCount}
                           </span>
                         </button>
                       </div>
-                    </div>
+                    </section>
                   );
                 })()}
 
@@ -1591,6 +1681,26 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 {activeEmployee.role !== 'admin' ? (
                   <div className="flex flex-col items-center py-8 bg-[#16191F] border border-gray-800 rounded-2xl p-6 relative overflow-hidden">
                     
+                    {/* CERTIFICATION EXPIRY BANNER — employee and subcontractor */}
+                    {credentialAlerts.filter(item => item.employeeId === activeEmployee.id).length > 0 && (
+                      <div className="w-full mb-5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-left">
+                        <h4 className="text-sm font-black text-amber-300">⚠️ {currentLanguage === 'FR' ? 'Carte à renouveler' : 'Card renewal required'}</h4>
+                        <div className="mt-2 space-y-2">
+                          {credentialAlerts.filter(item => item.employeeId === activeEmployee.id).map(item => (
+                            <div key={item.credential.id} className="rounded-xl bg-black/20 border border-amber-500/20 p-3">
+                              <p className="text-xs font-black text-white">🪪 {item.credential.name}</p>
+                              <p className={`text-[11px] mt-1 font-bold ${item.status === 'expired' ? 'text-red-400' : 'text-amber-300'}`}>
+                                {item.status === 'expired'
+                                  ? (currentLanguage === 'FR' ? `Expirée depuis ${Math.abs(item.daysRemaining)} jour(s)` : `Expired ${Math.abs(item.daysRemaining)} day(s) ago`)
+                                  : (currentLanguage === 'FR' ? `Expire dans ${item.daysRemaining} jour(s)` : `Expires in ${item.daysRemaining} day(s)`)}
+                              </p>
+                              <p className="text-[10px] text-gray-400 mt-1">{currentLanguage === 'FR' ? 'Communiquez avec l’administration pour planifier le renouvellement.' : 'Contact administration to schedule renewal.'}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Punch State Info Banner */}
                     <div className="text-center mb-8 space-y-1">
                       {activePunchSession ? (
@@ -1798,50 +1908,29 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       })()}
                     </div>
 
-                    {/* Calendar of worked days (vertical month block inside card) */}
+                    {/* Calendrier réel des journées travaillées — employés et secrétaire */}
                     <div className="w-full mt-6 border-t border-gray-800 pt-6">
-                      <div className="flex items-center justify-between gap-4 mb-4">
-                        <h4 className="text-xs font-bold uppercase text-gray-300">
-                          {t.monthlyCalendar}
-                        </h4>
-                        <div className="flex items-center gap-1">
-                          <button className="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-white cursor-pointer"><ChevronLeft className="w-4 h-4" /></button>
-                          <span className="text-[10px] font-mono font-bold uppercase">{t.monthNames[5]} 2026</span>
-                          <button className="p-1 hover:bg-gray-800 rounded text-gray-400 hover:text-white cursor-pointer"><ChevronRight className="w-4 h-4" /></button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-7 gap-1 text-center mb-1">
-                        {t.weekDaysShort.map((d, idx) => (
-                          <span key={idx} className="text-[9px] font-bold text-gray-600 uppercase">{d}</span>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1.5">
-                        {Array.from({ length: 30 }).map((_, idx) => {
-                          const dateNum = idx + 1;
-                          // simple highlight: Mathieu worked June 1 and 2
-                          const hasFullDay = (dateNum === 1);
-                          const hasPartDay = (dateNum === 2);
-                          const isToday = (dateNum === 3);
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <EmployeeWorkCalendar
+                          employee={activeEmployee}
+                          punchSessions={punchSessions}
+                          projects={projects}
+                          currentLanguage={currentLanguage}
+                          embedded
+                        />
+                      </Suspense>
+                    </div>
 
-                          return (
-                            <div
-                              key={idx}
-                              title={`${t.monthNames[5]} ${dateNum}`}
-                              className={`aspect-square text-[10px] rounded flex items-center justify-center font-bold ${
-                                hasFullDay 
-                                  ? 'bg-green-500/20 text-green-400 border border-green-500/35' 
-                                  : hasPartDay 
-                                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/35'
-                                  : isToday
-                                  ? 'bg-white text-black ring-2 ring-orange-500 shadow-md font-black'
-                                  : 'bg-gray-850 text-gray-600'
-                              }`}
-                            >
-                              {dateNum}
-                            </div>
-                          );
-                        })}
-                      </div>
+                    <div className="w-full mt-6">
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <EmployeeCredentialsManager
+                          value={activeEmployee.credentials || []}
+                          onChange={() => undefined}
+                          currentLanguage={currentLanguage}
+                          canManage={false}
+                          title={currentLanguage === 'FR' ? 'Mes cartes de compétence' : 'My competency cards'}
+                        />
+                      </Suspense>
                     </div>
 
                   </div>
@@ -2007,7 +2096,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="bg-[#16191F] border border-gray-800 rounded-xl p-5 flex flex-col gap-4">
                         <div className="flex justify-between items-center border-b border-gray-800 pb-3">
                           <h4 className="text-xs uppercase font-mono font-bold tracking-wider text-orange-500">
-                            {t.hrAlertsTitle} ({hrAlerts.filter(a => !a.resolved).length})
+                            {t.hrAlertsTitle} ({totalOpenAlerts})
                           </h4>
                           <span className="px-2 py-0.5 bg-red-500/15 text-red-400 border border-red-500/30 rounded font-mono text-[9px] uppercase font-bold animate-bounce">
                             {t.hrAttention}
@@ -2381,7 +2470,131 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="font-mono text-[10px]">
                           GPS: {proj.latitude.toFixed(4)}, {proj.longitude.toFixed(4)} | {t.radiusTolerance} {proj.radius}m
                         </p>
+                        {proj.latitude === 0 && proj.longitude === 0 && (
+                          <p className="text-[10px] text-amber-500 font-bold">{t.gpsNotSet}</p>
+                        )}
                       </div>
+
+                      {/* Éditeur GPS pour un chantier déjà créé (admin) : mêmes options
+                          que le formulaire de création — capture de position, Google Maps,
+                          ou saisie manuelle des coordonnées et du rayon. */}
+                      {activeEmployee.role === 'admin' && (
+                        gpsEditProjectId === proj.id ? (
+                          <div className="mt-3 p-3 bg-gray-950 border border-gray-850 rounded-xl space-y-2">
+                            <div>
+                              <label className="text-[9px] font-mono uppercase text-gray-500">{t.addressLabel}</label>
+                              <input
+                                type="text"
+                                value={gpsEditForm.address}
+                                onChange={e => setGpsEditForm({ ...gpsEditForm, address: e.target.value })}
+                                className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                              />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.latitudeLabel}</label>
+                                <input
+                                  type="number"
+                                  step="0.000001"
+                                  value={gpsEditForm.latitude}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, latitude: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.longitudeLabel}</label>
+                                <input
+                                  type="number"
+                                  step="0.000001"
+                                  value={gpsEditForm.longitude}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, longitude: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.radiusLabel}</label>
+                                <input
+                                  type="number"
+                                  value={gpsEditForm.radius}
+                                  onChange={e => setGpsEditForm({ ...gpsEditForm, radius: Number(e.target.value) })}
+                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!navigator.geolocation) {
+                                    alert(t.geoNotSupported);
+                                    return;
+                                  }
+                                  navigator.geolocation.getCurrentPosition((pos) => {
+                                    setGpsEditForm(prev => ({
+                                      ...prev,
+                                      latitude: Number(pos.coords.latitude.toFixed(6)),
+                                      longitude: Number(pos.coords.longitude.toFixed(6))
+                                    }));
+                                    alert(fmt(t.positionCaptured, { lat: pos.coords.latitude.toFixed(6), lon: pos.coords.longitude.toFixed(6) }));
+                                  }, (err) => {
+                                    alert(fmt(t.gpsCaptureError, { msg: err.message }));
+                                  }, { enableHighAccuracy: true });
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.imOnSiteBtn}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const addr = gpsEditForm.address || proj.address || 'Montréal, QC';
+                                  window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`, '_blank');
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-300 border border-gray-800 text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.openMapsBtn}
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateProject({
+                                    ...proj,
+                                    address: gpsEditForm.address,
+                                    latitude: Number(gpsEditForm.latitude),
+                                    longitude: Number(gpsEditForm.longitude),
+                                    radius: Math.max(10, Number(gpsEditForm.radius) || 100)
+                                  });
+                                  setGpsEditProjectId(null);
+                                  alert(t.gpsUpdated);
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.saveBtn}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setGpsEditProjectId(null)}
+                                className="px-3 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-400 border border-gray-800 text-[9px] font-black rounded-lg transition"
+                              >
+                                {t.modalCancelBtn}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGpsEditForm({ address: proj.address, latitude: proj.latitude, longitude: proj.longitude, radius: proj.radius });
+                              setGpsEditProjectId(proj.id);
+                            }}
+                            className="mt-2 px-2.5 py-1.5 bg-gray-950 hover:bg-gray-900 text-cyan-400 border border-gray-850 text-[9px] font-black rounded-lg transition"
+                          >
+                            {t.editGpsBtn}
+                          </button>
+                        )
+                      )}
 
                       {/* Workers count assigned */}
                       <div className="mt-4 pt-3 border-t border-gray-850 flex items-center justify-between">
@@ -3231,6 +3444,41 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     </div>
 
                   </div>
+
+                  {/* Calendriers détaillés de l'équipe — accessibles au bureau sans exposer les NIP */}
+                  {activeEmployee && (activeEmployee.role === 'admin' || activeEmployee.role === 'secretary') && (() => {
+                    const calendarEmployees = employees.filter(employee => employee.role !== 'admin');
+                    const selectedCalendarEmployee = calendarEmployees.find(employee => employee.id === teamCalendarEmployeeId) || calendarEmployees[0];
+                    if (!selectedCalendarEmployee) return null;
+                    return (
+                      <section id="team-work-calendars" className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div>
+                            <div className="inline-flex px-2 py-1 rounded bg-cyan-500/10 text-cyan-400 font-mono text-[9px] uppercase font-black">TEAM CALENDAR</div>
+                            <h4 className="text-sm font-black text-white mt-2">📅 {currentLanguage === 'FR' ? "Calendriers des employés" : 'Employee calendars'}</h4>
+                            <p className="text-xs text-gray-500 mt-1">{currentLanguage === 'FR' ? 'Choisissez un employé, puis touchez une journée pour ouvrir sa fiche complète.' : 'Choose an employee, then tap a day to open the complete daily record.'}</p>
+                          </div>
+                          <select
+                            value={selectedCalendarEmployee.id}
+                            onChange={event => setTeamCalendarEmployeeId(event.target.value)}
+                            className="w-full sm:w-64 p-3 bg-gray-900 border border-gray-800 rounded-xl text-white font-bold"
+                            aria-label={currentLanguage === 'FR' ? 'Choisir un employé' : 'Choose an employee'}
+                          >
+                            {calendarEmployees.map(employee => <option key={employee.id} value={employee.id}>{employee.name} — {employee.workerType}</option>)}
+                          </select>
+                        </div>
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <EmployeeWorkCalendar
+                            employee={selectedCalendarEmployee}
+                            punchSessions={punchSessions}
+                            projects={projects}
+                            currentLanguage={currentLanguage}
+                            embedded
+                          />
+                        </Suspense>
+                      </section>
+                    );
+                  })()}
 
                   {/* -------------------- DETAILED EMPLOYEE STATISTICS (ADMIN ONLY) -------------------- */}
                   {activeEmployee && activeEmployee.role === 'admin' && (
@@ -4110,7 +4358,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       { name: t.setTabCatalogue, idx: 8, adminOnly: true },
                       { name: t.setTabComptabilite, idx: 9, adminOnly: true },
                       { name: t.setTabGeofencing, idx: 10, adminOnly: true },
-                      { name: t.setTabRH, idx: 11, badge: hrAlerts.filter(a => !a.resolved).length, adminOnly: true },
+                      { name: t.setTabRH, idx: 11, badge: totalOpenAlerts, adminOnly: true },
                       { name: t.setTabAI, idx: 12, adminOnly: true }
                     ].filter(tab => activeEmployee.role === 'admin' || !tab.adminOnly).map(tab => (
                       <button
@@ -4963,6 +5211,39 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           </div>
                         </div>
 
+                        {/* CREDENTIAL ALERT OVERVIEW — administration */}
+                        {credentialAlerts.length > 0 && (
+                          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <h5 className="text-sm font-black text-amber-300">⚠️ {currentLanguage === 'FR' ? 'Renouvellements à planifier' : 'Renewals to schedule'}</h5>
+                                <p className="text-[10px] text-gray-400 mt-1">{currentLanguage === 'FR' ? 'Cartes expirées ou arrivant dans leur période d’alerte.' : 'Expired cards or cards inside their reminder period.'}</p>
+                              </div>
+                              <span className="rounded-full bg-red-500 text-white min-w-7 h-7 px-2 inline-flex items-center justify-center text-xs font-black">{credentialAlerts.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {credentialAlerts.map(item => (
+                                <button
+                                  type="button"
+                                  key={`${item.employeeId}-${item.credential.id}`}
+                                  onClick={() => setEditingEmployeeId(item.employeeId)}
+                                  className="w-full text-left rounded-xl bg-gray-950/65 border border-gray-800 hover:border-amber-500/50 p-3 flex items-center justify-between gap-3"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-black text-white truncate">{item.employeeName} — {item.credential.name}</p>
+                                    <p className="text-[10px] text-gray-500 mt-1">{currentLanguage === 'FR' ? 'Expiration' : 'Expiry'} : {item.credential.expiryDate}</p>
+                                  </div>
+                                  <span className={`shrink-0 text-[10px] font-black ${item.status === 'expired' ? 'text-red-400' : 'text-amber-400'}`}>
+                                    {item.status === 'expired'
+                                      ? (currentLanguage === 'FR' ? 'EXPIRÉE' : 'EXPIRED')
+                                      : `${item.daysRemaining} ${currentLanguage === 'FR' ? 'jours' : 'days'}`}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* List employees */}
                         <div className="space-y-2.5">
                           {employees.map(emp => {
@@ -5024,7 +5305,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 payFrequency: emp.payFrequency || 'weekly',
                                 annualSalary: emp.annualSalary || 0,
                                 hireDate: emp.hireDate || '2026-06-03',
-                                avatar: emp.avatar || ''
+                                avatar: emp.avatar || '',
+                                credentials: emp.credentials || []
                               });
                             }
 
@@ -5320,6 +5602,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                       />
                                     </div>
 
+                                    <Suspense fallback={<LazySectionFallback />}>
+                                      <EmployeeCredentialsManager
+                                        value={editEmployeeForm.credentials || []}
+                                        onChange={(credentials) => setEditEmployeeForm({ ...editEmployeeForm, credentials })}
+                                        currentLanguage={currentLanguage}
+                                        canManage
+                                        title={currentLanguage === 'FR' ? `Cartes de ${emp.name}` : `${emp.name}'s cards`}
+                                      />
+                                    </Suspense>
+
                                     <div className="flex justify-between items-center pt-2">
                                       <div className="text-[10px] text-gray-500 font-mono">
                                         {isQuebec ? 'AS/CCQ' : t.certificationWord} : <input
@@ -5356,7 +5648,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               sin: editEmployeeForm.sin,
                                               employeeProvince: editEmployeeForm.employeeProvince,
                                               payFrequency: editEmployeeForm.payFrequency,
-                                              annualSalary: editEmployeeForm.annualSalary
+                                              annualSalary: editEmployeeForm.annualSalary,
+                                              credentials: editEmployeeForm.credentials || []
                                             });
                                             setEditingEmployeeId(null);
                                             setEditEmployeeForm(null);
@@ -5612,6 +5905,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             </div>
                           </div>
                           
+                          <Suspense fallback={<LazySectionFallback />}>
+                            <EmployeeCredentialsManager
+                              value={newEmployeeForm.credentials}
+                              onChange={(credentials) => setNewEmployeeForm({ ...newEmployeeForm, credentials })}
+                              currentLanguage={currentLanguage}
+                              canManage
+                              title={currentLanguage === 'FR' ? 'Cartes fournies à l’embauche' : 'Cards provided at hiring'}
+                            />
+                          </Suspense>
+
                           <button 
                             disabled={!newEmployeeForm.name || !newEmployeeForm.nip}
                             onClick={() => {
@@ -5631,7 +5934,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 sin: newEmployeeForm.sin,
                                 employeeProvince: newEmployeeForm.employeeProvince,
                                 payFrequency: newEmployeeForm.payFrequency,
-                                annualSalary: newEmployeeForm.annualSalary
+                                annualSalary: newEmployeeForm.annualSalary,
+                                credentials: newEmployeeForm.credentials
                               });
                               setNewEmployeeForm({ 
                                 name: '', 
@@ -5649,7 +5953,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 sin: '',
                                 employeeProvince: 'QC',
                                 payFrequency: 'weekly',
-                                annualSalary: 0
+                                annualSalary: 0,
+                                credentials: []
                               });
                               alert(t.employeeAddedAlert);
                             }}
@@ -6215,7 +6520,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                         {/* Active alert boxes */}
                         <div className="space-y-2 text-left">
-                          <span className="text-[9px] uppercase font-mono text-gray-500 block">{t.complianceAlerts} ({hrAlerts.filter(a => !a.resolved).length})</span>
+                          <span className="text-[9px] uppercase font-mono text-gray-500 block">{t.complianceAlerts} ({totalOpenAlerts})</span>
                           {hrAlerts.filter(a => !a.resolved).map(alertItem => (
                             <div key={alertItem.id} className="p-3 bg-red-950/40 border border-red-900/30 rounded-xl flex items-center justify-between text-xs gap-3">
                               <div className="flex items-start gap-2.5">
@@ -6237,7 +6542,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             </div>
                           ))}
 
-                          {hrAlerts.filter(a => !a.resolved).length === 0 && (
+                          {totalOpenAlerts === 0 && (
                             <div className="p-4 text-center text-gray-500 bg-gray-950 rounded-xl border border-gray-850">
                               {t.allCompliant}
                             </div>
@@ -6551,51 +6856,66 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         )}
       </motion.div>
 
-      {/* -------------------- MENU "PLUS" ADMIN (NAVIGATION 4+1) -------------------- */}
+      {/* ADMIN MORE MENU — mobile 4+1 */}
       {activeEmployee && activeEmployee.role === 'admin' && showMoreMenu && (
         <>
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+          <button
+            type="button"
+            aria-label={currentLanguage === 'FR' ? 'Fermer le menu Plus' : 'Close More menu'}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 cursor-default"
             onClick={() => setShowMoreMenu(false)}
           />
-          <div
+          <section
+            id="admin-more-menu"
             className="fixed bottom-16 left-0 right-0 z-40 bg-[#16191F] border-t border-gray-800 rounded-t-3xl p-4 pb-6 shadow-2xl"
             style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={currentLanguage === 'FR' ? 'Navigation supplémentaire' : 'More navigation'}
           >
-            <div className="w-10 h-1 bg-gray-700 rounded-full mx-auto mb-4"></div>
+            <div className="w-12 h-1.5 bg-gray-600 rounded-full mx-auto mb-4" />
             <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
-              {([
-                { tab: 'invoice', emoji: '🧾', label: t.navAdminInvoices },
-                { tab: 'inventory', emoji: '📦', label: t.navShortInventory },
-                { tab: 'commandes', emoji: '🚚', label: t.navShortOrders },
-                { tab: 'motivation', emoji: '🎯', label: t.navShortGoals },
-                { tab: 'settings', emoji: '⚙️', label: t.navShortSettings }
-              ] as const).map(item => (
+              {[
+                { tab: 'invoice' as const, icon: '🧾', label: t.navAdminInvoices },
+                { tab: 'inventory' as const, icon: '📦', label: t.navShortInventory },
+                { tab: 'commandes' as const, icon: '🚚', label: t.navShortOrders },
+                { tab: 'motivation' as const, icon: '🎯', label: t.navShortGoals }
+              ].map(item => (
                 <button
                   key={item.tab}
-                  onClick={() => {
-                    setActiveTab(item.tab);
-                    if (item.tab === 'settings') setActiveSettingsTab(0);
-                    setShowMoreMenu(false);
-                  }}
-                  className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border cursor-pointer transition ${
+                  type="button"
+                  onClick={() => { setActiveTab(item.tab); setShowMoreMenu(false); }}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition ${
                     activeTab === item.tab
                       ? 'bg-orange-600/20 border-orange-600 text-orange-400'
                       : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'
                   }`}
                 >
-                  <span className="text-3xl">{item.emoji}</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{item.label}</span>
-                  {item.tab === 'settings' && hrAlerts.filter(a => !a.resolved).length > 0 && (
-                    <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                    </span>
-                  )}
+                  <span className="text-3xl" aria-hidden="true">{item.icon}</span>
+                  <span className="text-[10px] uppercase font-black text-center leading-tight">{item.label}</span>
                 </button>
               ))}
+
+              <button
+                type="button"
+                onClick={() => { setActiveTab('settings'); setActiveSettingsTab(0); setShowMoreMenu(false); }}
+                className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border transition ${
+                  activeTab === 'settings'
+                    ? 'bg-orange-600/20 border-orange-600 text-orange-400'
+                    : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'
+                }`}
+              >
+                <span className="text-3xl" aria-hidden="true">⚙️</span>
+                <span className="text-[10px] uppercase font-black text-center leading-tight">{t.navShortSettings}</span>
+                {totalOpenAlerts > 0 && (
+                  <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                  </span>
+                )}
+              </button>
             </div>
-          </div>
+          </section>
         </>
       )}
 
@@ -6607,7 +6927,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         >
           <div className="flex-1 flex justify-around items-center max-w-4xl mx-auto">
             {activeEmployee.role === 'admin' ? (
-              /* Administrative Buttons - navigation 4+1 : 4 onglets principaux + menu "Plus" */
+              /* Administrative Buttons - mobile 4+1 navigation */
               <>
                 <button
                   onClick={() => { setActiveTab('home'); setShowMoreMenu(false); }}
@@ -6649,18 +6969,21 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortStats}</span>
                 </button>
 
-                {/* Menu "Plus" : Factures, Inventaire, Commandes, Cibles, Réglages */}
                 <button
-                  onClick={() => setShowMoreMenu(v => !v)}
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition relative ${
+                  onClick={() => setShowMoreMenu(value => !value)}
+                  className={`relative flex flex-col items-center gap-1 cursor-pointer transition ${
                     showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings'].includes(activeTab)
                       ? 'text-orange-500 font-bold scale-105'
                       : 'text-gray-400 hover:text-white'
                   }`}
+                  aria-expanded={showMoreMenu}
+                  aria-controls="admin-more-menu"
                 >
                   <span className="text-2xl">☰</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{currentLanguage === 'FR' ? 'Plus' : 'More'}</span>
-                  {hrAlerts.filter(a => !a.resolved).length > 0 && (
+                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">
+                    {currentLanguage === 'FR' ? 'Plus' : 'More'}
+                  </span>
+                  {totalOpenAlerts > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
