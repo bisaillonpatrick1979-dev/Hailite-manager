@@ -696,6 +696,32 @@ export function registerApiRoutes(app: express.Express): void {
         // L'identité du soumissionnaire vient du jeton, jamais du client
         payload.submitted_by = auth.userId;
         payload.submitted_by_name = auth.name;
+        // Validation stricte des dépenses soumises du terrain : montant positif,
+        // taxe non négative, catégorie connue, chantier appartenant à la compagnie
+        const amount = Number(payload.amount);
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
+          return res.status(400).json({ error: 'Montant de dépense invalide' });
+        }
+        payload.amount = amount;
+        const tax = payload.tax == null || payload.tax === '' ? 0 : Number(payload.tax);
+        if (!Number.isFinite(tax) || tax < 0 || tax > amount) {
+          return res.status(400).json({ error: 'Taxe de dépense invalide' });
+        }
+        payload.tax = tax;
+        const EXPENSE_CATEGORIES = ['materials', 'tools', 'fuel', 'rental', 'subcontractor', 'admin', 'other'];
+        if (!EXPENSE_CATEGORIES.includes(String(payload.category))) {
+          return res.status(400).json({ error: 'Catégorie de dépense invalide' });
+        }
+        if (payload.project_id) {
+          const { data: proj } = await supabase
+            .from('projects')
+            .select('id, company_id')
+            .eq('id', payload.project_id)
+            .maybeSingle();
+          if (!proj || (proj.company_id && String(proj.company_id) !== auth.companyId)) {
+            return res.status(400).json({ error: 'Chantier inconnu pour cette compagnie' });
+          }
+        }
       }
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });

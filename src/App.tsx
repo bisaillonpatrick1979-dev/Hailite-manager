@@ -683,6 +683,15 @@ export default function App() {
   const handlePunchInStart = () => {
     if (!activeEmployee || !homePunchProject) return;
 
+    // Garde-fou appareil partagé : le chantier présélectionné doit être actif
+    // et assigné à l'utilisateur courant (les admins voient tous les chantiers).
+    const punchTarget = projects.find(project => project.id === homePunchProject);
+    if (!punchTarget || punchTarget.status !== 'active' ||
+        (activeEmployee.role !== 'admin' && !punchTarget.assignedEmployees.includes(activeEmployee.id))) {
+      setHomePunchProject('');
+      return;
+    }
+
     // Check geofencing on current design before allowing punch-in
     const validation = evaluateProjectGeofence(homePunchProject);
     
