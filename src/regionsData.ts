@@ -8,6 +8,8 @@ export interface TaxRegion {
   taxRate1NameEN: string;
   taxRate2NameFR: string;
   taxRate2NameEN: string;
+  currency?: string;
+  locale?: string;
 }
 
 // Métadonnées de paie et de conformité qui varient par province / état, pour
@@ -47,7 +49,7 @@ const CA_REGION_PREPOSITION: Record<string, string> = {
   NU: 'du Nunavut',
 };
 
-export function regionWithPreposition(region: TaxRegion, country: 'CA' | 'US'): string {
+export function regionWithPreposition(region: TaxRegion, country: 'CA' | 'US' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU'): string {
   if (country === 'CA' && CA_REGION_PREPOSITION[region.code]) {
     return CA_REGION_PREPOSITION[region.code];
   }
@@ -70,7 +72,25 @@ const CA_WORKERS_COMP_BOARD: Record<string, string> = {
   NU: 'WSCC (Nunavut)',
 };
 
-export function getRegionPayrollMeta(region: TaxRegion, country: 'CA' | 'US'): RegionPayrollMeta {
+export function getRegionPayrollMeta(region: TaxRegion, country: 'CA' | 'US' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU' | 'EU'): RegionPayrollMeta {
+  if (country === 'EU') {
+    return {
+      pensionNameFR: 'Régime national — à configurer',
+      pensionNameEN: 'National pension — configure locally',
+      pensionRate: 0,
+      secondaryDeductionNameFR: 'Cotisations locales — à configurer',
+      secondaryDeductionNameEN: 'Local contributions — configure locally',
+      secondaryDeductionRate: 0,
+      workersCompNameFR: `Assurance accidents du travail (${region.nameFR})`,
+      workersCompNameEN: `Workers' compensation (${region.nameEN})`,
+      hasConstructionUnionCert: false,
+      breakRuleFR: `Les règles de pauses et de temps de travail de ${region.nameFR} doivent être validées localement.`,
+      breakRuleEN: `Working-time and break rules for ${region.nameEN} must be validated locally.`,
+      businessNumberLabelFR: "Numéro d'entreprise / TVA",
+      businessNumberLabelEN: 'Business / VAT number',
+    };
+  }
+
   if (country === 'US') {
     return {
       pensionNameFR: 'Sécurité sociale (Social Security)',

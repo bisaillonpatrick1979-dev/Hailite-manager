@@ -72,6 +72,7 @@ export async function authLogin(employeeId: string, nip: string):
 // Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
 export interface DirectoryUser { id: string; name: string; role: string; workerType: string; avatar: string }
 export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
+  if (!cloudSyncAllowed) return [];
   try {
     const res = await fetch('/api/auth/directory');
     if (!res.ok) return [];
@@ -83,18 +84,36 @@ export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
 }
 
 let cloudEnabled = false;
-export function isCloudEnabled() { return cloudEnabled; }
+const localTestModeEnabled = () => {
+  try { return localStorage.getItem('gcp_localTestMode') === 'true'; }
+  catch { return false; }
+};
+let cloudSyncAllowed = (() => {
+  if (localTestModeEnabled()) return false;
+  try {
+    const company = JSON.parse(localStorage.getItem('gcp_companyInfo') || '{}');
+    return company?.dataStorageMode !== 'local';
+  } catch { return true; }
+})();
+export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed; }
+export function setCloudSyncAllowed(allowed: boolean) {
+  cloudSyncAllowed = localTestModeEnabled() ? false : allowed;
+  if (!cloudSyncAllowed) cloudEnabled = false;
+}
+export function isCloudSyncAllowed() { return cloudSyncAllowed; }
 
 let cachedCompanyId: string | null = null;
 export function getCompanyId() { return cachedCompanyId; }
 
 async function dbList(table: string): Promise<any[]> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
   return res.json();
 }
 
 async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -105,6 +124,7 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
 }
 
 async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -115,6 +135,7 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
 }
 
 async function dbUpdate(table: string, id: string, row: Record<string, any>): Promise<any> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -125,6 +146,7 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
 }
 
 async function dbDelete(table: string, id: string): Promise<void> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders() });
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
 }
@@ -185,7 +207,9 @@ export function employeeToRow(e: Employee, companyId?: string) {
     emergency_contact_phone: e.emergencyContactPhone, emergency_contact_relation: e.emergencyContactRelation,
     business_name: e.businessName, gst_number: e.gstNumber, sin: e.sin, employee_province: e.employeeProvince,
     pay_frequency: e.payFrequency, pay_period_start: e.payPeriodStart || null, annual_salary: e.annualSalary,
-    credentials: e.credentials || []
+    credentials: e.credentials || [], business_logo: e.businessLogo,
+    privacy_notice_version: e.privacyNoticeVersion, privacy_notice_acknowledged_at: e.privacyNoticeAcknowledgedAt || null,
+    location_notice_acknowledged_at: e.locationNoticeAcknowledgedAt || null
   };
 }
 
@@ -204,7 +228,10 @@ export function rowToEmployee(r: any): Employee {
     gstNumber: r.gst_number || undefined, sin: r.sin || undefined, employeeProvince: r.employee_province || undefined,
     payFrequency: r.pay_frequency || undefined, payPeriodStart: r.pay_period_start || undefined,
     annualSalary: r.annual_salary ?? undefined,
-    credentials: Array.isArray(r.credentials) ? r.credentials : []
+    credentials: Array.isArray(r.credentials) ? r.credentials : [], businessLogo: r.business_logo || undefined,
+    privacyNoticeVersion: r.privacy_notice_version || undefined,
+    privacyNoticeAcknowledgedAt: r.privacy_notice_acknowledged_at || undefined,
+    locationNoticeAcknowledgedAt: r.location_notice_acknowledged_at || undefined
   };
 }
 
@@ -338,7 +365,10 @@ export function invoiceToRow(i: Invoice, companyId?: string) {
     invoice_number: i.invoiceNumber, date: i.date, session_ids: i.sessionIds, hours: i.totalHours,
     amount: i.amount, gst_amount: i.gstAmount, qst_amount: i.qstAmount, total_with_taxes: i.totalWithTaxes,
     status: i.status, notes: i.notes, tax_included: i.taxIncluded, employee_signature: i.employeeSignature,
-    employee_signed_at: i.employeeSignedAt
+    employee_signed_at: i.employeeSignedAt, currency: i.currency, tax_rate1: i.taxRate1, tax_rate2: i.taxRate2,
+    local_tax_rate: i.localTaxRate, local_tax_amount: i.localTaxAmount, tax_rate1_name: i.taxRate1Name,
+    tax_rate2_name: i.taxRate2Name, issuer_name: i.issuerName, issuer_address: i.issuerAddress,
+    issuer_tax_number: i.issuerTaxNumber, issuer_logo: i.issuerLogo, recipient_name: i.recipientName
   };
 }
 
@@ -348,7 +378,13 @@ export function rowToInvoice(r: any): Invoice {
     date: r.date || '', sessionIds: r.session_ids || [], totalHours: r.hours || 0, amount: r.amount || 0,
     gstAmount: r.gst_amount || 0, qstAmount: r.qst_amount || 0, totalWithTaxes: r.total_with_taxes || 0,
     status: r.status || 'draft', notes: r.notes || undefined, taxIncluded: r.tax_included || false,
-    employeeSignature: r.employee_signature || undefined, employeeSignedAt: r.employee_signed_at || undefined
+    employeeSignature: r.employee_signature || undefined, employeeSignedAt: r.employee_signed_at || undefined,
+    currency: r.currency || undefined, taxRate1: r.tax_rate1 ?? undefined, taxRate2: r.tax_rate2 ?? undefined,
+    localTaxRate: r.local_tax_rate ?? undefined, localTaxAmount: r.local_tax_amount ?? undefined,
+    taxRate1Name: r.tax_rate1_name || undefined, taxRate2Name: r.tax_rate2_name || undefined,
+    issuerName: r.issuer_name || undefined, issuerAddress: r.issuer_address || undefined,
+    issuerTaxNumber: r.issuer_tax_number || undefined, issuerLogo: r.issuer_logo || undefined,
+    recipientName: r.recipient_name || undefined
   };
 }
 
@@ -436,7 +472,16 @@ export function companyInfoToRow(c: CompanyInfo) {
     payroll_custom2_name: c.payrollCustom2Name, payroll_custom2_amount: c.payrollCustom2Amount,
     is_onboarded: c.isOnboarded, country: c.country, region: c.region, tax_rate1: c.taxRate1, tax_rate2: c.taxRate2,
     tax_rate1_name: c.taxRate1Name, tax_rate2_name: c.taxRate2Name, payment_deposit_pct: c.paymentDepositPct,
-    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider
+    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider,
+    currency: c.currency, unit_system: c.unitSystem, date_locale: c.dateLocale, local_tax_rate: c.localTaxRate,
+    tax_confirmed_at: c.taxConfirmedAt || null, tax_disclaimer_accepted_at: c.taxDisclaimerAcceptedAt || null,
+    data_storage_mode: c.dataStorageMode, cloud_sync_consent: c.cloudSyncConsent, cloud_region: c.cloudRegion,
+    privacy_policy_version: c.privacyPolicyVersion, privacy_policy_accepted_at: c.privacyPolicyAcceptedAt || null,
+    privacy_contact_email: c.privacyContactEmail, privacy_officer_name: c.privacyOfficerName,
+    retention_months: c.retentionMonths, employee_data_basis_confirmed: c.employeeDataBasisConfirmed,
+    location_data_notice_confirmed: c.locationDataNoticeConfirmed,
+    cross_border_transfer_acknowledged_at: c.crossBorderTransferAcknowledgedAt || null,
+    processor_terms_accepted_at: c.processorTermsAcceptedAt || null, compliance_version: c.complianceVersion
   };
 }
 
@@ -461,7 +506,17 @@ export function rowToCompanyInfo(r: any): Partial<CompanyInfo> {
     taxRate1: r.tax_rate1 ?? undefined, taxRate2: r.tax_rate2 ?? undefined, taxRate1Name: r.tax_rate1_name || undefined,
     taxRate2Name: r.tax_rate2_name || undefined, paymentDepositPct: r.payment_deposit_pct ?? undefined,
     paymentMidPct: r.payment_mid_pct ?? undefined, paymentFinalPct: r.payment_final_pct ?? undefined,
-    aiProvider: r.ai_provider || undefined
+    aiProvider: r.ai_provider || undefined, currency: r.currency || undefined, unitSystem: r.unit_system || undefined,
+    dateLocale: r.date_locale || undefined, localTaxRate: r.local_tax_rate ?? undefined,
+    taxConfirmedAt: r.tax_confirmed_at || undefined, taxDisclaimerAcceptedAt: r.tax_disclaimer_accepted_at || undefined,
+    dataStorageMode: r.data_storage_mode || undefined, cloudSyncConsent: r.cloud_sync_consent ?? undefined,
+    cloudRegion: r.cloud_region || undefined, privacyPolicyVersion: r.privacy_policy_version || undefined,
+    privacyPolicyAcceptedAt: r.privacy_policy_accepted_at || undefined, privacyContactEmail: r.privacy_contact_email || undefined,
+    privacyOfficerName: r.privacy_officer_name || undefined, retentionMonths: r.retention_months ?? undefined,
+    employeeDataBasisConfirmed: r.employee_data_basis_confirmed ?? undefined,
+    locationDataNoticeConfirmed: r.location_data_notice_confirmed ?? undefined,
+    crossBorderTransferAcknowledgedAt: r.cross_border_transfer_acknowledged_at || undefined,
+    processorTermsAcceptedAt: r.processor_terms_accepted_at || undefined, complianceVersion: r.compliance_version || undefined
   };
 }
 
@@ -685,6 +740,7 @@ export interface CloudHydrateResult {
 }
 
 export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
+  if (!cloudSyncAllowed) return { enabled: false, tables: {} };
   try {
     const res = await fetch('/api/hydrate', { headers: authHeaders() });
     if (res.status === 401) {
