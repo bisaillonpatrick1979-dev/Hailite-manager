@@ -10,19 +10,18 @@ const manifest = read('public/assistant.webmanifest');
 const main = read('src/main.tsx');
 
 for (const marker of [
-  'ASSISTANT_VOICE_MUTED_KEY',
-  "localStorage.getItem(ASSISTANT_VOICE_MUTED_KEY) === '1'",
-  'voiceMutedRef',
   'speakResponse',
   'SpeechSynthesisUtterance',
   "utterance.lang = isFR ? 'fr-CA' : 'en-CA'",
   'splitSpeechText',
   'speechSequenceRef',
   'speakResponse([displayText, ...notes].join',
-  'toggleVoiceMute',
+  'stopCurrentSpeech',
   'Volume2',
   'VolumeX',
-  'Réponses vocales activées',
+  'Arrêter la réponse vocale en cours',
+  'La prochaine réponse sera lue automatiquement',
+  'Réponses vocales automatiques activées',
   'SpeechRecognitionCtor',
   '(window as any).webkitSpeechRecognition',
   "recognition.lang = isFR ? 'fr-CA' : 'en-CA'",
@@ -41,12 +40,27 @@ for (const marker of [
 ]) assert.ok(assistant.includes(marker), `Fonction vocale absente: ${marker}`);
 
 assert.ok(
-  assistant.includes("catch { return false; }"),
-  'Le son ne démarre pas par défaut lorsque aucune préférence Muet n’existe.'
+  assistant.includes("if (!('speechSynthesis' in window) || !rawText.trim()) return;"),
+  'La synthèse vocale n’est pas automatiquement active pour chaque réponse.'
 );
 assert.ok(
-  assistant.includes("if (voiceMutedRef.current || !('speechSynthesis' in window)"),
-  'La synthèse vocale ne respecte pas le bouton Muet.'
+  !assistant.includes('ASSISTANT_VOICE_MUTED_KEY') &&
+  !assistant.includes('voiceMutedRef') &&
+  !assistant.includes('toggleVoiceMute') &&
+  !assistant.includes('setVoiceMuted') &&
+  !assistant.includes("localStorage.setItem('gcp_assistant_voice_muted'") &&
+  !assistant.includes("localStorage.getItem('gcp_assistant_voice_muted'"),
+  'Un ancien état Muet persistant est encore présent.'
+);
+assert.ok(
+  assistant.includes('speechSequenceRef.current += 1;') &&
+  assistant.includes('window.speechSynthesis?.cancel?.();') &&
+  assistant.includes('setIsSpeaking(false);'),
+  'Le bouton haut-parleur n’arrête pas immédiatement la lecture en cours.'
+);
+assert.ok(
+  assistant.includes('disabled={!isSpeaking}'),
+  'Le bouton haut-parleur ne fonctionne pas comme arrêt ponctuel de la voix.'
 );
 assert.ok(
   assistant.includes("window.speechSynthesis?.cancel?.();") && assistant.includes('Évite que le micro réécoute'),
@@ -71,11 +85,13 @@ for (const marker of [
 
 assert.ok(main.includes("manifest.href = '/assistant.webmanifest'"), 'Le manifeste autonome n’est pas chargé sur /assistant.');
 assert.ok(main.includes("appleTitle.content = 'Assistant IA'"), 'Le raccourci iOS n’a pas de nom dédié.');
-assert.ok(main.includes("window.location.pathname.replace(/\\/+$/, '') === '/assistant'"), 'La route autonome /assistant est absente.');
+assert.ok(main.includes("window.location.pathname.replace(/\/+$/, '') === '/assistant'"), 'La route autonome /assistant est absente.');
 
 console.log('Assistant IA vocal validé', {
-  spokenRepliesDefaultOn: true,
-  persistentMuteButton: true,
+  everyReplySpokenAutomatically: true,
+  noPersistentMute: true,
+  speakerStopsCurrentReplyOnly: true,
+  nextReplySpeaksAgainAutomatically: true,
   longReplyChunking: true,
   frenchCanadianVoice: true,
   englishCanadianVoice: true,
