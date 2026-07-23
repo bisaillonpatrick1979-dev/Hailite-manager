@@ -2,6 +2,16 @@ import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
+
+// Identifiants locaux (les scripts de build ancrent la ligne d'import ci-dessus :
+// ne pas la modifier). Même format UUID que genId d'apiClient.
+const genLocalId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+      });
 import { translations, fmt } from './translations';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
@@ -378,7 +388,7 @@ export default function App() {
     annualSalary: 0,
     credentials: []
   });
-  const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+  const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active', tasksText: '', toolsText: '' });
   // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
   const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
   const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
@@ -2322,6 +2332,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   <form 
                     onSubmit={(e) => {
                       e.preventDefault();
+                      // Une ligne = une tâche (préfixe "!" = critique) ou un outil
+                      const now = new Date().toISOString();
+                      const tasks = newProjectForm.tasksText.split('\n')
+                        .map(line => line.trim()).filter(Boolean)
+                        .map(line => ({
+                          id: genLocalId(),
+                          text: line.replace(/^!\s*/, ''),
+                          done: false,
+                          priority: (line.startsWith('!') ? 'critique' : 'normal') as 'normal' | 'critique',
+                          createdAt: now
+                        }));
+                      const tools = newProjectForm.toolsText.split('\n')
+                        .map(line => line.trim()).filter(Boolean)
+                        .map(line => ({ id: genLocalId(), name: line, brought: false }));
                       addProject({
                         name: newProjectForm.name,
                         clientName: newProjectForm.clientName,
@@ -2330,10 +2354,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         longitude: Number(newProjectForm.longitude),
                         radius: Number(newProjectForm.radius),
                         assignedEmployees: [],
-                        status: 'active'
+                        status: 'active',
+                        tasks,
+                        tools
                       });
                       alert(t.projectAddedAlert);
-                      setNewProjectForm({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active' });
+                      setNewProjectForm({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active', tasksText: '', toolsText: '' });
                     }}
                     className="p-4 bg-gray-950 border border-gray-850 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4"
                   >
@@ -2403,6 +2429,29 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       />
                     </div>
                     
+                    {/* Tâches et outils saisis dès la création du chantier */}
+                    <div>
+                      <label className="text-[10px] font-mono uppercase text-gray-500">{t.projTasksLabel}</label>
+                      <textarea
+                        value={newProjectForm.tasksText}
+                        onChange={e => setNewProjectForm({ ...newProjectForm, tasksText: e.target.value })}
+                        rows={4}
+                        className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left resize-y"
+                        placeholder={t.projTasksPh}
+                      />
+                      <p className="text-[9px] text-gray-500 font-mono mt-0.5">{t.projTasksHint}</p>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-mono uppercase text-gray-500">{t.projToolsLabel}</label>
+                      <textarea
+                        value={newProjectForm.toolsText}
+                        onChange={e => setNewProjectForm({ ...newProjectForm, toolsText: e.target.value })}
+                        rows={4}
+                        className="w-full mt-1 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left resize-y"
+                        placeholder={t.projToolsPh}
+                      />
+                    </div>
+
                     {/* Position Fast-Filing Helpers */}
                     <div className="md:col-span-2 bg-gray-950 p-3 rounded-xl border border-gray-850 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs leading-none">
                       <div className="text-left">
