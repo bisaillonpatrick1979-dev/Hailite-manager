@@ -92,13 +92,49 @@ function renderApplication(App: React.ComponentType) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Route /assistant : mini-application « Assistant IA » (admins seulement).
+// Ouvre directement le chat IA sans charger l'interface complète — pensée pour
+// être ajoutée à l'écran d'accueil d'un téléphone comme icône dédiée.
+// ---------------------------------------------------------------------------
+const IS_ASSISTANT_ROUTE = window.location.pathname.replace(/\/+$/, '') === '/assistant';
+
+function installAssistantPwaTags() {
+  document.title = 'Assistant IA — Hailite Manager';
+  const manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.href = '/assistant.webmanifest';
+  document.head.appendChild(manifest);
+  const appleCapable = document.createElement('meta');
+  appleCapable.name = 'apple-mobile-web-app-capable';
+  appleCapable.content = 'yes';
+  document.head.appendChild(appleCapable);
+  const appleTitle = document.createElement('meta');
+  appleTitle.name = 'apple-mobile-web-app-title';
+  appleTitle.content = 'Assistant IA';
+  document.head.appendChild(appleTitle);
+  const appleIcon = document.createElement('link');
+  appleIcon.rel = 'apple-touch-icon';
+  appleIcon.href = '/assistant-icon-180.png';
+  document.head.appendChild(appleIcon);
+}
+
+async function loadRouteComponent(): Promise<React.ComponentType> {
+  if (IS_ASSISTANT_ROUTE) {
+    installAssistantPwaTags();
+    const { default: AssistantApp } = await import('./AssistantApp.tsx');
+    return AssistantApp;
+  }
+  const { default: App } = await import('./App.tsx');
+  return App;
+}
+
 async function startApplication() {
   // Nettoie les anciennes données de démonstration avant que le store Zustand
   // charge son état initial depuis localStorage.
   await prepareCloudState();
 
-  const { default: App } = await import('./App.tsx');
-  renderApplication(App);
+  renderApplication(await loadRouteComponent());
 }
 
 startApplication().catch(async error => {
@@ -106,6 +142,5 @@ startApplication().catch(async error => {
   if (isChunkLoadError(error) && reloadOnceForStaleChunk()) return;
   // Repli robuste : l’interface reste accessible même si le préchargement cloud
   // échoue pour une raison inattendue.
-  const { default: App } = await import('./App.tsx');
-  renderApplication(App);
+  renderApplication(await loadRouteComponent());
 });
