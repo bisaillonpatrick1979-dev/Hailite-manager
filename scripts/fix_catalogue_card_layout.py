@@ -51,24 +51,24 @@ replace_once(
 
 # Les cartes de prix utilisent toute la largeur disponible au lieu d'imposer
 # trois petites largeurs fixes qui recouvraient les renseignements.
-text = text.replace(
-    'className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16"',
-    'className="min-w-0 rounded-lg border border-gray-850 bg-gray-950 p-2 text-center"'
-)
-if text.count('className="min-w-0 rounded-lg border border-gray-850 bg-gray-950 p-2 text-center"') < 3:
+old_price_box = 'className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16"'
+new_price_box = 'className="min-w-0 rounded-lg border border-gray-850 bg-gray-950 p-2 text-center"'
+if new_price_box not in text:
+    count = text.count(old_price_box)
+    if count != 3:
+        raise RuntimeError(f'cartes de prix: ancre trouvée {count} fois')
+    text = text.replace(old_price_box, new_price_box)
+if text.count(new_price_box) < 3:
     raise RuntimeError('Les trois cartes de prix n’ont pas été corrigées')
 
-replace_once(
-    'className="text-gray-500 uppercase whitespace-nowrap"',
-    'className="truncate text-[9px] uppercase text-gray-500"',
-    'libellé premier prix'
-)
-# Les deux autres libellés identiques doivent aussi être modifiés.
-text = text.replace(
-    'className="text-gray-500 uppercase whitespace-nowrap"',
-    'className="truncate text-[9px] uppercase text-gray-500"'
-)
-if text.count('className="truncate text-[9px] uppercase text-gray-500"') < 3:
+old_label = 'className="text-gray-500 uppercase whitespace-nowrap"'
+new_label = 'className="truncate text-[9px] uppercase text-gray-500"'
+if new_label not in text:
+    count = text.count(old_label)
+    if count != 3:
+        raise RuntimeError(f'libellés de prix: ancre trouvée {count} fois')
+    text = text.replace(old_label, new_label)
+if text.count(new_label) < 3:
     raise RuntimeError('Les trois libellés de prix n’ont pas été corrigés')
 
 replace_once(
