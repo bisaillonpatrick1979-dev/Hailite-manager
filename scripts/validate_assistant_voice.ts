@@ -85,7 +85,12 @@ for (const marker of [
 
 assert.ok(main.includes("manifest.href = '/assistant.webmanifest'"), 'Le manifeste autonome n’est pas chargé sur /assistant.');
 assert.ok(main.includes("appleTitle.content = 'Assistant IA'"), 'Le raccourci iOS n’a pas de nom dédié.');
-assert.ok(main.includes("window.location.pathname.replace(/\/+$/, '') === '/assistant'"), 'La route autonome /assistant est absente.');
+assert.ok(
+  main.includes('const IS_ASSISTANT_ROUTE =') &&
+  main.includes("window.location.pathname.replace(") &&
+  main.includes("=== '/assistant'"),
+  'La route autonome /assistant est absente.'
+);
 
 console.log('Assistant IA vocal validé', {
   everyReplySpokenAutomatically: true,
