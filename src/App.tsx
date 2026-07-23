@@ -1329,6 +1329,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Assistant IA autonome (admins) : page /assistant installable sur téléphone */}
+          {activeEmployee?.role === 'admin' && (
+            <a
+              href="/assistant"
+              className="flex items-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
+              title={currentLanguage === 'FR' ? 'Assistant IA (plein écran)' : 'AI Assistant (full screen)'}
+              aria-label={currentLanguage === 'FR' ? 'Ouvrir l’assistant IA' : 'Open the AI assistant'}
+            >
+              🤖
+            </a>
+          )}
+
           {/* Guide Interactif de Validation */}
           <button
             onClick={() => setTourStep(0)}
