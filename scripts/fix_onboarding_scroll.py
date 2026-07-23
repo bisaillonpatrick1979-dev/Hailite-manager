@@ -117,4 +117,88 @@ text = text.replace(
 )
 
 path.write_text(text, encoding='utf-8')
+
+# Styles tactiles explicites : le glissement fonctionne partout dans le panneau,
+# une barre suffisamment large indique clairement qu’il reste du contenu et la
+# mise en page se compacte sur les écrans courts en orientation paysage.
+css_path = ROOT / 'src' / 'index.css'
+css = css_path.read_text(encoding='utf-8')
+marker = '/* ONBOARDING MOBILE ET TABLETTE — DÉFILEMENT TACTILE FIABLE */'
+if marker not in css:
+    css += """
+
+/* ONBOARDING MOBILE ET TABLETTE — DÉFILEMENT TACTILE FIABLE */
+#hailite-onboarding-screen,
+#hailite-onboarding-card {
+  min-height: 0;
+}
+
+.hailite-onboarding-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: #f97316 #111827;
+  scroll-behavior: smooth;
+}
+
+.hailite-onboarding-scroll::-webkit-scrollbar {
+  width: 14px;
+}
+
+.hailite-onboarding-scroll::-webkit-scrollbar-track {
+  background: #111827;
+  border-left: 1px solid #374151;
+}
+
+.hailite-onboarding-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(#fb923c, #ea580c);
+  border: 3px solid #111827;
+  border-radius: 999px;
+  min-height: 48px;
+}
+
+.hailite-onboarding-scroll::-webkit-scrollbar-thumb:active {
+  background: #fdba74;
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  #hailite-onboarding-screen {
+    padding: 4px;
+  }
+
+  #hailite-onboarding-card {
+    border-radius: 18px;
+  }
+
+  #hailite-onboarding-header {
+    padding: 8px 14px;
+  }
+
+  #hailite-onboarding-header h1 {
+    font-size: 1.25rem;
+    line-height: 1.35;
+  }
+
+  #hailite-onboarding-header p {
+    font-size: 0.75rem;
+  }
+
+  #hailite-onboarding-footer {
+    padding-top: 8px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .hailite-onboarding-scroll {
+    padding-top: 12px;
+    padding-left: 14px;
+    padding-right: 14px;
+    padding-bottom: 24px;
+  }
+}
+"""
+    css_path.write_text(css, encoding='utf-8')
+
 print('Défilement onboarding téléphone/tablette corrigé et vérifié.')
