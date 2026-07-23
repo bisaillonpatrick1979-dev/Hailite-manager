@@ -1,15 +1,18 @@
 {
-  "name": "Assistant IA — Hailite Manager",
+  "id": "/assistant",
+  "name": "Assistant IA vocal — Hailite Manager",
   "short_name": "Assistant IA",
-  "description": "Chat IA de gestion de chantier : questions sur la compagnie, photos de factures et de chantiers.",
+  "description": "Assistant vocal de gestion : questions sur la compagnie, employés, paie, rendement, factures, inventaire, photos et chantiers.",
+  "lang": "fr-CA",
   "start_url": "/assistant",
   "scope": "/assistant",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#0A0D12",
   "theme_color": "#0A0D12",
+  "categories": ["business", "productivity", "utilities"],
   "icons": [
-    { "src": "/assistant-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assistant-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/assistant-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
