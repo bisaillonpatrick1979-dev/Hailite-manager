@@ -14,7 +14,9 @@ for (const marker of [
   "openCreateDocument('quote')",
   "openCreateDocument('contract', doc)",
   "openCreateDocument('invoice', doc)",
-  "status: newDocType === 'contract' ? 'accepted' : 'draft'",
+  'contractWillBeSigned',
+  'unsignedContractStatus',
+  "status: nextStatus as GCPDocument['status']",
   'refQuote:',
   'refContract:',
   "status: 'completed'",
@@ -25,7 +27,8 @@ for (const marker of [
   'Filigrane professionnel imprimable',
   'selectedDocForView.number',
   'companyInfo.logo &&',
-  'Signer et créer le contrat',
+  'Signer et verrouiller le contrat',
+  'Enregistrer le brouillon modifiable',
   'id="document-search-only"',
   'Recherche unique dans tous les devis, contrats et factures',
   'Rechercher un client, un numéro de devis, de contrat ou de facture',
@@ -40,11 +43,14 @@ assert.ok(!component.includes('Type filters'), 'Les anciens onglets Tous / Devis
 assert.ok(!component.includes('Status sub filters'), 'Les anciens filtres de statut sont encore affichés.');
 assert.ok(!component.includes('setActiveTypeTab(tab.id'), 'Un ancien contrôle de filtre par type subsiste.');
 assert.ok(!component.includes('setActiveStatusTab(stat.id'), 'Un ancien contrôle de filtre par statut subsiste.');
+assert.ok(!component.includes("status: newDocType === 'contract' ? 'accepted' : 'draft'"), 'Un contrat ne doit plus être automatiquement signé dès sa création.');
 assert.ok(types.includes("'completed'"), 'Le statut contrat terminé est absent des types.');
 
 console.log('Parcours professionnel des documents validé', {
   quoteCreation: true,
-  acceptedQuoteToSignedContract: true,
+  acceptedQuoteToDraftContract: true,
+  editableDraftContract: true,
+  twoSignaturesLockContract: true,
   completedContractToInvoice: true,
   quoteReference: true,
   contractReference: true,
