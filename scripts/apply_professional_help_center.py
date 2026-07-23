@@ -42,12 +42,11 @@ replace_once(
 )
 
 # Une seule ouverture automatique par profil et par version du parcours. Le
-# bouton Aide permet ensuite de le rouvrir autant de fois que nécessaire.
-state_anchor = """  const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
-
-  // Time tracker for active punch
-"""
-state_replacement = """  const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
+# bouton Aide permet ensuite de le rouvrir autant de fois que nécessaire. On
+# s’ancre uniquement sur l’état GPS afin de rester compatible avec les autres
+# scripts qui peuvent insérer des états ou commentaires juste après.
+state_anchor = "  const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);\n"
+welcome_effect = """
 
   useEffect(() => {
     if (!activeEmployee) return;
@@ -61,10 +60,9 @@ state_replacement = """  const [geofencingBypass, setGeofencingBypass] = useStat
       // L’aide demeure accessible manuellement si le stockage local est bloqué.
     }
   }, [activeEmployee?.id]);
-
-  // Time tracker for active punch
 """
-replace_once(state_anchor, state_replacement, 'ouverture aide première connexion')
+if 'gcp_help_welcome_' not in text:
+    replace_once(state_anchor, state_anchor + welcome_effect, 'ouverture aide première connexion')
 
 old_button = """          {/* Guide Interactif de Validation */}
           <button
@@ -120,23 +118,25 @@ if overlay_start == -1 or overlay_end == -1:
     raise RuntimeError(f'Ancien panneau de validation introuvable: debut={overlay_start}, fin={overlay_end}')
 
 help_render = """      {/* -------------------- CENTRE D’AIDE ET DE FORMATION -------------------- */}
-      <Suspense fallback={<LazySectionFallback />}>
-        <UserHelpCenter
-          open={helpCenterOpen}
-          onClose={() => setHelpCenterOpen(false)}
-          language={currentLanguage}
-          role={activeEmployee?.role || 'employee'}
-          employeeId={activeEmployee?.id || 'guest'}
-          employeeName={activeEmployee?.name || (currentLanguage === 'FR' ? 'nouvel utilisateur' : 'new user')}
-          activeTab={activeTab}
-          onNavigate={(tab, settingsTab) => {
-            setActiveTab(tab);
-            if (typeof settingsTab === 'number') setActiveSettingsTab(settingsTab);
-            setShowMoreMenu(false);
-            setHelpCenterOpen(false);
-          }}
-        />
-      </Suspense>"""
+      {helpCenterOpen && (
+        <Suspense fallback={<LazySectionFallback />}>
+          <UserHelpCenter
+            open={helpCenterOpen}
+            onClose={() => setHelpCenterOpen(false)}
+            language={currentLanguage}
+            role={activeEmployee?.role || 'employee'}
+            employeeId={activeEmployee?.id || 'guest'}
+            employeeName={activeEmployee?.name || (currentLanguage === 'FR' ? 'nouvel utilisateur' : 'new user')}
+            activeTab={activeTab}
+            onNavigate={(tab, settingsTab) => {
+              setActiveTab(tab);
+              if (typeof settingsTab === 'number') setActiveSettingsTab(settingsTab);
+              setShowMoreMenu(false);
+              setHelpCenterOpen(false);
+            }}
+          />
+        </Suspense>
+      )}"""
 text = text[:overlay_start] + help_render + text[overlay_end:]
 
 path.write_text(text, encoding='utf-8')
