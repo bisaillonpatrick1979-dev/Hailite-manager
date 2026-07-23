@@ -163,9 +163,6 @@ if start != -1:
 """
     text = text[:start] + replacement + text[end:]
 
-old_storage_ui = """            <div className=\"grid sm:grid-cols-3 gap-3\">{storageOptions.map(option => <button key={option.id} type=\"button\" onClick={() => setStorageMode(option.id)} className={`rounded-2xl border p-4 text-left min-h-36 ${storageMode === option.id ? 'border-cyan-300 bg-cyan-500/15' : 'border-slate-700 bg-slate-900'}`}><span className=\"text-3xl\">{option.icon}</span><p className=\"font-black text-lg mt-2\">{isFR ? option.fr : option.en}</p><p className=\"text-xs text-slate-400 mt-1\">{isFR ? option.descFR : option.descEN}</p></button>)}</div>
-            {storageMode !== 'local' && <div className=\"rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4\"><p className=\"font-black text-blue-300\">☁️ Supabase · Canada Central · {CLOUD_REGION}</p><p className=\"text-sm text-slate-300 mt-1\">{isFR ? 'Les données peuvent inclure employés, clients, chantiers, GPS au pointage, paie, factures, signatures, cartes de compétence, photos et pièces jointes.' : 'Data may include employees, clients, jobs, punch-time GPS, payroll, invoices, signatures, competency cards, photos, and attachments.'}</p></div>}
-"""
 new_storage_ui = """            <StorageDestinationSetup
               isFR={isFR}
               mode={storageMode}
@@ -183,11 +180,17 @@ new_storage_ui = """            <StorageDestinationSetup
               cloudRegion={CLOUD_REGION}
             />
 """
-text = replace_once(text, old_storage_ui, new_storage_ui, 'interface destination stockage')
+if '<StorageDestinationSetup' not in text:
+    ui_start = text.find('            <div className="grid sm:grid-cols-3 gap-3">{storageOptions.map')
+    ui_end_marker = '            <div className="grid sm:grid-cols-3 gap-4"><label className="sm:col-span-2">'
+    ui_end = text.find(ui_end_marker, ui_start)
+    if ui_start == -1 or ui_end == -1:
+        raise RuntimeError(f'interface destination stockage introuvable: debut={ui_start}, fin={ui_end}')
+    text = text[:ui_start] + new_storage_ui + text[ui_end:]
 
 old_step5_start = "          {step === 5 && <div className=\"space-y-6\">\n            <div><h2 className=\"text-2xl font-black flex items-center gap-3\"><Palette"
 new_step5_start = """          {step === 5 && <div className=\"space-y-6\">
-            <div><h2 className=\"text-2xl font-black flex items-center gap-3\"><Database className=\"h-7 w-7 text-cyan-300\" />{isFR ? 'Importer les données existantes' : 'Import existing data'}</h2><p className=\"mt-2 text-slate-300\">{isFR ? 'Cette étape est facultative. Elle permet de commencer avec votre année fiscale, vos contrats et vos chantiers déjà en cours.' : 'This optional step lets you begin with your existing fiscal year, contracts, and active projects.'}</p></div>
+            <div><h2 className=\"text-2xl font-black flex items-center gap-3\"><Database className=\"h-7 w-7 text-orange-300\" />{isFR ? 'Importer les données existantes' : 'Import existing data'}</h2><p className=\"mt-2 text-gray-300\">{isFR ? 'Cette étape est facultative. Elle permet de commencer avec votre année fiscale, vos contrats et vos chantiers déjà en cours.' : 'This optional step lets you begin with your existing fiscal year, contracts, and active projects.'}</p></div>
             <LegacyDataImporter isFR={isFR} onImported={setMigrationImportedCount} />
           </div>}
 
@@ -208,7 +211,7 @@ text = text.replace(
     "<dd className=\"font-bold text-lg\">{storageMode === 'supabase' ? `Canada Central (${CLOUD_REGION})` : storageMode === 'personal_cloud' ? personalCloudProvider : (isFR ? 'Fichier choisi sur l’appareil' : 'Device-selected file')}</dd>"
 )
 summary_anchor = "</div></dl></div>"
-summary_extra = """<div><dt className=\"text-slate-400\">{isFR ? 'Fichier de sauvegarde' : 'Backup file'}</dt><dd className=\"font-bold text-lg break-all\">{storageMode === 'supabase' ? (isFR ? 'Géré par Supabase' : 'Managed by Supabase') : backupFileName}</dd></div><div><dt className=\"text-slate-400\">{isFR ? 'Données migrées' : 'Migrated data'}</dt><dd className=\"font-bold text-lg\">{migrationImportedCount}</dd></div></dl></div>"""
+summary_extra = """<div><dt className=\"text-gray-400\">{isFR ? 'Fichier de sauvegarde' : 'Backup file'}</dt><dd className=\"font-bold text-lg break-all\">{storageMode === 'supabase' ? (isFR ? 'Géré par Supabase' : 'Managed by Supabase') : backupFileName}</dd></div><div><dt className=\"text-gray-400\">{isFR ? 'Données migrées' : 'Migrated data'}</dt><dd className=\"font-bold text-lg\">{migrationImportedCount}</dd></div></dl></div>"""
 if summary_extra not in text:
     text = replace_once(text, summary_anchor, summary_extra, 'résumé stockage et migration')
 
