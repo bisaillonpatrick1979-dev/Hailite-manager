@@ -6,7 +6,7 @@
 import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
-  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto
+  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder
 } from './types';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -520,6 +520,36 @@ export function rowToHRAlert(r: any): HRAlert {
   return {
     id: r.id, type: r.type, title: r.title || '', message: r.message || '', date: r.date || '',
     employeeId: r.employee_id || undefined, employeeName: r.employee_name || undefined, resolved: r.resolved || false
+  };
+}
+
+export function changeOrderToRow(o: ChangeOrder, companyId?: string) {
+  return {
+    id: o.id, company_id: companyId, project_id: o.projectId, number: o.number,
+    description: o.description, reason: o.reason || null, amount: o.amount,
+    photo_url: o.photoUrl || null, status: o.status, created_at: o.createdAt,
+    created_by: o.createdById || null, created_by_name: o.createdByName || null,
+    client_name: o.clientName || null, client_signature: o.clientSignature || null,
+    signed_at: o.signedAt || null
+  };
+}
+export function rowToChangeOrder(r: any): ChangeOrder {
+  const statuses = ['pending', 'approved', 'refused', 'invoiced'];
+  return {
+    id: r.id,
+    projectId: r.project_id || '',
+    number: r.number || '',
+    description: r.description || '',
+    reason: r.reason || undefined,
+    amount: Number(r.amount || 0),
+    photoUrl: r.photo_url || undefined,
+    status: (statuses.includes(r.status) ? r.status : 'pending') as ChangeOrder['status'],
+    createdAt: r.created_at || '',
+    createdById: r.created_by || undefined,
+    createdByName: r.created_by_name || undefined,
+    clientName: r.client_name || undefined,
+    clientSignature: r.client_signature || undefined,
+    signedAt: r.signed_at || undefined
   };
 }
 

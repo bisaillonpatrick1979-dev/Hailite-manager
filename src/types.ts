@@ -484,3 +484,30 @@ export interface ProjectPhoto {
   latitude?: number;
   longitude?: number;
 }
+
+
+// ---------------------------------------------------------------------------
+// Ordres de changement — les extras constatés en cours de chantier
+// ---------------------------------------------------------------------------
+// Contreplaqué pourri, solin supplémentaire, ventilation non prévue : sans
+// trace signée, le travail est fait mais personne ne l'a approuvé, et la
+// facture finale devient une négociation. Un extra signé sur place est
+// approuvé immédiatement ; sans signature il reste en attente du bureau.
+export type ChangeOrderStatus = 'pending' | 'approved' | 'refused' | 'invoiced';
+
+export interface ChangeOrder {
+  id: string;
+  projectId: string;
+  number: string;            // OC-001, OC-002…
+  description: string;
+  reason?: string;           // ce qui l'a rendu nécessaire
+  amount: number;            // avant taxes
+  photoUrl?: string;         // preuve de la situation constatée
+  status: ChangeOrderStatus;
+  createdAt: string;
+  createdById?: string;      // imposé par le serveur
+  createdByName?: string;
+  clientName?: string;
+  clientSignature?: string;  // data URL
+  signedAt?: string;
+}
