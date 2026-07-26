@@ -32,9 +32,13 @@ export default function UserPrivacyNotice({ employee, companyInfo, currentLangua
   };
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md overflow-y-auto p-4 flex items-center justify-center">
-      <section className="w-full max-w-2xl rounded-3xl border border-cyan-500/30 bg-[#111722] text-white shadow-2xl overflow-hidden">
-        <header className="p-5 sm:p-7 border-b border-slate-700 bg-gradient-to-r from-slate-950 to-slate-900">
+    // Même structure que l'onboarding : carte en colonne flex bornée à l'écran.
+    // L'en-tête et le bouton d'acceptation restent visibles, seul le texte de
+    // l'avis défile — sur téléphone il fallait auparavant faire défiler toute
+    // la page pour trouver le bouton, et le haut de la carte était coupé.
+    <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md p-4 flex">
+      <section className="m-auto w-full max-w-2xl rounded-3xl border border-cyan-500/30 bg-[#111722] text-white shadow-2xl overflow-hidden flex flex-col max-h-[calc(100dvh-2rem)]">
+        <header className="shrink-0 p-4 sm:p-7 border-b border-slate-700 bg-gradient-to-r from-slate-950 to-slate-900">
           <div className="flex items-start gap-3">
             <div className="p-3 rounded-2xl bg-cyan-500/15 border border-cyan-400/30"><ShieldCheck className="w-7 h-7 text-cyan-300" /></div>
             <div>
@@ -45,7 +49,7 @@ export default function UserPrivacyNotice({ employee, companyInfo, currentLangua
           </div>
         </header>
 
-        <div className="p-5 sm:p-7 space-y-5 text-sm leading-relaxed text-slate-200">
+        <div className="p-5 sm:p-7 space-y-5 text-sm leading-relaxed text-slate-200 flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <div className="rounded-2xl bg-slate-950 border border-slate-700 p-4 space-y-2">
             <h3 className="font-black text-white">1. {t('Données traitées', 'Data processed')}</h3>
             <p>{t('L’application peut traiter votre identité professionnelle, coordonnées, taux et heures de travail, chantiers assignés, pointages, pauses, factures, signatures, cartes de compétence, photos et documents nécessaires à l’emploi ou au contrat.', 'The application may process your professional identity, contact details, pay rate and work hours, assigned jobs, punches, breaks, invoices, signatures, competency cards, photos, and documents required for employment or contracting.')}</p>
@@ -82,7 +86,13 @@ export default function UserPrivacyNotice({ employee, companyInfo, currentLangua
           </label>
         </div>
 
-        <footer className="p-5 sm:p-7 border-t border-slate-700 bg-slate-950/70">
+        <footer className="shrink-0 p-4 sm:p-7 border-t border-slate-700 bg-slate-950/70" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}>
+          {(!readNotice || !locationNotice) && (
+            <p className="text-sm text-amber-300 font-bold text-center mb-3">
+              ☐ {(!readNotice ? 1 : 0) + (!locationNotice ? 1 : 0)}{' '}
+              {t('confirmation(s) à cocher ci-dessus', 'confirmation(s) left to check above')}
+            </p>
+          )}
           <button type="button" disabled={!readNotice || !locationNotice} onClick={accept} className="w-full min-h-14 rounded-2xl bg-emerald-500 text-slate-950 font-black text-lg disabled:opacity-40 inline-flex items-center justify-center gap-2">
             <Check className="w-5 h-5" /> {t('Confirmer et continuer', 'Confirm and continue')}
           </button>
