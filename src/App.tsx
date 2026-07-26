@@ -417,10 +417,34 @@ export default function App() {
   const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
   // Dictée vocale (Web Speech API) et lecture des réponses à voix haute
   const [isListening, setIsListening] = useState<boolean>(false);
-  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(false);
+  // La lecture vocale est ACTIVE par défaut : l'assistant répond à voix haute
+  // sans rien demander. Le bouton haut-parleur la coupe, et ce choix est
+  // mémorisé pour les prochaines sessions.
+  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('gcp_aiVoiceEnabled');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
   const recognitionRef = useRef<any>(null);
-  const voiceEnabledRef = useRef<boolean>(false);
+  const voiceEnabledRef = useRef<boolean>(true);
   voiceEnabledRef.current = voiceEnabled;
+  // iOS/Safari n'autorise la synthèse vocale que si elle a déjà été déclenchée
+  // pendant une interaction de l'utilisateur. On « amorce » donc le moteur au
+  // premier geste (envoi d'un message) avec un énoncé vide, sinon la réponse
+  // asynchrone reste muette sur téléphone.
+  const speechPrimedRef = useRef<boolean>(false);
+  const primeSpeechSynthesis = () => {
+    if (speechPrimedRef.current || typeof speechSynthesis === 'undefined') return;
+    try {
+      speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+      speechPrimedRef.current = true;
+    } catch {
+      // Moteur vocal indisponible : la lecture sera simplement ignorée.
+    }
+  };
 
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
@@ -1077,6 +1101,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   const handleSendAiMessage = async () => {
     const attachment = aiImageAttachment;
     if (!aiMessage.trim() && !attachment) return;
+    // Amorçage dans le geste utilisateur : autorise la lecture de la réponse
+    // qui arrivera de façon asynchrone (indispensable sur iOS).
+    if (voiceEnabledRef.current) primeSpeechSynthesis();
 
     const attachmentIsPdf = attachment?.mimeType === 'application/pdf';
     const userText = aiMessage.trim() || (attachmentIsPdf
@@ -6786,7 +6813,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   onClick={() => {
                     const next = !voiceEnabled;
                     setVoiceEnabled(next);
-                    if (!next && typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+                    try { localStorage.setItem('gcp_aiVoiceEnabled', String(next)); } catch { /* stockage indisponible */ }
+                    if (next) primeSpeechSynthesis();
+                    // Coupe immédiatement la phrase en cours quand on désactive
+                    else if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
                   }}
                   title={voiceEnabled ? t.voiceOffTitle : t.voiceOnTitle}
                   className={`transition p-1 rounded-full hover:bg-white/10 cursor-pointer ${voiceEnabled ? 'text-green-400' : 'text-gray-400 hover:text-white'}`}
