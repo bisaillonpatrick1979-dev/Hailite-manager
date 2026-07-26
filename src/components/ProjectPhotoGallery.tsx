@@ -72,7 +72,12 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
         ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
         : 'bg-amber-500/15 text-amber-300 border-amber-500/30';
 
-  // Position GPS au moment de la prise : facultative, jamais bloquante.
+  // Position GPS : demandée dès la prise de la photo et déposée ici, pour que
+  // l'enregistrement reste instantané. Sur un chantier, un bouton qui met six
+  // secondes à répondre passe pour un bogue — la position est un bonus, jamais
+  // une condition.
+  const positionRef = useRef<{ latitude?: number; longitude?: number }>({});
+
   const readPosition = (): Promise<{ latitude?: number; longitude?: number }> =>
     new Promise(resolve => {
       if (!navigator.geolocation) return resolve({});
@@ -94,6 +99,10 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
     setBusy(true);
     try {
       setPending(await compressImageFile(file, 1600, 0.82));
+      // La localisation part en arrière-plan pendant que l'utilisateur choisit
+      // la phase et saisit sa note.
+      positionRef.current = {};
+      readPosition().then(pos => { positionRef.current = pos; });
     } catch {
       setError(t.photoProcessFailed);
     } finally {
@@ -101,10 +110,8 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
     }
   };
 
-  const savePending = async () => {
+  const savePending = () => {
     if (!pending || busy) return;
-    setBusy(true);
-    const position = await readPosition();
     addProjectPhoto({
       projectId: project.id,
       phase: pendingPhase,
@@ -113,11 +120,11 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
       takenAt: new Date().toISOString(),
       takenById: activeEmployee?.id,
       takenByName: activeEmployee?.name,
-      ...position
+      ...positionRef.current
     });
     setPending(null);
     setCaption('');
-    setBusy(false);
+    positionRef.current = {};
     setOpen(true);
   };
 
