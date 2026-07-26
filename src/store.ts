@@ -4,7 +4,7 @@ import {
   InventoryItem, SupplierOrder, Supplier, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
   WeeklyGoal, MotivationTeam, MotivationGoal,
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine, GCPDocumentPaymentHistoryEntry,
-  ExpenseRecord, PayrollPayment
+  ExpenseRecord, PayrollPayment, ProjectPhoto
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
@@ -13,6 +13,7 @@ import {
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
   hrAlertToRow, expenseToRow, payrollPaymentToRow, documentToRow, documentPaymentToRow,
+  projectPhotoToRow, rowToProjectPhoto,
   rowToEmployee, rowToProject, rowToPunch, rowToInvoice, rowToSupplier, rowToCatalogue, rowToInventory,
   rowToSupplierOrder, rowToClient, rowToCompanyInfo, rowToWeeklyGoal, rowToMotivationTeam, rowToMotivationGoal,
   rowToHRAlert, rowToExpense, rowToPayrollPayment, rowToDocument
@@ -33,6 +34,7 @@ interface AppState {
   hrAlerts: HRAlert[];
   documents: GCPDocument[];
   expenses: ExpenseRecord[];
+  projectPhotos: ProjectPhoto[];
   // Dépenses personnelles de l'employé : locales à l'appareil, jamais synchronisées
   personalExpenses: ExpenseRecord[];
   payrollPayments: PayrollPayment[];
@@ -137,6 +139,9 @@ interface AppState {
   addPartialPayment: (id: string, amount: number, method: string, notes?: string) => void;
 
   // Accounting CRUD
+  addProjectPhoto: (photo: Omit<ProjectPhoto, 'id'>) => void;
+  updateProjectPhoto: (photo: ProjectPhoto) => void;
+  deleteProjectPhoto: (id: string) => void;
   addExpense: (exp: Omit<ExpenseRecord, 'id'>) => void;
   deleteExpense: (id: string) => void;
   addPersonalExpense: (exp: Omit<ExpenseRecord, 'id'>) => void;
@@ -740,6 +745,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   hrAlerts: getSavedState('gcp_hrAlerts', initialHRAlerts),
   documents: getSavedState('gcp_documents', initialDocuments),
   expenses: getSavedState('gcp_expenses', initialExpenses),
+  projectPhotos: getSavedState('gcp_projectPhotos', []),
   personalExpenses: getSavedState('gcp_personalExpenses', []),
   payrollPayments: getSavedState('gcp_payrollPayments', initialPayrollPayments),
   motivationTeams: getSavedState('gcp_motivationTeams', initialMotivationTeams),
@@ -1812,6 +1818,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     syncInsert('document_payments', documentPaymentToRow(newPayment, id));
   },
 
+  // Photos de chantier : dossier avant / pendant / après, synchronisé au nuage
+  addProjectPhoto: (photo) => {
+    const { projectPhotos } = get();
+    const newPhoto: ProjectPhoto = { ...photo, id: genId() };
+    const updated = [newPhoto, ...projectPhotos];
+    set({ projectPhotos: updated });
+    saveState('gcp_projectPhotos', updated);
+    syncInsert('project_photos', projectPhotoToRow(newPhoto));
+  },
+
+  updateProjectPhoto: (photo) => {
+    const { projectPhotos } = get();
+    const updated = projectPhotos.map(p => (p.id === photo.id ? photo : p));
+    set({ projectPhotos: updated });
+    saveState('gcp_projectPhotos', updated);
+    syncUpdate('project_photos', photo.id, projectPhotoToRow(photo));
+  },
+
+  deleteProjectPhoto: (id) => {
+    const { projectPhotos } = get();
+    const updated = projectPhotos.filter(p => p.id !== id);
+    set({ projectPhotos: updated });
+    saveState('gcp_projectPhotos', updated);
+    syncDelete('project_photos', id);
+  },
+
   addExpense: (exp) => {
     const { expenses } = get();
     const newExp: ExpenseRecord = {
@@ -1954,6 +1986,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const documentPayments = t.document_payments || [];
     const documents = (t.documents || []).map((r: any) => rowToDocument(r, documentItems, documentPayments));
     const expenses = (t.expenses || []).map(rowToExpense);
+    const projectPhotos = (t.project_photos || []).map(rowToProjectPhoto);
     const payrollPayments = (t.payroll_payments || []).map(rowToPayrollPayment);
     const motivationTeams = (t.motivation_teams || []).map(rowToMotivationTeam);
     const motivationGoals = (t.motivation_goals || []).map(rowToMotivationGoal);
@@ -1975,6 +2008,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         hrAlerts: mergeByKey(state.hrAlerts, hrAlerts, h => h.id),
         documents: mergeByKey(state.documents, documents, d => d.id),
         expenses: mergeByKey(state.expenses, expenses, e => e.id),
+        projectPhotos: mergeByKey(state.projectPhotos, projectPhotos, p => p.id),
         payrollPayments: mergeByKey(state.payrollPayments, payrollPayments, p => p.id),
         motivationTeams: mergeByKey(state.motivationTeams, motivationTeams, m => m.id),
         motivationGoals: mergeByKey(state.motivationGoals, motivationGoals, g => g.id),
@@ -1997,6 +2031,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveState('gcp_hrAlerts', s.hrAlerts);
     saveState('gcp_documents', s.documents);
     saveState('gcp_expenses', s.expenses);
+    saveState('gcp_projectPhotos', s.projectPhotos);
     saveState('gcp_payrollPayments', s.payrollPayments);
     saveState('gcp_motivationTeams', s.motivationTeams);
     saveState('gcp_motivationGoals', s.motivationGoals);

@@ -17,7 +17,8 @@ export const supabase: SupabaseClient | null = supabaseEnabled
 export const TABLES_WITH_COMPANY_ID = new Set([
   'app_users', 'projects', 'punches', 'catalog_items', 'suppliers', 'inventory_items',
   'supplier_orders', 'clients', 'documents', 'payroll_entries', 'payroll_payments',
-  'production_entries', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses'
+  'production_entries', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
+  'project_photos'
 ]);
 
 // Tables dont la clé primaire n'est pas "id"

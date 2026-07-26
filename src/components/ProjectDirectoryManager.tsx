@@ -6,6 +6,7 @@ import useAppStore from '../store';
 import type { Project, ProjectTask, ProjectTool } from '../types';
 
 const ProjectTasksAndTools = lazy(() => import('./ProjectTasksAndTools'));
+const ProjectPhotoGallery = lazy(() => import('./ProjectPhotoGallery'));
 
 type ProjectEditForm = {
   name: string;
@@ -278,6 +279,11 @@ export default function ProjectDirectoryManager() {
                   <Suspense fallback={<p className="text-xs text-gray-500">{isFR ? 'Chargement…' : 'Loading…'}</p>}>
                     <ProjectTasksAndTools project={project} />
                   </Suspense>
+                  <div className="mt-3">
+                    <Suspense fallback={<p className="text-xs text-gray-500">{isFR ? 'Chargement…' : 'Loading…'}</p>}>
+                      <ProjectPhotoGallery project={project} />
+                    </Suspense>
+                  </div>
                 </div>
               </article>
             );

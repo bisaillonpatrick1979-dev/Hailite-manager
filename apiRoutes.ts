@@ -23,7 +23,8 @@ const KNOWN_TABLES = [
   'companies', 'app_users', 'projects', 'project_tools', 'project_assignments', 'project_tasks',
   'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders', 'supplier_order_items',
   'clients', 'documents', 'document_items', 'document_payments', 'payroll_entries', 'payroll_payments',
-  'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses'
+  'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
+  'project_photos'
 ];
 
 // ---------------------------------------------------------------------------
@@ -42,7 +43,7 @@ const TABLE_READ_ROLES: Record<string, AppRole[]> = {
   clients: OFFICE, documents: OFFICE, document_items: OFFICE, document_payments: OFFICE,
   payroll_entries: ALL_ROLES, payroll_payments: ALL_ROLES, production_entries: ALL_ROLES,
   weekly_goals: ALL_ROLES, motivation_teams: ALL_ROLES, motivation_goals: ALL_ROLES,
-  hr_alerts: MANAGERS, expenses: OFFICE
+  hr_alerts: MANAGERS, expenses: OFFICE, project_photos: ALL_ROLES
 };
 
 const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
@@ -55,7 +56,9 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
   weekly_goals: ALL_ROLES, motivation_teams: ADMIN_ONLY, motivation_goals: ADMIN_ONLY,
   // expenses : les employés/sous-traitants soumettent leurs dépenses de terrain
   // (INSERT seulement — voir allowExpenseMethod) ; gestion complète pour le bureau
-  hr_alerts: ALL_ROLES, expenses: ALL_ROLES
+  // project_photos : les employés photographient le chantier (INSERT seulement,
+  // voir allowProjectPhotoMethod) ; correction et suppression réservées à la gestion
+  hr_alerts: ALL_ROLES, expenses: ALL_ROLES, project_photos: ALL_ROLES
 };
 
 // Colonne "propriétaire" pour les contraintes de ligne des rôles non gestionnaires
@@ -678,6 +681,13 @@ export function registerApiRoutes(app: express.Express): void {
     return method === 'POST' || OFFICE.includes(auth.role);
   }
 
+  // project_photos : n'importe quel rôle peut photographier le chantier, mais
+  // seule la gestion peut corriger ou supprimer une photo — le dossier photo
+  // sert de preuve, il ne doit pas pouvoir être vidé depuis le terrain.
+  function allowProjectPhotoMethod(auth: AuthContext, method: string): boolean {
+    return method === 'POST' || isManager(auth.role);
+  }
+
   // Création d'une ligne
   app.post('/api/db/:table', requireAuth, async (req: AuthedRequest, res) => {
     if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
@@ -691,6 +701,27 @@ export function registerApiRoutes(app: express.Express): void {
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
+      }
+      if (table === 'project_photos') {
+        // L'auteur de la photo vient du jeton, jamais du client
+        payload.taken_by = auth.userId;
+        payload.taken_by_name = auth.name;
+        if (!['before', 'during', 'after'].includes(String(payload.phase))) {
+          return res.status(400).json({ error: 'Phase de photo invalide' });
+        }
+        const image = String(payload.image_url || '');
+        if (!image.startsWith('data:image/')) {
+          return res.status(400).json({ error: 'Image de chantier invalide' });
+        }
+        // ~8 Mo de data URL : au-delà, la photo n'a pas été redimensionnée
+        if (image.length > 8_000_000) {
+          return res.status(413).json({ error: 'Photo trop volumineuse' });
+        }
+        const { data: proj } = await supabase
+          .from('projects').select('id, company_id').eq('id', payload.project_id).maybeSingle();
+        if (!proj || (proj.company_id && String(proj.company_id) !== auth.companyId)) {
+          return res.status(400).json({ error: 'Chantier inconnu pour cette compagnie' });
+        }
       }
       if (table === 'expenses' && !OFFICE.includes(auth.role)) {
         // L'identité du soumissionnaire vient du jeton, jamais du client
@@ -745,6 +776,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const payload = { ...req.body };
       if (TABLES_WITH_COMPANY_ID.has(table)) {
@@ -772,6 +804,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
       // Rôles non gestionnaires : la ligne visée doit leur appartenir
@@ -807,6 +840,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'expenses' && !allowExpenseMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
       if (WRITE_OWN_ONLY.has(table) && !isManager(auth.role)) {
