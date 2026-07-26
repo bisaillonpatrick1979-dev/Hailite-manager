@@ -107,12 +107,6 @@ export default function OnboardingScreen() {
   };
 
   const needsCrossBorderAcknowledgement = market === 'EU' && storageMode !== 'local';
-  // Nombre de cases de conformité encore à cocher à l'étape 4 (affiché près du
-  // bouton Continuer pour éviter de défiler à la recherche de ce qui manque).
-  const remainingAcknowledgements = [
-    privacyAccepted, employeeBasisConfirmed, locationNoticeConfirmed,
-    ...(needsCrossBorderAcknowledgement ? [crossBorderAccepted] : [])
-  ].filter(accepted => !accepted).length;
   const canContinue = (() => {
     if (step === 1) return companyName.trim().length >= 2 && companyEmail.includes('@') && privacyContactEmail.includes('@');
     if (step === 2) return !!regionCode && !!currency && !!dateLocale;
@@ -169,15 +163,10 @@ export default function OnboardingScreen() {
     { id: 'cloud', icon: '☁️', fr: 'Nuage', en: 'Cloud', descFR: 'Le nuage canadien est la source principale, avec cache local technique.', descEN: 'The Canadian cloud is the main source, with a technical local cache.' }
   ];
 
-  // 100dvh (et non vh) pour suivre la barre du navigateur mobile ; la carte est
-  // une colonne flex bornée à l'écran : l'en-tête et le pied (boutons
-  // Continuer/Enregistrer) restent TOUJOURS visibles et seul le contenu défile.
-  // m-auto (plutôt que items-center) évite de couper le haut de la carte quand
-  // elle dépasse l'écran — tablette ou téléphone en paysage notamment.
   return (
-    <main className="min-h-[100dvh] bg-[#0A0D12] text-white px-4 py-5 sm:px-6 flex">
-      <section className="m-auto w-full max-w-4xl rounded-3xl border border-slate-700 bg-[#111722] shadow-2xl overflow-hidden flex flex-col max-h-[calc(100dvh-2.5rem)]">
-        <header className="shrink-0 p-4 sm:p-7 border-b border-slate-700 bg-gradient-to-r from-slate-950 to-slate-900">
+    <main className="min-h-screen bg-[#0A0D12] text-white px-4 py-5 sm:px-6 flex items-center justify-center">
+      <section className="w-full max-w-4xl rounded-3xl border border-slate-700 bg-[#111722] shadow-2xl overflow-hidden">
+        <header className="p-5 sm:p-7 border-b border-slate-700 bg-gradient-to-r from-slate-950 to-slate-900">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <CompanyLogo logo={logo} companyName={companyName} className="w-14 h-14 rounded-2xl border border-cyan-400/30 bg-white p-1" imageClassName="w-full h-full object-contain rounded-xl" fallbackClassName="rounded-2xl bg-cyan-500 text-slate-950 text-lg" />
@@ -189,7 +178,7 @@ export default function OnboardingScreen() {
           </div>
         </header>
 
-        <div className="p-5 sm:p-8 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div className="p-5 sm:p-8 max-h-[72vh] overflow-y-auto">
           {step === 1 && <div className="space-y-6">
             <div><h2 className="text-2xl font-black flex items-center gap-3"><Globe2 className="h-7 w-7 text-cyan-300" />{isFR ? 'Langue, compagnie et logo' : 'Language, company, and logo'}</h2><p className="mt-2 text-slate-300">{isFR ? 'L’interface est offerte en français et en anglais. Les formats, taxes et documents suivront ensuite le pays choisi.' : 'The interface is available in French and English. Formats, taxes, and documents will then follow the selected country.'}</p></div>
             <div className="grid sm:grid-cols-2 gap-3">
@@ -256,19 +245,8 @@ export default function OnboardingScreen() {
           </div>}
         </div>
 
-        <footer className="shrink-0 p-4 sm:p-7 border-t border-slate-700 bg-slate-950/60 flex flex-col-reverse sm:flex-row gap-3 sm:justify-between" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}>
+        <footer className="p-5 sm:p-7 border-t border-slate-700 bg-slate-950/60 flex flex-col-reverse sm:flex-row gap-3 sm:justify-between">
           <button type="button" onClick={() => setStep(value => Math.max(1, value - 1))} disabled={step === 1} className="min-h-14 rounded-2xl border border-slate-600 px-6 text-lg font-bold disabled:opacity-30 flex items-center justify-center gap-2"><ChevronLeft className="h-5 w-5" />{isFR ? 'Retour' : 'Back'}</button>
-          {/* Indique ce qu'il reste à cocher : évite de chercher à l'aveugle en
-              défilant quand le bouton Continuer est encore désactivé. */}
-          {!canContinue && (step === 3 || step === 4) && (
-            <p className="text-sm text-amber-300 font-bold self-center text-center sm:flex-1">
-              {step === 3
-                ? (isFR ? '☐ Cochez la confirmation des taxes ci-dessus' : '☐ Check the tax confirmation above')
-                : (isFR
-                    ? `☐ ${remainingAcknowledgements} confirmation${remainingAcknowledgements > 1 ? 's' : ''} à cocher ci-dessus`
-                    : `☐ ${remainingAcknowledgements} confirmation${remainingAcknowledgements > 1 ? 's' : ''} left to check above`)}
-            </p>
-          )}
           {step < 5 ? <button type="button" disabled={!canContinue} onClick={() => setStep(value => Math.min(5, value + 1))} className="min-h-14 rounded-2xl bg-cyan-500 px-7 text-lg font-black text-slate-950 disabled:opacity-40 flex items-center justify-center gap-2">{isFR ? 'Continuer' : 'Continue'}<ChevronRight className="h-5 w-5" /></button> : <button type="button" onClick={finish} className="min-h-14 rounded-2xl bg-emerald-500 px-7 text-lg font-black text-slate-950 flex items-center justify-center gap-2"><Check className="h-5 w-5" />{isFR ? 'Enregistrer et ouvrir' : 'Save and open'}</button>}
         </footer>
       </section>

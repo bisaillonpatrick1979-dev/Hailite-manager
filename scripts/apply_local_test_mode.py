@@ -196,8 +196,8 @@ path = ROOT / 'src' / 'components' / 'OnboardingScreen.tsx'
 text = path.read_text(encoding='utf-8')
 
 text = text.replace(
-    '<main className="min-h-[100dvh] bg-[#0A0D12] text-white px-4 py-5 sm:px-6 flex">',
-    '<main id="hailite-onboarding-screen" className="min-h-[100dvh] bg-[#0F1115] text-[#E0E2E6] font-sans px-4 py-5 sm:px-6 flex">'
+    '<main className="min-h-screen bg-[#0A0D12] text-white px-4 py-5 sm:px-6 flex items-center justify-center">',
+    '<main id="hailite-onboarding-screen" className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans px-4 py-5 sm:px-6 flex items-center justify-center">'
 )
 text = text.replace('bg-[#111722]', 'bg-[#16191F]')
 text = text.replace('from-slate-950 to-slate-900', 'from-[#16191F] to-[#111318]')

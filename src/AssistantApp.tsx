@@ -16,7 +16,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
-import { Camera, Check, LogOut, Send, Volume2, VolumeX, X } from 'lucide-react';
+import { Camera, Check, LogOut, Send, X } from 'lucide-react';
 
 interface ChatEntry {
   role: 'user' | 'assistant';
@@ -61,44 +61,6 @@ export default function AssistantApp() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Lecture vocale ACTIVE par défaut (choix partagé avec l'application via la
-  // même clé de stockage). Le bouton haut-parleur la coupe et coupe aussi la
-  // phrase en cours.
-  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('gcp_aiVoiceEnabled');
-      return saved === null ? true : saved === 'true';
-    } catch {
-      return true;
-    }
-  });
-  const voiceEnabledRef = useRef<boolean>(true);
-  voiceEnabledRef.current = voiceEnabled;
-  // iOS n'autorise la synthèse vocale que si elle a été amorcée dans un geste
-  // de l'utilisateur : on la déclenche à vide au moment de l'envoi.
-  const speechPrimedRef = useRef(false);
-  const primeSpeechSynthesis = () => {
-    if (speechPrimedRef.current || typeof speechSynthesis === 'undefined') return;
-    try {
-      speechSynthesis.speak(new SpeechSynthesisUtterance(''));
-      speechPrimedRef.current = true;
-    } catch {
-      // Moteur vocal indisponible : la lecture est simplement ignorée.
-    }
-  };
-
-  const speakReply = (text: string) => {
-    if (!voiceEnabledRef.current || typeof speechSynthesis === 'undefined') return;
-    speechSynthesis.cancel();
-    // Retire le formatage et les emojis pour une lecture naturelle
-    const clean = text.replace(/[*_#`]/g, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
-    if (!clean) return;
-    const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.lang = isFR ? 'fr-CA' : 'en-US';
-    utterance.rate = 1.05;
-    speechSynthesis.speak(utterance);
-  };
 
   useEffect(() => { hydrateCloud(); }, []);
   useEffect(() => {
@@ -275,7 +237,6 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // ------------------------------ Envoi IA ----------------------------------
   const sendMessage = async () => {
     if ((!message.trim() && !attachment) || busy || !isAdmin) return;
-    if (voiceEnabledRef.current) primeSpeechSynthesis();
     const current = attachment;
     const userText = message.trim() || (isFR ? 'Analyse cette photo (reçu, facture ou chantier).' : 'Analyze this photo (receipt, invoice, or job site).');
     const imagePayload = current ? { mimeType: current.mimeType, data: current.dataUrl.split(',')[1], name: current.name } : undefined;
@@ -320,7 +281,6 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel },
           ...notes.map((note: string) => ({ role: 'assistant' as const, text: note }))
         ]);
-        speakReply(displayText);
       } else if (res.status === 401) {
         setHistory(prev => [...prev, { role: 'assistant', text: isFR ? 'Session expirée — reconnectez-vous.' : 'Session expired — please log in again.' }]);
         logout();
@@ -408,23 +368,6 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              const next = !voiceEnabled;
-              setVoiceEnabled(next);
-              try { localStorage.setItem('gcp_aiVoiceEnabled', String(next)); } catch { /* stockage indisponible */ }
-              if (next) primeSpeechSynthesis();
-              else if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
-            }}
-            title={voiceEnabled
-              ? (isFR ? 'Désactiver la lecture vocale' : 'Disable voice reading')
-              : (isFR ? 'Activer la lecture vocale des réponses' : 'Enable voice reading of replies')}
-            aria-label={isFR ? 'Lecture vocale' : 'Voice reading'}
-            className={`p-2 rounded-lg bg-gray-900 border border-gray-800 ${voiceEnabled ? 'text-green-400' : 'text-gray-400'}`}
-          >
-            {voiceEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-          </button>
           <a href="/" className="px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-[10px] font-black text-gray-300">
             {isFR ? 'App complète' : 'Full app'}
           </a>
