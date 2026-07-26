@@ -26,6 +26,7 @@ const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
 const MotivationTab = lazy(() => import('./components/MotivationTab'));
 const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
+const ProjectPhotoGallery = lazy(() => import('./components/ProjectPhotoGallery'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
 const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
 const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
@@ -1791,6 +1792,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <Suspense fallback={<LazySectionFallback />}>
                             <ProjectTasksAndTools project={activeProject} defaultOpen bordered={false} />
                           </Suspense>
+                          <div className="mt-3 pt-3 border-t border-gray-800">
+                            <Suspense fallback={<LazySectionFallback />}>
+                              <ProjectPhotoGallery project={activeProject} compact />
+                            </Suspense>
+                          </div>
                         </div>
                       ) : null;
                     })()}
@@ -2777,6 +2783,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                       <Suspense fallback={<LazySectionFallback />}>
                         <ProjectTasksAndTools project={proj} />
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <ProjectPhotoGallery project={proj} />
+                        </Suspense>
                       </Suspense>
                     </div>
                   ))}

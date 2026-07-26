@@ -6,7 +6,7 @@
 import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
-  GCPDocument, ExpenseRecord, PayrollPayment
+  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto
 } from './types';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -520,6 +520,30 @@ export function rowToHRAlert(r: any): HRAlert {
   return {
     id: r.id, type: r.type, title: r.title || '', message: r.message || '', date: r.date || '',
     employeeId: r.employee_id || undefined, employeeName: r.employee_name || undefined, resolved: r.resolved || false
+  };
+}
+
+export function projectPhotoToRow(p: ProjectPhoto, companyId?: string) {
+  return {
+    id: p.id, company_id: companyId, project_id: p.projectId, phase: p.phase,
+    image_url: p.imageUrl, caption: p.caption || null, taken_at: p.takenAt,
+    taken_by: p.takenById || null, taken_by_name: p.takenByName || null,
+    latitude: typeof p.latitude === 'number' ? p.latitude : null,
+    longitude: typeof p.longitude === 'number' ? p.longitude : null
+  };
+}
+export function rowToProjectPhoto(r: any): ProjectPhoto {
+  return {
+    id: r.id,
+    projectId: r.project_id || '',
+    phase: (['before', 'during', 'after'].includes(r.phase) ? r.phase : 'during') as ProjectPhoto['phase'],
+    imageUrl: r.image_url || '',
+    caption: r.caption || undefined,
+    takenAt: r.taken_at || '',
+    takenById: r.taken_by || undefined,
+    takenByName: r.taken_by_name || undefined,
+    latitude: r.latitude ?? undefined,
+    longitude: r.longitude ?? undefined
   };
 }
 

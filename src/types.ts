@@ -461,3 +461,26 @@ export interface PayrollPayment {
   date: string;
   hours?: number;
 }
+
+
+// ---------------------------------------------------------------------------
+// Photos de chantier — dossier avant / pendant / après
+// ---------------------------------------------------------------------------
+// Preuve d'état initial et d'exécution : réclamation d'assurance, litige avec
+// un client, et matériel de vente. La position GPS est enregistrée quand elle
+// est disponible, car une photo datée et localisée a bien plus de valeur
+// probante qu'une photo seule.
+export type ProjectPhotoPhase = 'before' | 'during' | 'after';
+
+export interface ProjectPhoto {
+  id: string;
+  projectId: string;
+  phase: ProjectPhotoPhase;
+  imageUrl: string;        // data URL JPEG redimensionnée côté client
+  caption?: string;
+  takenAt: string;         // ISO
+  takenById?: string;      // employé qui a pris la photo (imposé par le serveur)
+  takenByName?: string;
+  latitude?: number;
+  longitude?: number;
+}
