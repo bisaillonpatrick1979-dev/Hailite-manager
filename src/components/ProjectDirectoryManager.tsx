@@ -7,6 +7,7 @@ import type { Project, ProjectTask, ProjectTool } from '../types';
 
 const ProjectTasksAndTools = lazy(() => import('./ProjectTasksAndTools'));
 const ProjectPhotoGallery = lazy(() => import('./ProjectPhotoGallery'));
+const ChangeOrderPanel = lazy(() => import('./ChangeOrderPanel'));
 
 type ProjectEditForm = {
   name: string;
@@ -282,6 +283,11 @@ export default function ProjectDirectoryManager() {
                   <div className="mt-3">
                     <Suspense fallback={<p className="text-xs text-gray-500">{isFR ? 'Chargement…' : 'Loading…'}</p>}>
                       <ProjectPhotoGallery project={project} />
+                    </Suspense>
+                  </div>
+                  <div className="mt-3">
+                    <Suspense fallback={<p className="text-xs text-gray-500">{isFR ? 'Chargement…' : 'Loading…'}</p>}>
+                      <ChangeOrderPanel project={project} />
                     </Suspense>
                   </div>
                 </div>
