@@ -577,3 +577,22 @@ export interface Lead {
   convertedClientId?: string;
   convertedProjectId?: string;
 }
+
+
+// ---------------------------------------------------------------------------
+// Planification des équipes — qui va où, quel jour
+// ---------------------------------------------------------------------------
+// Le pointage dit où les gens ÉTAIENT ; ces affectations disent où ils DOIVENT
+// être. Un employé ne peut avoir qu'une affectation par jour : assigner
+// quelqu'un ailleurs remplace l'affectation existante.
+export interface ShiftAssignment {
+  id: string;
+  date: string;            // AAAA-MM-JJ
+  projectId: string;
+  employeeId: string;
+  employeeName?: string;
+  note?: string;
+  createdAt: string;
+  createdById?: string;    // imposé par le serveur
+  createdByName?: string;
+}
