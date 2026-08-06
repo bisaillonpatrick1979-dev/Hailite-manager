@@ -24,7 +24,7 @@ const KNOWN_TABLES = [
   'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders', 'supplier_order_items',
   'clients', 'documents', 'document_items', 'document_payments', 'payroll_entries', 'payroll_payments',
   'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
-  'project_photos', 'change_orders', 'insurance_claims'
+  'project_photos', 'change_orders', 'insurance_claims', 'leads'
 ];
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ const TABLE_READ_ROLES: Record<string, AppRole[]> = {
   payroll_entries: ALL_ROLES, payroll_payments: ALL_ROLES, production_entries: ALL_ROLES,
   weekly_goals: ALL_ROLES, motivation_teams: ALL_ROLES, motivation_goals: ALL_ROLES,
   hr_alerts: MANAGERS, expenses: OFFICE, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
-  insurance_claims: ALL_ROLES
+  insurance_claims: ALL_ROLES, leads: OFFICE
 };
 
 const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
@@ -61,7 +61,8 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
   // voir allowProjectPhotoMethod) ; correction et suppression réservées à la gestion
   // insurance_claims : consultable par tous, écrit par la gestion seulement
   hr_alerts: ALL_ROLES, expenses: ALL_ROLES, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
-  insurance_claims: MANAGERS
+  // leads : la prospection appartient au bureau
+  insurance_claims: MANAGERS, leads: MANAGERS
 };
 
 // Colonne "propriétaire" pour les contraintes de ligne des rôles non gestionnaires
@@ -716,6 +717,29 @@ export function registerApiRoutes(app: express.Express): void {
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
+      }
+      if (table === 'leads') {
+        payload.created_by = auth.userId;
+        payload.created_by_name = auth.name;
+        if (!String(payload.name || '').trim()) {
+          return res.status(400).json({ error: 'Nom du prospect manquant' });
+        }
+        if (!['new', 'contacted', 'inspection', 'quoted', 'won', 'lost'].includes(String(payload.status))) {
+          return res.status(400).json({ error: 'Étape de prospect invalide' });
+        }
+        if (!['referral', 'phone', 'website', 'door', 'repeat', 'insurance', 'other'].includes(String(payload.source))) {
+          return res.status(400).json({ error: 'Provenance de prospect invalide' });
+        }
+        const raw = payload.estimated_value;
+        if (raw === null || raw === undefined || raw === '') {
+          payload.estimated_value = null;
+        } else {
+          const value = Number(raw);
+          if (!Number.isFinite(value) || value < 0 || value > 10_000_000) {
+            return res.status(400).json({ error: 'Valeur estimée invalide' });
+          }
+          payload.estimated_value = value;
+        }
       }
       if (table === 'insurance_claims') {
         payload.created_by = auth.userId;
