@@ -3,8 +3,8 @@
 //
 // Mini-application dédiée au téléphone : elle ouvre DIRECTEMENT le chat IA,
 // sans charger l'interface complète. Réservée aux administrateurs (connexion
-// NIP ; la session est partagée avec l'application principale via le même
-// localStorage). Ajoutez /assistant à l'écran d'accueil du téléphone pour
+// NIP ; la session est partagée avec l'application principale par le même
+// cookie HttpOnly sécurisé). Ajoutez /assistant à l'écran d'accueil du téléphone pour
 // obtenir une icône qui ouvre l'IA en un tap.
 //
 // L'IA passe par le proxy serveur protégé /api/chat (clés API côté serveur
@@ -16,7 +16,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
-import { Camera, Check, LogOut, Send, X } from 'lucide-react';
+import { Camera, Check, Download, LogOut, Mic, Send, Volume2, VolumeX, X } from 'lucide-react';
 
 interface ChatEntry {
   role: 'user' | 'assistant';
@@ -28,6 +28,12 @@ interface ChatEntry {
 }
 
 interface Attachment { dataUrl: string; mimeType: string; name: string }
+
+interface AssistantInstallPrompt extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
 
 const makeIconAvatar = (emoji: string, background: string): string => {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" rx="80" fill="${background}"/><text x="80" y="106" text-anchor="middle" font-size="82">${emoji}</text></svg>`;
@@ -61,11 +67,44 @@ export default function AssistantApp() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const dictatedTextRef = useRef('');
+  const recognitionFailedRef = useRef(false);
+  const speechSequenceRef = useRef(0);
+  const installPromptRef = useRef<AssistantInstallPrompt | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [canInstallAssistant, setCanInstallAssistant] = useState(false);
 
-  useEffect(() => { hydrateCloud(); }, []);
+  useEffect(() => { hydrateCloud(); }, [hydrateCloud]);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [history, busy]);
+
+
+  // Capture le véritable événement d'installation Android/Chrome. La page
+  // /assistant possède son propre manifeste et devient une icône autonome.
+  useEffect(() => {
+    const beforeInstall = (event: Event) => {
+      event.preventDefault();
+      installPromptRef.current = event as AssistantInstallPrompt;
+      setCanInstallAssistant(true);
+    };
+    const installed = () => {
+      installPromptRef.current = null;
+      setCanInstallAssistant(false);
+    };
+    window.addEventListener('beforeinstallprompt', beforeInstall);
+    window.addEventListener('appinstalled', installed);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', beforeInstall);
+      window.removeEventListener('appinstalled', installed);
+      recognitionRef.current?.abort?.();
+      speechSequenceRef.current += 1;
+      window.speechSynthesis?.cancel?.();
+    };
+  }, []);
 
   // Un NIP complet déclenche la connexion automatiquement
   const submitLogin = async (fullPin: string) => {
@@ -161,7 +200,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     switch (name) {
       case 'create_employee': {
         if (!p.name || !p.role || typeof p.hourlyRate !== 'number') return isFR ? '⚠️ Employé : informations manquantes.' : '⚠️ Employee: missing information.';
-        const nip = String(Math.floor(1000 + Math.random() * 9000));
+        const randomValue = new Uint32Array(1);
+        crypto.getRandomValues(randomValue);
+        const nip = String(1000 + (randomValue[0] % 9000));
         addEmployee({
           name: String(p.name), nip,
           role: (['admin', 'employee', 'secretary', 'accountant'].includes(p.role) ? p.role : 'employee') as any,
@@ -234,11 +275,92 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     }
   };
 
+  // ---------------------- Synthèse vocale automatique ----------------------
+  const cleanTextForSpeech = (rawText: string): string => rawText
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[✅✔️]/g, isFR ? 'Confirmé. ' : 'Confirmed. ')
+    .replace(/[⚠️]/g, isFR ? 'Attention. ' : 'Warning. ')
+    .replace(/[*_#`>|~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const splitSpeechText = (rawText: string): string[] => {
+    const cleaned = cleanTextForSpeech(rawText);
+    if (!cleaned) return [];
+    const sentences = cleaned.match(/[^.!?;:]+[.!?;:]?|[^.!?;:]+$/g) || [cleaned];
+    const chunks: string[] = [];
+    let current = '';
+    sentences.forEach(sentence => {
+      const next = `${current} ${sentence.trim()}`.trim();
+      if (next.length > 220 && current) {
+        chunks.push(current);
+        current = sentence.trim();
+      } else {
+        current = next;
+      }
+    });
+    if (current) chunks.push(current);
+    return chunks;
+  };
+
+  const speakResponse = (rawText: string) => {
+    if (!('speechSynthesis' in window) || !rawText.trim()) return;
+    const chunks = splitSpeechText(rawText);
+    if (!chunks.length) return;
+
+    const synth = window.speechSynthesis;
+    const sequence = ++speechSequenceRef.current;
+    synth.cancel();
+    synth.resume();
+    setIsSpeaking(true);
+
+    const speakChunk = (index: number) => {
+      if (sequence !== speechSequenceRef.current || index >= chunks.length) {
+        if (sequence === speechSequenceRef.current) setIsSpeaking(false);
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(chunks[index]);
+      utterance.lang = isFR ? 'fr-CA' : 'en-CA';
+      utterance.rate = 0.98;
+      utterance.pitch = 1;
+      const voices = synth.getVoices();
+      const preferred = voices.find(voice => voice.lang.toLowerCase() === utterance.lang.toLowerCase())
+        || voices.find(voice => voice.lang.toLowerCase().startsWith(isFR ? 'fr' : 'en'));
+      if (preferred) utterance.voice = preferred;
+      utterance.onend = () => speakChunk(index + 1);
+      utterance.onerror = () => {
+        if (sequence === speechSequenceRef.current) setIsSpeaking(false);
+      };
+      synth.speak(utterance);
+    };
+
+    speakChunk(0);
+  };
+
+  const stopCurrentSpeech = () => {
+    speechSequenceRef.current += 1;
+    window.speechSynthesis?.cancel?.();
+    setIsSpeaking(false);
+  };
+
+  const installAssistant = async () => {
+    const prompt = installPromptRef.current;
+    if (!prompt) return;
+    await prompt.prompt();
+    const choice = await prompt.userChoice;
+    if (choice.outcome === 'accepted') {
+      installPromptRef.current = null;
+      setCanInstallAssistant(false);
+    }
+  };
+
   // ------------------------------ Envoi IA ----------------------------------
-  const sendMessage = async () => {
-    if ((!message.trim() && !attachment) || busy || !isAdmin) return;
+  const sendMessage = async (dictatedText?: string) => {
+    const requestedText = typeof dictatedText === 'string' ? dictatedText : message;
+    if ((!requestedText.trim() && !attachment) || busy || !isAdmin) return;
     const current = attachment;
-    const userText = message.trim() || (isFR ? 'Analyse cette photo (reçu, facture ou chantier).' : 'Analyze this photo (receipt, invoice, or job site).');
+    const userText = requestedText.trim() || (isFR ? 'Analyse cette photo (reçu, facture ou chantier).' : 'Analyze this photo (receipt, invoice, or job site).');
     const imagePayload = current ? { mimeType: current.mimeType, data: current.dataUrl.split(',')[1], name: current.name } : undefined;
 
     setHistory(prev => [...prev, { role: 'user', text: userText, imagePreviewUrl: current?.dataUrl }]);
@@ -281,16 +403,97 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel },
           ...notes.map((note: string) => ({ role: 'assistant' as const, text: note }))
         ]);
+        speakResponse([displayText, ...notes].join(' '));
       } else if (res.status === 401) {
-        setHistory(prev => [...prev, { role: 'assistant', text: isFR ? 'Session expirée — reconnectez-vous.' : 'Session expired — please log in again.' }]);
+        const errorText = isFR ? 'Session expirée — reconnectez-vous.' : 'Session expired — please log in again.';
+        setHistory(prev => [...prev, { role: 'assistant', text: errorText }]);
+        speakResponse(errorText);
         logout();
       } else {
-        setHistory(prev => [...prev, { role: 'assistant', text: String(data?.error || (isFR ? 'Serveur IA injoignable.' : 'AI server unreachable.')) }]);
+        const errorText = String(data?.error || (isFR ? 'Serveur IA injoignable.' : 'AI server unreachable.'));
+        setHistory(prev => [...prev, { role: 'assistant', text: errorText }]);
+        speakResponse(errorText);
       }
     } catch (err: any) {
-      setHistory(prev => [...prev, { role: 'assistant', text: isFR ? `Erreur réseau : ${err?.message || err}` : `Network error: ${err?.message || err}` }]);
+      const errorText = isFR ? `Erreur réseau : ${err?.message || err}` : `Network error: ${err?.message || err}`;
+      setHistory(prev => [...prev, { role: 'assistant', text: errorText }]);
+      speakResponse(errorText);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // ----------------------- Dictée vocale vers le chat -----------------------
+  const stopVoiceInput = () => {
+    recognitionRef.current?.stop?.();
+  };
+
+  const startVoiceInput = () => {
+    if (busy || !isAdmin) return;
+    if (isListening) {
+      stopVoiceInput();
+      return;
+    }
+
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setSpeechError(isFR
+        ? 'La dictée vocale n’est pas offerte par ce navigateur. Utilisez Chrome ou Samsung Internet à jour.'
+        : 'Voice dictation is not supported by this browser. Use an up-to-date Chrome or Samsung Internet browser.');
+      return;
+    }
+
+    // Évite que le micro réécoute la réponse que l’IA est en train de lire.
+    speechSequenceRef.current += 1;
+    window.speechSynthesis?.cancel?.();
+    setIsSpeaking(false);
+    setSpeechError(null);
+    dictatedTextRef.current = '';
+    recognitionFailedRef.current = false;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognitionRef.current = recognition;
+    recognition.lang = isFR ? 'fr-CA' : 'en-CA';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event: any) => {
+      let finalText = '';
+      let interimText = '';
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = String(event.results[index][0]?.transcript || '');
+        if (event.results[index].isFinal) finalText += transcript;
+        else interimText += transcript;
+      }
+      if (finalText.trim()) dictatedTextRef.current = `${dictatedTextRef.current} ${finalText}`.trim();
+      setMessage(`${dictatedTextRef.current} ${interimText}`.trim());
+    };
+    recognition.onerror = (event: any) => {
+      recognitionFailedRef.current = true;
+      const reason = String(event?.error || 'unknown');
+      const permissionDenied = reason === 'not-allowed' || reason === 'service-not-allowed';
+      setSpeechError(permissionDenied
+        ? (isFR ? 'Autorisez le microphone dans les réglages du navigateur, puis réessayez.' : 'Allow microphone access in browser settings, then try again.')
+        : (isFR ? `La dictée vocale s’est arrêtée (${reason}).` : `Voice dictation stopped (${reason}).`));
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+      const finalText = dictatedTextRef.current.trim();
+      dictatedTextRef.current = '';
+      if (finalText && !recognitionFailedRef.current) {
+        setMessage('');
+        void sendMessage(finalText);
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      setSpeechError(isFR ? 'Le microphone est déjà utilisé. Fermez l’autre écoute et réessayez.' : 'The microphone is already in use. Stop the other recording and try again.');
     }
   };
 
@@ -368,6 +571,27 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {canInstallAssistant && (
+            <button
+              type="button"
+              onClick={installAssistant}
+              className="flex min-h-10 items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-[10px] font-black text-cyan-200"
+              title={isFR ? 'Installer l’Assistant IA sur l’écran d’accueil' : 'Install AI Assistant on the home screen'}
+            >
+              <Download className="h-4 w-4" />
+              <span className="hidden sm:inline">{isFR ? 'Installer' : 'Install'}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={stopCurrentSpeech}
+            disabled={!isSpeaking}
+            className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${isSpeaking ? 'border-red-500/40 bg-red-500/15 text-red-200 shadow-[0_0_14px_rgba(239,68,68,0.25)]' : 'border-gray-700 bg-gray-900 text-orange-300 opacity-60'}`}
+            title={isSpeaking ? (isFR ? 'Arrêter la réponse vocale en cours' : 'Stop the current spoken reply') : (isFR ? 'La prochaine réponse sera lue automatiquement' : 'The next reply will be spoken automatically')}
+            aria-label={isSpeaking ? (isFR ? 'Arrêter la voix de l’IA' : 'Stop AI voice') : (isFR ? 'Réponses vocales automatiques activées' : 'Automatic spoken replies enabled')}
+          >
+            {isSpeaking ? <VolumeX className="h-5 w-5 animate-pulse" /> : <Volume2 className="h-5 w-5" />}
+          </button>
           <a href="/" className="px-2.5 py-1.5 rounded-lg bg-gray-900 border border-gray-800 text-[10px] font-black text-gray-300">
             {isFR ? 'App complète' : 'Full app'}
           </a>
@@ -383,7 +607,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           <div className="m-auto text-center text-gray-500 max-w-xs flex flex-col gap-3">
             <span className="text-4xl">👋</span>
             <p className="text-sm font-bold text-gray-300">
-              {isFR ? 'Posez n’importe quelle question sur la compagnie, ou photographiez une facture ou un chantier.' : 'Ask anything about the company, or snap a photo of a bill or job site.'}
+              {isFR ? 'Touchez le micro et posez votre question à voix haute, écrivez-la, ou photographiez une facture ou un chantier.' : 'Tap the microphone and ask out loud, type your question, or snap a photo of a bill or job site.'}
             </p>
             <p className="text-[11px]">
               {isFR ? 'Exemples : « Combien d’heures cette semaine ? » · « Quelles factures sont en retard ? » · 📸 un reçu → dépense ajoutée automatiquement.' : 'Examples: “How many hours this week?” · “Which invoices are overdue?” · 📸 a receipt → expense added automatically.'}
@@ -420,6 +644,25 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </div>
       )}
 
+      {(isListening || speechError) && (
+        <div className="px-4 pb-2" aria-live="polite">
+          {isListening && (
+            <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-100">
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-70" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+              </span>
+              {isFR ? 'Écoute en cours… Parlez normalement. La question sera envoyée quand vous aurez terminé.' : 'Listening… Speak normally. Your question will be sent when you finish.'}
+            </div>
+          )}
+          {speechError && !isListening && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+              {speechError}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Barre de saisie */}
       <footer className="px-3 py-3 border-t border-gray-800 bg-[#16191F] flex items-end gap-2" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFileSelected} />
@@ -430,12 +673,22 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         <button type="button" onClick={() => galleryInputRef.current?.click()} className="p-3 rounded-xl bg-gray-900 border border-gray-800 text-gray-400 text-lg leading-none" aria-label={isFR ? 'Choisir une image' : 'Choose an image'}>
           🖼️
         </button>
+        <button
+          type="button"
+          onClick={startVoiceInput}
+          disabled={busy}
+          className={`relative p-3 rounded-xl border transition disabled:opacity-40 ${isListening ? 'border-red-400 bg-red-600 text-white shadow-[0_0_18px_rgba(239,68,68,0.45)]' : 'border-gray-800 bg-gray-900 text-cyan-300'}`}
+          aria-label={isListening ? (isFR ? 'Arrêter et envoyer la dictée' : 'Stop and send dictation') : (isFR ? 'Poser une question avec le microphone' : 'Ask with the microphone')}
+          title={isListening ? (isFR ? 'Touchez pour terminer' : 'Tap to finish') : (isFR ? 'Parler à l’IA' : 'Talk to the AI')}
+        >
+          <Mic className={`w-5 h-5 ${isListening ? 'animate-pulse' : ''}`} />
+        </button>
         <input
           type="text"
           value={message}
           onChange={e => setMessage(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          placeholder={isFR ? 'Votre question…' : 'Your question…'}
+          placeholder={isListening ? (isFR ? 'Je vous écoute…' : 'Listening…') : (isFR ? 'Votre question…' : 'Your question…')}
           className="flex-1 min-w-0 min-h-12 px-4 rounded-xl bg-gray-950 border border-gray-800 text-sm"
         />
         <button

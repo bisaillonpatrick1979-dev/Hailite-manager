@@ -1,20 +1,33 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Hailite Manager
 
-# Run and deploy your AI Studio app
+Application React/Vite avec API Express et stockage Supabase.
 
-This contains everything you need to run your app locally.
+## Développement local
 
-View your app in AI Studio: https://ai.studio/apps/148abb89-fbf1-4a9d-9841-7febcada62c2
+Prérequis : Node.js 22 et une compagnie déjà provisionnée dans Supabase.
 
-## Run Locally
+1. Copiez `.env.example` vers `.env` et configurez les variables serveur.
+2. Installez exactement les dépendances verrouillées avec `npm ci`.
+3. Démarrez l’application avec `npm run dev`.
 
-**Prerequisites:**  Node.js
+Le jeu fictif local est réservé au développement visuel :
 
+```bash
+VITE_LOCAL_TEST_MODE=true npm run dev:client
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Il ne fournit aucun contournement d’authentification.
+
+## Vérifications
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run audit
+npm run build:vercel
+```
+
+Les migrations Supabase se trouvent dans `supabase/migrations`. La migration de
+durcissement doit être revue puis appliquée avant de déployer le code qui dépend
+des colonnes `company_id`, du bucket privé et des fonctions transactionnelles.

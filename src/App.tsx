@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
-import { authHeaders } from './apiClient';
+import { authHeaders, setCloudSyncAllowed, type CloudSyncStatusDetail } from './apiClient';
 
 // Identifiants locaux (les scripts de build ancrent la ligne d'import ci-dessus :
 // ne pas la modifier). Même format UUID que genId d'apiClient.
@@ -14,12 +14,15 @@ const genLocalId = (): string =>
       });
 import { translations, fmt } from './translations';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
+import { LOCAL_TEST_MODE } from './testProfiles';
+import { TEST_DATASET_SUMMARY } from './testDataset';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
+import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -32,9 +35,18 @@ const MyScheduleStrip = lazy(() => import('./components/MyScheduleStrip'));
 const LeadPipeline = lazy(() => import('./components/LeadPipeline'));
 const ProjectPhotoGallery = lazy(() => import('./components/ProjectPhotoGallery'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
+const ProjectDirectoryManager = lazy(() => import('./components/ProjectDirectoryManager'));
+const ToolRegistry = lazy(() => import('./components/ToolRegistry'));
 const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
 const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
+const UserHelpCenter = lazy(() => import('./components/UserHelpCenter'));
+const UserPrivacyNotice = lazy(() => import('./components/UserPrivacyNotice'));
+const BusinessLogoField = lazy(() => import('./components/BusinessLogoField'));
+const SubcontractorInvoicePreview = lazy(() => import('./components/SubcontractorInvoicePreview'));
+const CompanyComplianceSettings = lazy(() => import('./components/CompanyComplianceSettings'));
 import EmployeeAvatar from './components/EmployeeAvatar';
+import LiveCompensationPanel from './components/LiveCompensationPanel';
+import CompanyLogo from './components/CompanyLogo';
 import SignaturePad from './components/SignaturePad';
 import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
@@ -83,147 +95,12 @@ const EMPLOYEE_PRESET_AVATARS: Array<{ url: string; labelFR: string; labelEN: st
   { url: makeIconAvatar('🧰', '#EAB308'), labelFR: 'Icône Boîte à Outils Jaune', labelEN: 'Yellow Toolbox Icon' },
 ];
 
-const TOUR_STEPS_I18N: Record<'FR' | 'EN', Array<{ title: string; description: string; targetTab: string | null; highlightId: string | null; badgeText: string }>> = {
-  FR: [
-    {
-      title: "Bienvenue dans l'app Toiture Pro ! 🎩",
-      description: "Ce guide interactif vous permet de faire le tour complet de l'application et de valider toutes ses fonctionnalités clés (pointage, géorepérage, inventaire, commandes) avant le déploiement de production.",
-      targetTab: null,
-      highlightId: null,
-      badgeText: "Découverte"
-    },
-    {
-      title: "1. Changement de Profil Ouvrier 👥",
-      description: "L'application s'adapte dynamiquement selon le rôle de l'ouvrier connecté (Admin vs Équipe terrain). En tant qu'Admin, vous bénéficiez du tableau de bord complet, tandis que vos compagnons ont accès à un portail de pointage simple et rapide. Utilisez le sélecteur d'employé en haut pour basculer !",
-      targetTab: "board",
-      highlightId: "user-persona-selector",
-      badgeText: "Rôles & Accès"
-    },
-    {
-      title: "2. Pointage Géolocalisé intelligent ⏰",
-      description: "Revenez à l'accueil pour tester le Punch In / Punch Out. Le gros bouton central animé permet de débuter une session. Il enregistre la date, les coordonnées GPS et associe les données de paie en direct.",
-      targetTab: "board",
-      highlightId: "center-pointage-button",
-      badgeText: "Horodateur"
-    },
-    {
-      title: "3. Sécurité & Géolocalisation (Geofencing) 📡",
-      description: "Le système calcule la distance séparant l'ouvrier du projet de toiture actif. Si la distance dépasse le niveau configuré (ex: 100m), une alerte rouge persistante et une notification RH s'activent pour assurer l'intégrité.",
-      targetTab: "board",
-      highlightId: "geofence-alert-indicator",
-      badgeText: "Géorepérage"
-    },
-    {
-      title: "4. Gestion de l'Inventaire & Matériaux 🪵",
-      description: "Lorsque vos employés effectuent leur Punch Out (fin de journée), l'application leur présente un pop-up intelligent pour déclarer les matériaux posés d'une toiture ou retournés à l'entrepôt. Vous pouvez suivre l'état de l'inventaire physique dans cet onglet.",
-      targetTab: "inventory",
-      highlightId: "view-inventory-content",
-      badgeText: "Consommation"
-    },
-    {
-      title: "5. Catalogue Devis & Tarification 🏷️",
-      description: "Découvrez le catalogue de tarification dans l'onglet 'Inventaire' (Sous-onglet 'Catalogue'). Vous pouvez ajouter ou supprimer des articles du catalogue de devis pour vos estimations clients en un clic !",
-      targetTab: "inventory",
-      highlightId: "view-inventory-catalog",
-      badgeText: "Ventes & Devis"
-    },
-    {
-      title: "6. Émettre des Bons de Commande Fournisseur 📦",
-      description: "Dans l'onglet 'Commandes', vous pouvez créer des bons de commande officiels en spécifiant le fournisseur, l'article et le prix de gros. Une fois confirmés comme 'Reçus', les stocks de l'entrepôt se rechargent automatiquement !",
-      targetTab: "commandes",
-      highlightId: "view-orders-content",
-      badgeText: "Achats"
-    },
-    {
-      title: "7. Gestion des Ouvriers & Avatars 📸",
-      description: "Naviguez vers l'onglet 'Paramètres' pour embaucher ou modifier des employés, ajuster leurs taux horaires individuels, mettre à jour leurs codes NIP à 4 chiffres ou leur sélectionner un superbe profil photo !",
-      targetTab: "settings",
-      highlightId: "settings-view-panel",
-      badgeText: "Ressources Humaines"
-    },
-    {
-      title: "Prêt pour Production et API d'Intégration ! 🌐",
-      description: "Bravo ! Vous avez parcouru toutes les étapes de validation. Toutes les données sont persistées en direct sous LocalStorage. Vos architectures de pointage, d'alertes RH et d'inventaire sont prêtes pour l'API !",
-      targetTab: null,
-      highlightId: null,
-      badgeText: "API Ready"
-    }
-  ],
-  EN: [
-    {
-      title: "Welcome to the Roofing Pro app! 🎩",
-      description: "This interactive guide walks you through the entire application and validates all its key features (time tracking, geofencing, inventory, orders) before production deployment.",
-      targetTab: null,
-      highlightId: null,
-      badgeText: "Discovery"
-    },
-    {
-      title: "1. Switching Worker Profiles 👥",
-      description: "The application adapts dynamically to the role of the signed-in worker (Admin vs Field team). As an Admin you get the full dashboard, while your workers get a simple and fast punch portal. Use the employee selector at the top to switch!",
-      targetTab: "board",
-      highlightId: "user-persona-selector",
-      badgeText: "Roles & Access"
-    },
-    {
-      title: "2. Smart Geolocated Time Tracking ⏰",
-      description: "Go back to the home screen to test Punch In / Punch Out. The large animated central button starts a session. It records the date, GPS coordinates and links live payroll data.",
-      targetTab: "board",
-      highlightId: "center-pointage-button",
-      badgeText: "Time Clock"
-    },
-    {
-      title: "3. Security & Geolocation (Geofencing) 📡",
-      description: "The system computes the distance between the worker and the active roofing project. If the distance exceeds the configured level (e.g. 100m), a persistent red alert and an HR notification are triggered to ensure integrity.",
-      targetTab: "board",
-      highlightId: "geofence-alert-indicator",
-      badgeText: "Geofencing"
-    },
-    {
-      title: "4. Inventory & Materials Management 🪵",
-      description: "When your employees Punch Out (end of day), the app shows them a smart pop-up to report materials installed on a roof or returned to the warehouse. You can track the physical inventory status in this tab.",
-      targetTab: "inventory",
-      highlightId: "view-inventory-content",
-      badgeText: "Consumption"
-    },
-    {
-      title: "5. Quote Catalog & Pricing 🏷️",
-      description: "Discover the pricing catalog in the 'Inventory' tab ('Catalog' sub-tab). You can add or remove items from the quote catalog for your client estimates in one click!",
-      targetTab: "inventory",
-      highlightId: "view-inventory-catalog",
-      badgeText: "Sales & Quotes"
-    },
-    {
-      title: "6. Issue Supplier Purchase Orders 📦",
-      description: "In the 'Orders' tab, you can create official purchase orders by specifying the supplier, the item and the wholesale price. Once confirmed as 'Received', warehouse stock is automatically replenished!",
-      targetTab: "commandes",
-      highlightId: "view-orders-content",
-      badgeText: "Purchasing"
-    },
-    {
-      title: "7. Workers & Avatars Management 📸",
-      description: "Navigate to the 'Settings' tab to hire or edit employees, adjust their individual hourly rates, update their 4-digit PIN codes or pick them a great profile photo!",
-      targetTab: "settings",
-      highlightId: "settings-view-panel",
-      badgeText: "Human Resources"
-    },
-    {
-      title: "Ready for Production and Integration API! 🌐",
-      description: "Well done! You have completed every validation step. All data is persisted live in LocalStorage. Your time tracking, HR alerts and inventory architectures are API-ready!",
-      targetTab: null,
-      highlightId: null,
-      badgeText: "API Ready"
-    }
-  ]
-};
-
 // Résout la province/état de la compagnie (fixé au Québec seulement si rien n'a
 // été configuré), pour que les libellés et calculs de paie s'adaptent au bon
 // endroit au lieu de présumer le Québec partout.
-function getCompanyRegion(companyInfo: CompanyInfo): { country: 'CA' | 'US'; region: TaxRegion } {
-  const country = companyInfo.country || 'CA';
-  const list = country === 'US' ? US_REGIONS : CANADIAN_REGIONS;
-  const region = list.find(r => r.code === companyInfo.region) || list[0];
-  return { country, region };
+function getCompanyRegion(companyInfo: CompanyInfo): { country: MarketCode; region: TaxRegion } {
+  const country: MarketCode = companyInfo.country === 'US' || companyInfo.country === 'EU' ? companyInfo.country : 'CA';
+  return { country, region: getDefaultRegion(country, companyInfo.region) };
 }
 
 export default function App() {
@@ -239,34 +116,48 @@ export default function App() {
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
     personalExpenses, addPersonalExpense, deletePersonalExpense,
-    hydrateCloud
+    hydrateCloud, setIsOnboarded
   } = useAppStore();
 
-  // Hydratation depuis Supabase au démarrage (best effort, non bloquant : l'app
-  // fonctionne déjà avec les données LocalStorage chargées de façon synchrone ci-dessus),
-  // puis rafraîchissement périodique et au retour sur l'onglet pour approcher du
-  // temps réel sans dépendre de connexions persistantes (compatible hébergement serverless).
+  // Hydratation depuis Supabase au démarrage, puis rafraîchissement périodique.
+  // Les données métier restent en mémoire et ne sont jamais mises en localStorage.
   const [cloudSyncing, setCloudSyncing] = useState(true);
+  const [syncFailure, setSyncFailure] = useState<CloudSyncStatusDetail | null>(null);
   useEffect(() => {
-    hydrateCloud().finally(() => setCloudSyncing(false));
+    const cloudAllowed = companyInfo.dataStorageMode !== 'local';
+    setCloudSyncAllowed(cloudAllowed);
+    if (!cloudAllowed) {
+      setCloudSyncing(false);
+      return;
+    }
 
+    hydrateCloud().finally(() => setCloudSyncing(false));
     const interval = setInterval(() => { hydrateCloud(); }, 45000);
     const onFocus = () => hydrateCloud();
     const onVisibility = () => { if (!document.hidden) hydrateCloud(); };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
-
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
+  }, [companyInfo.dataStorageMode, hydrateCloud]);
+
+  useEffect(() => {
+    const onSyncStatus = (event: Event) => {
+      const detail = (event as CustomEvent<CloudSyncStatusDetail>).detail;
+      if (detail?.status === 'error') setSyncFailure(detail);
+    };
+    window.addEventListener('gcp:sync-status', onSyncStatus);
+    return () => window.removeEventListener('gcp:sync-status', onSyncStatus);
   }, []);
 
   const dragControls = useDragControls();
   const t = translations[currentLanguage];
-  const TOUR_STEPS = TOUR_STEPS_I18N[currentLanguage];
-  const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
+  const dateLocale = companyInfo.dateLocale || (currentLanguage === 'FR' ? 'fr-CA' : 'en-CA');
+  const currency = companyInfo.currency || (companyInfo.country === 'US' ? 'USD' : companyInfo.country === 'EU' ? 'EUR' : 'CAD');
+  const money = (value: number) => new Intl.NumberFormat(dateLocale, { style: 'currency', currency }).format(Number(value || 0));
   const unitLabels = CATALOGUE_UNIT_LABELS[currentLanguage];
   const credentialAlerts = getCredentialAlerts(employees);
   const totalOpenAlerts = hrAlerts.filter(alert => !alert.resolved).length + credentialAlerts.length;
@@ -308,19 +199,12 @@ export default function App() {
 
   // Employee active session state
   const [activePunchSession, setActivePunchSession] = useState<any>(null);
-  const [homePunchProject, setHomePunchProject] = useState<string>(() => {
-    try {
-      return activeEmployee
-        ? localStorage.getItem(`gcp_lastPunchProject_${activeEmployee.id}`) || ''
-        : '';
-    } catch {
-      return '';
-    }
-  });
+  const [homePunchProject, setHomePunchProject] = useState<string>('');
   const [homePayMode, setHomePayMode] = useState<'horaire' | 'surface' | 'forfait'>('horaire');
   const [homeRateCustom, setHomeRateCustom] = useState<number>(0);
   const [timerDisplay, setTimerDisplay] = useState<string>('00:00:00');
   const [earningsSimulation, setEarningsSimulation] = useState<number>(0);
+  const [elapsedWorkSeconds, setElapsedWorkSeconds] = useState<number>(0);
 
   // Accounting management local inputs
   const [accountingViewMode, setAccountingViewMode] = useState<'expenses' | 'payroll'>('expenses');
@@ -349,6 +233,7 @@ export default function App() {
   // Signature tactile requise avant l'envoi d'une facture sous-traitant à la compagnie
   const [invoiceToSign, setInvoiceToSign] = useState<Invoice | null>(null);
   const [invoiceSignatureData, setInvoiceSignatureData] = useState<string | null>(null);
+  const [invoicePreview, setInvoicePreview] = useState<Invoice | null>(null);
 
   // Punch-Out Surface materials reporting state
   const [reportedMaterials, setReportedMaterials] = useState<Array<{ name: string; quantity: number; unitPrice: number; emoji: string; unit: string }>>([]);
@@ -368,6 +253,7 @@ export default function App() {
     hireDate: string;
     avatar: string;
     businessName: string;
+    businessLogo: string;
     gstNumber: string;
     sin: string;
     employeeProvince: string;
@@ -386,9 +272,10 @@ export default function App() {
     hireDate: '2026-06-03',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
     businessName: '',
+    businessLogo: '',
     gstNumber: '',
     sin: '',
-    employeeProvince: 'QC',
+    employeeProvince: companyInfo.region || 'AB',
     payFrequency: 'weekly',
     annualSalary: 0,
     credentials: []
@@ -402,12 +289,12 @@ export default function App() {
   const [newOrderForm, setNewOrderForm] = useState({ supplierName: 'Toiture Express', items: [{ name: '', quantity: 1, price: 50 }] });
 
   // Custom states for Inventory, Catalogue, Supplier Orders & App Tour
-  const [inventorySubTab, setInventorySubTab] = useState<'stock' | 'catalogue'>('stock');
+  const [inventorySubTab, setInventorySubTab] = useState<'stock' | 'catalogue' | 'tools'>('stock');
   const [showAddInventoryForm, setShowAddInventoryForm] = useState(false);
   const [showAddOrderForm, setShowAddOrderForm] = useState(false);
   const [orderSupplier, setOrderSupplier] = useState('');
   const [orderItems, setOrderItems] = useState<Array<{ name: string; quantity: number; price: number }>>([{ name: '', quantity: 20, price: 5.5 }]);
-  const [tourStep, setTourStep] = useState<number | null>(null);
+  const [helpCenterOpen, setHelpCenterOpen] = useState<boolean>(false);
 
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
@@ -416,6 +303,27 @@ export default function App() {
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const [aiProviderStatus, setAiProviderStatus] = useState<Record<string, { configured: boolean; envNames: string[]; label: string }> | null>(null);
+  const [aiProviderStatusError, setAiProviderStatusError] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!activeEmployee || visibleSettingsTab !== 12) return;
+    let cancelled = false;
+    setAiProviderStatusError(false);
+    fetch('/api/ai/status', { headers: authHeaders() })
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.providers) throw new Error('AI status unavailable');
+        if (!cancelled) setAiProviderStatus(data.providers);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAiProviderStatus(null);
+          setAiProviderStatusError(true);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activeEmployee, visibleSettingsTab, companyInfo.aiProvider]);
 
   // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
   const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
@@ -454,73 +362,98 @@ export default function App() {
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
 
-  // Time tracker for active punch
+
+  useEffect(() => {
+    if (!activeEmployee) return;
+    const welcomeKey = `gcp_help_welcome_${activeEmployee.id}_v1`;
+    try {
+      if (!sessionStorage.getItem(welcomeKey)) {
+        sessionStorage.setItem(welcomeKey, new Date().toISOString());
+        setHelpCenterOpen(true);
+      }
+    } catch {
+      // L’aide demeure accessible manuellement si le stockage local est bloqué.
+    }
+  }, [activeEmployee]);
+
+  // Chronomètre de travail et compteur de rémunération, actualisés à la
+  // seconde. Une pause en cours est retranchée immédiatement et le compteur
+  // reste figé jusqu'à la reprise.
   const timerIntervalRef = useRef<any>(null);
 
   useEffect(() => {
-    // Sync current active session
-    if (activeEmployee) {
-      const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && p.endTime === null);
-      setActivePunchSession(liveSession || null);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
 
-      if (liveSession && !liveSession.pausedAt) {
-        // Run timer
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        
-        timerIntervalRef.current = setInterval(() => {
-          const start = new Date(liveSession.startTime).getTime();
-          const now = new Date().getTime();
-          // subtract cumulative pause
-          let elapsedMs = now - start;
-          const pauseMinutes = liveSession.totalPauseMinutes || 0;
-          elapsedMs = elapsedMs - (pauseMinutes * 60 * 1000);
-          
-          if (elapsedMs < 0) elapsedMs = 0;
+    if (!activeEmployee) {
+      setActivePunchSession(null);
+      setTimerDisplay('00:00:00');
+      setElapsedWorkSeconds(0);
+      setEarningsSimulation(0);
+      return;
+    }
 
-          const totalSeconds = Math.floor(elapsedMs / 1000);
-          const hrs = Math.floor(totalSeconds / 3600);
-          const mins = Math.floor((totalSeconds % 3600) / 60);
-          const secs = totalSeconds % 60;
-          const display = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-          
-          setTimerDisplay(display);
+    const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && p.endTime === null) || null;
+    setActivePunchSession(liveSession);
 
-          // Simulate earnings in real-time
-          let currentEarnings = 0;
-          const hoursDecimal = elapsedMs / 3600000;
-          if (liveSession.payMode === 'horaire') {
-            currentEarnings = hoursDecimal * liveSession.rate;
-          } else if (liveSession.payMode === 'forfait') {
-            currentEarnings = liveSession.rate;
-          } else if (liveSession.payMode === 'surface') {
-            currentEarnings = Number(liveSession.rate); // base starting rate, addition occurs on materials submit
-          }
-          setEarningsSimulation(Number(currentEarnings.toFixed(2)));
-        }, 1000);
-      } else {
-        if (timerIntervalRef.current) {
-          clearInterval(timerIntervalRef.current);
-          timerIntervalRef.current = null;
-        }
-        if (liveSession && liveSession.pausedAt) {
-          setTimerDisplay(translations[currentLanguage].pausedWord);
-        } else {
-          setTimerDisplay("00:00:00");
-          setEarningsSimulation(0);
-        }
+    if (!liveSession) {
+      setTimerDisplay('00:00:00');
+      setElapsedWorkSeconds(0);
+      setEarningsSimulation(0);
+      return;
+    }
+
+    const updateLiveCounters = () => {
+      const now = Date.now();
+      const start = new Date(liveSession.startTime).getTime();
+      let pausedMs = Math.max(0, Number(liveSession.totalPauseMinutes || 0)) * 60 * 1000;
+      if (liveSession.pausedAt) {
+        pausedMs += Math.max(0, now - new Date(liveSession.pausedAt).getTime());
       }
-    } else {
+
+      const elapsedMs = Math.max(0, now - start - pausedMs);
+      const totalSeconds = Math.floor(elapsedMs / 1000);
+      const hrs = Math.floor(totalSeconds / 3600);
+      const mins = Math.floor((totalSeconds % 3600) / 60);
+      const secs = totalSeconds % 60;
+      setElapsedWorkSeconds(totalSeconds);
+      setTimerDisplay(`${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+
+      const hoursDecimal = elapsedMs / 3600000;
+      const grossAmount = liveSession.payMode === 'horaire'
+        ? hoursDecimal * Math.max(0, Number(liveSession.rate || 0))
+        : liveSession.payMode === 'forfait'
+          ? Math.max(0, Number(liveSession.rate || 0))
+          : 0;
+      setEarningsSimulation(Number(grossAmount.toFixed(2)));
+    };
+
+    updateLiveCounters();
+    if (!liveSession.pausedAt) {
+      timerIntervalRef.current = setInterval(updateLiveCounters, 1000);
+    }
+
+    return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
         timerIntervalRef.current = null;
       }
-      setActivePunchSession(null);
-    }
-
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
   }, [activeEmployee, punchSessions]);
+
+  // Présélectionne automatiquement le mode prévu au dossier de l'employé ou
+  // du sous-traitant. Un profil sans préférence demeure payé à l'heure.
+  useEffect(() => {
+    if (!activeEmployee || activePunchSession) return;
+    const preferredMode = activeEmployee.workMode === 'sqft'
+      ? 'surface'
+      : activeEmployee.workMode === 'flat'
+        ? 'forfait'
+        : 'horaire';
+    setHomePayMode(preferredMode);
+  }, [activeEmployee, activePunchSession]);
 
   // If active project is selected, set Default rates based on employee or mode
   useEffect(() => {
@@ -528,20 +461,17 @@ export default function App() {
       const selectedProj = projects.find(p => p.id === homePunchProject);
       if (selectedProj && activeEmployee) {
         if (homePayMode === 'horaire') {
-          setHomeRateCustom(activeEmployee.hourlyRate);
-        } else if (homePayMode === 'forfait') {
-          setHomeRateCustom(250); // General daily forfeit
+          setHomeRateCustom(Math.max(0, activeEmployee.hourlyRate));
         } else {
-          setHomeRateCustom(12); // Mode surface default rate per pi²
+          // Surface : la valeur vient des produits déclarés au Punch Out.
+          // Forfait : le montant total de la job doit être confirmé avant le départ.
+          setHomeRateCustom(0);
         }
       }
     }
   }, [homePunchProject, homePayMode, activeEmployee, projects]);
 
   // If the company is not onboarded, redirect to the custom onboarding flow
-  if (!isOnboarded) {
-    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
-  }
 
   const handleSelectProfile = (empId: string) => {
     setSelectedEmpId(empId);
@@ -627,7 +557,8 @@ export default function App() {
     }
   };
 
-  // Punch intelligent : mémorise et présélectionne le dernier chantier valide.
+  // Punch intelligent : présélectionne un chantier valide sans persister son
+  // identifiant sur un appareil partagé.
   useEffect(() => {
     if (!activeEmployee || activePunchSession) return;
 
@@ -642,17 +573,10 @@ export default function App() {
       return;
     }
 
-    let rememberedProject = '';
-    try {
-      rememberedProject = localStorage.getItem(`gcp_lastPunchProject_${activeEmployee.id}`) || '';
-    } catch {
-      rememberedProject = '';
-    }
-
     const currentIsValid = availableProjects.some(project => project.id === homePunchProject);
     const nextProject = currentIsValid
       ? homePunchProject
-      : availableProjects.find(project => project.id === rememberedProject)?.id || availableProjects[0].id;
+      : availableProjects[0].id;
 
     if (nextProject !== homePunchProject) setHomePunchProject(nextProject);
   }, [activeEmployee, activePunchSession, homePunchProject, projects]);
@@ -759,12 +683,6 @@ export default function App() {
       withinGeofence: true
     });
 
-    try {
-      localStorage.setItem(`gcp_lastPunchProject_${activeEmployee.id}`, homePunchProject);
-    } catch {
-      // Le punch demeure fonctionnel si le stockage local est indisponible.
-    }
-    
     playSoundCue('in');
     setShowPunchInModal(false);
   };
@@ -882,7 +800,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         if (!params.name || !params.role || typeof params.hourlyRate !== 'number') {
           return t.aiActMissingEmployee;
         }
-        const nip = String(Math.floor(1000 + Math.random() * 9000));
+        const randomValue = new Uint32Array(1);
+        crypto.getRandomValues(randomValue);
+        const nip = String(1000 + (randomValue[0] % 9000));
         addEmployee({
           name: String(params.name),
           nip,
@@ -1129,7 +1049,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     setIsAiLoading(true);
 
     const provider = companyInfo.aiProvider || 'gemini';
-    const regionLabel = `${regionName} (${companyCountry === 'US' ? (currentLanguage === 'FR' ? 'États-Unis' : 'United States') : 'Canada'})`;
+    const regionLabel = `${regionName} (${marketLabel(companyCountry, currentLanguage)})`;
     // Contexte de gestion (données agrégées, sans données sensibles) : réservé aux admins/secrétaires
     const appContext = aiPrivileged ? buildAiAppContext() : undefined;
 
@@ -1205,7 +1125,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // au lieu de présumer le Québec. Pour les États-Unis, l'impôt fédéral/état n'est
   // pas modélisé en détail (affiché avec une mention "à valider" dans l'UI).
   const calculateProgressiveTax = (annualGross: number, isFederal: boolean) => {
-    if (companyCountry === 'US') {
+    if (companyCountry !== 'CA') {
       return 0;
     }
     if (isFederal) {
@@ -1319,8 +1239,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // Simule les déductions à la source pour un salaire brut ponctuel, avec les
   // taux et le régime de retraite adaptés à la province/état de la compagnie.
   const calculateSimulatedDeductions = (gross: number) => {
-    const provRate = companyCountry === 'US' ? 0 : (CA_PROVINCIAL_BRACKETS[companyRegion.code]?.[0].rate ?? CA_PROVINCIAL_FALLBACK_RATE);
-    const fedTax = companyCountry === 'US' ? 0 : gross * CA_FEDERAL_BRACKETS[0].rate;
+    const provRate = companyCountry !== 'CA' ? 0 : (CA_PROVINCIAL_BRACKETS[companyRegion.code]?.[0].rate ?? CA_PROVINCIAL_FALLBACK_RATE);
+    const fedTax = companyCountry !== 'CA' ? 0 : gross * CA_FEDERAL_BRACKETS[0].rate;
     const provTax = gross * provRate;
     const rrq = gross * payrollMeta.pensionRate;
     const ae = gross * payrollMeta.secondaryDeductionRate;
@@ -1334,22 +1254,54 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     };
   };
 
+  // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
+  // avant un useEffect provoque « Rendered more hooks than during the previous
+  // render » et un écran noir au moment de terminer la configuration.
+  if (!isOnboarded || companyInfo.complianceVersion !== '2026.07') {
+    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
+  }
+
   return (
     <div 
       id="main-scaffold-container"
       className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 pt-16 flex flex-col relative select-none"
     >
+      {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.07' && (
+        <Suspense fallback={<LazySectionFallback />}>
+          <UserPrivacyNotice
+            employee={activeEmployee}
+            companyInfo={companyInfo}
+            currentLanguage={currentLanguage}
+            onAccept={updateEmployee}
+          />
+        </Suspense>
+      )}
       {cloudSyncing && (
         <div className="fixed top-1 right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
           {t.cloudSyncing}
         </div>
       )}
+      {syncFailure && (
+        <div className="fixed top-16 left-0 right-0 z-[90] flex items-center justify-between gap-3 border-b border-red-500/40 bg-red-950/95 px-4 py-2 text-xs text-red-100 shadow-lg">
+          <span>
+            {currentLanguage === 'FR' ? 'Sauvegarde nuage échouée' : 'Cloud save failed'}
+            {' — '}{syncFailure.label}. {currentLanguage === 'FR' ? 'Vérifiez la connexion puis réessayez.' : 'Check the connection and try again.'}
+          </span>
+          <button type="button" onClick={() => setSyncFailure(null)} className="rounded px-2 py-1 font-bold hover:bg-red-900">
+            {currentLanguage === 'FR' ? 'Fermer' : 'Dismiss'}
+          </button>
+        </div>
+      )}
       {/* Top Navbar */}
       <nav id="navbar-scaffold" className="fixed top-0 left-0 right-0 h-16 border-b border-gray-800 bg-[#16191F] px-4 flex items-center justify-between z-40">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-orange-600 rounded flex items-center justify-center font-bold text-white shadow-md">
-            HX
-          </div>
+          <CompanyLogo
+            logo={companyInfo.logo}
+            companyName={companyInfo.name}
+            className="w-10 h-10 rounded-xl border border-gray-700 bg-white p-1 shadow-md"
+            imageClassName="w-full h-full object-contain rounded-lg"
+            fallbackClassName="rounded-xl bg-orange-600 text-white text-sm"
+          />
           <div>
             <h1 className="text-sm font-black uppercase tracking-tight text-white leading-none">
               {companyInfo.name}
@@ -1373,16 +1325,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             </a>
           )}
 
-          {/* Guide Interactif de Validation */}
+          {/* Centre d’aide permanent — remplace l’ancien guide de validation. */}
           <button
-            onClick={() => setTourStep(0)}
-            className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-[10px] font-black rounded cursor-pointer transition shadow border border-orange-500/20"
+            id="open-professional-help-center"
+            type="button"
+            onClick={() => setHelpCenterOpen(true)}
+            className="flex min-h-10 items-center gap-2 rounded-xl border border-orange-500/30 bg-orange-600/15 px-3 text-orange-200 transition hover:bg-orange-600/25 hover:text-white"
+            title={currentLanguage === 'FR' ? 'Centre d’aide et de formation' : 'Help and training center'}
+            aria-label={currentLanguage === 'FR' ? 'Ouvrir le centre d’aide' : 'Open the help center'}
           >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
-            </span>
-            <span>{t.validationGuideBtn}</span>
+            <HelpCircle className="h-5 w-5 shrink-0" />
+            <span className="hidden text-xs font-black sm:inline">{currentLanguage === 'FR' ? 'Aide' : 'Help'}</span>
           </button>
 
           {/* FR / EN Switcher */}
@@ -1432,10 +1385,29 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </p>
             </div>
 
+            {/* LOCAL TEST PROFILES — no Supabase */}
+            {LOCAL_TEST_MODE && (
+              <div className="mb-6 rounded-2xl border border-orange-500/35 bg-orange-500/10 p-4 text-left">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase font-black tracking-widest text-orange-400">
+                      {currentLanguage === 'FR' ? 'Mode de validation local — exercice annuel' : 'Local validation mode — annual dataset'}
+                    </p>
+                    <p className="text-xs text-gray-300 mt-1">
+                      {currentLanguage === 'FR'
+                        ? `Données fictives cohérentes du ${TEST_DATASET_SUMMARY.periodStart} au ${TEST_DATASET_SUMMARY.periodEnd} : ${TEST_DATASET_SUMMARY.projects} projets, ${TEST_DATASET_SUMMARY.payrollPayments} paies et ${TEST_DATASET_SUMMARY.expenses} dépenses. Aucune donnée test n’est envoyée à Supabase.`
+                        : `Consistent fictional data from ${TEST_DATASET_SUMMARY.periodStart} to ${TEST_DATASET_SUMMARY.periodEnd}: ${TEST_DATASET_SUMMARY.projects} projects, ${TEST_DATASET_SUMMARY.payrollPayments} payroll entries and ${TEST_DATASET_SUMMARY.expenses} expenses. No test data is sent to Supabase.`}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-orange-600 px-3 py-1 text-[10px] font-black text-white">DEV TEST</span>
+                </div>
+              </div>
+            )}
+
             {/* Profile Selection Grid */}
             {!selectedEmpId ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-                {employees.map(emp => (
+                {employees.filter(emp => !emp.id.startsWith('test-former-')).map(emp => (
                   <button
                     key={emp.id}
                     onClick={() => handleSelectProfile(emp.id)}
@@ -1535,9 +1507,6 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </button>
                 </div>
 
-                <p className="text-[10px] text-gray-500 font-mono mt-6 text-center">
-                  {t.defaultAdminCode} <span className="font-bold text-white">0000</span>
-                </p>
               </div>
             )}
           </div>
@@ -1773,7 +1742,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             {t.punchActiveOn} {activePunchSession.projectName}
                           </span>
                           <p className="text-sm font-bold text-gray-300 font-mono tracking-wide">
-                            {t.sessionRate} {activePunchSession.rate}$ / {activePunchSession.payMode}
+                            {activePunchSession.payMode === 'horaire'
+                              ? `${activePunchSession.rate.toFixed(2)} $/h`
+                              : activePunchSession.payMode === 'forfait'
+                                ? `${currentLanguage === 'FR' ? 'Forfait' : 'Fixed price'} : ${activePunchSession.rate.toFixed(2)} $`
+                                : (currentLanguage === 'FR' ? 'Produits et quantités à déclarer au Punch Out' : 'Products and quantities declared at Punch Out')}
                           </p>
                         </>
                       ) : (
@@ -1809,6 +1782,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         </div>
                       ) : null;
                     })()}
+
+                    {activePunchSession && (
+                      <div className="w-full max-w-3xl mb-7">
+                        <LiveCompensationPanel
+                          session={activePunchSession}
+                          elapsedSeconds={elapsedWorkSeconds}
+                          grossAmount={earningsSimulation}
+                          currentLanguage={currentLanguage}
+                          currency={companyInfo.currency || 'CAD'}
+                        />
+                      </div>
+                    )}
 
                     {/* CENTRAL PUNCH BUTTON with Theme Styles */}
                     <div className="relative w-[230px] h-[230px] flex items-center justify-center mb-8">
@@ -1866,15 +1851,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {activePunchSession ? t.punchOut : t.punchIn}
                         </span>
 
-                        {/* Real-time Dynamic Timer */}
+                        {/* Le temps reste visible dans le bouton; l'argent, plus important,
+                            occupe le grand panneau doré juste au-dessus. */}
                         <span className="text-sm font-mono text-gray-300 mt-1 uppercase tracking-widest font-black">
-                          {activePunchSession ? timerDisplay : "00:00:00"}
+                          {activePunchSession ? timerDisplay : '00:00:00'}
                         </span>
-
-                        {/* Real-time earnings simulator underneath */}
                         {activePunchSession && (
-                          <span className="text-xs uppercase font-black text-green-400 mt-1 px-2.5 py-1 rounded bg-green-950/40 border border-green-500/20">
-                            + {earningsSimulation}$
+                          <span className="mt-2 rounded-full border border-amber-400/25 bg-black/25 px-3 py-1 text-[9px] font-black uppercase tracking-wider text-amber-200">
+                            {activePunchSession.payMode === 'horaire'
+                              ? (currentLanguage === 'FR' ? 'Argent en direct ↑' : 'Live money ↑')
+                              : activePunchSession.payMode === 'forfait'
+                                ? (currentLanguage === 'FR' ? 'Rendement $/h' : 'Hourly yield')
+                                : (currentLanguage === 'FR' ? 'Déclaration à la fin' : 'Declare at finish')}
                           </span>
                         )}
                       </button>
@@ -2308,12 +2296,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                           <div className="text-right space-y-2">
                             <div>
-                              <p className="text-[10px] text-gray-400">{t.grossShort} {inv.amount.toFixed(2)}$</p>
+                              <p className="text-[10px] text-gray-400">{t.grossShort} {money(inv.amount)}</p>
                               <p className="text-[10px] text-gray-500">{currentLanguage === 'FR' ? companyRegion.taxRate1NameFR : companyRegion.taxRate1NameEN} + {currentLanguage === 'FR' ? companyRegion.taxRate2NameFR : companyRegion.taxRate2NameEN} {t.estimatedShort}</p>
                               <p className="text-base font-black text-green-400 mt-1">
-                                {inv.totalWithTaxes.toFixed(2)}$ <span className="text-[10px] text-gray-400">{t.ttcLabel}</span>
+                                {money(inv.totalWithTaxes)} <span className="text-[10px] text-gray-400">{t.ttcLabel}</span>
                               </p>
                             </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setInvoicePreview(inv)}
+                              className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-[9px] font-bold uppercase rounded border border-cyan-500/30 cursor-pointer"
+                            >
+                              {currentLanguage === 'FR' ? 'Aperçu / PDF' : 'Preview / PDF'}
+                            </button>
 
                             {/* Actions on Invoice for Admin */}
                             {activeEmployee.role === 'admin' && (
@@ -2366,6 +2362,21 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </div>
               </div>
             )}
+
+            {invoicePreview && (() => {
+              const issuer = employees.find(employee => employee.id === invoicePreview.employeeId) || activeEmployee;
+              return issuer ? (
+                <Suspense fallback={<LazySectionFallback />}>
+                  <SubcontractorInvoicePreview
+                    invoice={invoicePreview}
+                    issuer={issuer}
+                    companyInfo={companyInfo}
+                    currentLanguage={currentLanguage}
+                    onClose={() => setInvoicePreview(null)}
+                  />
+                </Suspense>
+              ) : null;
+            })()}
 
             {/* -------------------- VIEW CONTAINER : PROJETS -------------------- */}
             {activeTab === 'projects' && (
@@ -2561,244 +2572,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </form>
                 )}
 
-                {/* Display projects list */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {projects.map(proj => (
-                    <div key={proj.id} className="p-4 bg-gray-900 border border-gray-850 rounded-xl relative overflow-hidden">
-                      <div className="absolute right-3 top-3">
-                        <span className="text-[9px] font-mono uppercase font-black px-2 py-0.5 rounded bg-orange-600/10 text-orange-500 border border-orange-500/20">
-                          {proj.status}
-                        </span>
-                      </div>
-
-                      <h4 className="font-bold text-white text-sm mt-1">{proj.name}</h4>
-                      <p className="text-xs text-gray-400 mt-0.5">{proj.clientName}</p>
-                      
-                      <div className="mt-3 text-xs text-gray-400 flex flex-col gap-1">
-                        <p className="flex items-center gap-1">
-                          <MapPin className="w-3.5 h-3.5 text-orange-500" />
-                          {proj.address}
-                        </p>
-                        <p className="font-mono text-[10px]">
-                          GPS: {proj.latitude.toFixed(4)}, {proj.longitude.toFixed(4)} | {t.radiusTolerance} {proj.radius}m
-                        </p>
-                        {proj.latitude === 0 && proj.longitude === 0 && (
-                          <p className="text-[10px] text-amber-500 font-bold">{t.gpsNotSet}</p>
-                        )}
-                      </div>
-
-                      {/* Éditeur GPS pour un chantier déjà créé (admin) : mêmes options
-                          que le formulaire de création — capture de position, Google Maps,
-                          ou saisie manuelle des coordonnées et du rayon. */}
-                      {activeEmployee.role === 'admin' && (
-                        gpsEditProjectId === proj.id ? (
-                          <div className="mt-3 p-3 bg-gray-950 border border-gray-850 rounded-xl space-y-2">
-                            <div>
-                              <label className="text-[9px] font-mono uppercase text-gray-500">{t.addressLabel}</label>
-                              <input
-                                type="text"
-                                value={gpsEditForm.address}
-                                onChange={e => setGpsEditForm({ ...gpsEditForm, address: e.target.value })}
-                                className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
-                              />
-                            </div>
-                            <div className="grid grid-cols-3 gap-2">
-                              <div>
-                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.latitudeLabel}</label>
-                                <input
-                                  type="number"
-                                  step="0.000001"
-                                  value={gpsEditForm.latitude}
-                                  onChange={e => setGpsEditForm({ ...gpsEditForm, latitude: Number(e.target.value) })}
-                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.longitudeLabel}</label>
-                                <input
-                                  type="number"
-                                  step="0.000001"
-                                  value={gpsEditForm.longitude}
-                                  onChange={e => setGpsEditForm({ ...gpsEditForm, longitude: Number(e.target.value) })}
-                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[9px] font-mono uppercase text-gray-500">{t.radiusLabel}</label>
-                                <input
-                                  type="number"
-                                  value={gpsEditForm.radius}
-                                  onChange={e => setGpsEditForm({ ...gpsEditForm, radius: Number(e.target.value) })}
-                                  className="w-full mt-0.5 p-1.5 bg-gray-900 rounded border border-gray-850 text-white text-[10px] text-left"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (!navigator.geolocation) {
-                                    alert(t.geoNotSupported);
-                                    return;
-                                  }
-                                  navigator.geolocation.getCurrentPosition((pos) => {
-                                    setGpsEditForm(prev => ({
-                                      ...prev,
-                                      latitude: Number(pos.coords.latitude.toFixed(6)),
-                                      longitude: Number(pos.coords.longitude.toFixed(6))
-                                    }));
-                                    alert(fmt(t.positionCaptured, { lat: pos.coords.latitude.toFixed(6), lon: pos.coords.longitude.toFixed(6) }));
-                                  }, (err) => {
-                                    alert(fmt(t.gpsCaptureError, { msg: err.message }));
-                                  }, { enableHighAccuracy: true });
-                                }}
-                                className="flex-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-black rounded-lg transition"
-                              >
-                                {t.imOnSiteBtn}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const addr = gpsEditForm.address || proj.address || 'Montréal, QC';
-                                  window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`, '_blank');
-                                }}
-                                className="flex-1 px-2 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-300 border border-gray-800 text-[9px] font-black rounded-lg transition"
-                              >
-                                {t.openMapsBtn}
-                              </button>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  updateProject({
-                                    ...proj,
-                                    address: gpsEditForm.address,
-                                    latitude: Number(gpsEditForm.latitude),
-                                    longitude: Number(gpsEditForm.longitude),
-                                    radius: Math.max(10, Number(gpsEditForm.radius) || 100)
-                                  });
-                                  setGpsEditProjectId(null);
-                                  alert(t.gpsUpdated);
-                                }}
-                                className="flex-1 px-2 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-[9px] font-black rounded-lg transition"
-                              >
-                                {t.saveBtn}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setGpsEditProjectId(null)}
-                                className="px-3 py-1.5 bg-gray-900 hover:bg-gray-850 text-gray-400 border border-gray-800 text-[9px] font-black rounded-lg transition"
-                              >
-                                {t.modalCancelBtn}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setGpsEditForm({ address: proj.address, latitude: proj.latitude, longitude: proj.longitude, radius: proj.radius });
-                              setGpsEditProjectId(proj.id);
-                            }}
-                            className="mt-2 px-2.5 py-1.5 bg-gray-950 hover:bg-gray-900 text-cyan-400 border border-gray-850 text-[9px] font-black rounded-lg transition"
-                          >
-                            {t.editGpsBtn}
-                          </button>
-                        )
-                      )}
-
-                      {/* Workers count assigned */}
-                      <div className="mt-4 pt-3 border-t border-gray-850 flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500 uppercase font-mono">
-                          {t.assignmentsLabel} ({proj.assignedEmployees?.length || 0}) :
-                        </span>
-                        <div className="flex -space-x-1.5 overflow-hidden">
-                          {employees.filter(e => proj.assignedEmployees?.includes(e.id)).map((emp) => (
-                            <EmployeeAvatar
-                              key={emp.id}
-                              src={emp.avatar}
-                              title={emp.name}
-                              name={emp.name}
-                              className="w-8 h-8 rounded-full object-cover border border-gray-900"
-                            />
-                          ))}
-                          {(!proj.assignedEmployees || proj.assignedEmployees.length === 0) && (
-                            <span className="text-[9px] text-gray-500 italic">{t.noneLabel}</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Admin assignments adjustment console */}
-                      {activeEmployee.role === 'admin' && (
-                        <div className="mt-3 pt-3 border-t border-gray-850 space-y-2 text-[10px] leading-tight">
-                          <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
-                            <span className="text-[9px] text-gray-400 font-mono uppercase">{t.teamsColon}</span>
-                            <select
-                              className="bg-gray-950 text-white text-[9px] p-1 rounded-md border border-gray-800 cursor-pointer text-left w-full sm:w-auto"
-                              value=""
-                              onChange={(e) => {
-                                const teamId = e.target.value;
-                                if (!teamId) return;
-                                const targetTeam = motivationTeams.find(t => t.id === teamId);
-                                if (targetTeam) {
-                                  const currentAssigns = proj.assignedEmployees || [];
-                                  const nextAssigns = Array.from(new Set([...currentAssigns, ...targetTeam.memberIds]));
-                                  updateProject({
-                                    ...proj,
-                                    assignedEmployees: nextAssigns
-                                  });
-                                }
-                              }}
-                            >
-                              <option value="">{t.assignWholeTeam}</option>
-                              {motivationTeams.map(team => (
-                                <option key={team.id} value={team.id}>{team.name} ({team.memberIds.length} {t.peopleShort})</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[9px] text-gray-500 font-mono uppercase">{t.membersColon}</span>
-                            {employees.filter(e => e.role !== 'admin').map(emp => {
-                              const isAssigned = proj.assignedEmployees?.includes(emp.id);
-                              return (
-                                <button
-                                  key={emp.id}
-                                  type="button"
-                                  onClick={() => {
-                                    const currentAssigns = proj.assignedEmployees || [];
-                                    const nextAssigns = isAssigned 
-                                      ? currentAssigns.filter(id => id !== emp.id)
-                                      : [...currentAssigns, emp.id];
-                                    updateProject({
-                                      ...proj,
-                                      assignedEmployees: nextAssigns
-                                    });
-                                  }}
-                                  className={`px-1.5 py-0.5 rounded text-[8px] font-bold border transition ${
-                                    isAssigned 
-                                      ? 'bg-orange-600/10 border-orange-500 text-orange-400' 
-                                      : 'bg-gray-950 border-gray-850 text-gray-400 hover:text-white'
-                                  }`}
-                                >
-                                  {isAssigned ? '✓ ' : '+ '} {emp.name}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      <Suspense fallback={<LazySectionFallback />}>
-                        <ProjectTasksAndTools project={proj} />
-                        <Suspense fallback={<LazySectionFallback />}>
-                          <ProjectPhotoGallery project={proj} />
-                        </Suspense>
-                      </Suspense>
-                    </div>
-                  ))}
-                </div>
+                {/* Recherche immédiate et gestion complète des chantiers. */}
+                <Suspense fallback={<LazySectionFallback />}>
+                  <ProjectDirectoryManager />
+                </Suspense>
               </div>
             )}
 
@@ -2825,7 +2602,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               <div id="view-inventory-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
                 
                 {/* Segmented Sub-Tabs */}
-                <div className="flex border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-md">
+                <div className="flex border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-2xl">
                   <button
                     onClick={() => setInventorySubTab('stock')}
                     className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
@@ -2845,6 +2622,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     }`}
                   >
                     {t.catalogTab} ({catalogue.length})
+                  </button>
+                  <button
+                    onClick={() => setInventorySubTab('tools')}
+                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                      inventorySubTab === 'tools'
+                        ? 'bg-orange-600 text-white shadow-lg'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-900'
+                    }`}
+                  >
+                    {currentLanguage === 'FR' ? '🧰 Outils' : '🧰 Tools'}
                   </button>
                 </div>
 
@@ -3021,9 +2808,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       ))}
                     </div>
                   </>
-                ) : (
+                ) : inventorySubTab === 'catalogue' ? (
                   <Suspense fallback={<LazySectionFallback />}>
                     <CatalogueManager />
+                  </Suspense>
+                ) : (
+                  <Suspense fallback={<LazySectionFallback />}>
+                    <ToolRegistry />
                   </Suspense>
                 )}
               </div>
@@ -3644,7 +3435,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   <EmployeeAvatar src={emp.avatar} name={emp.name} className="w-10 h-10 rounded-full border border-gray-800 object-cover" />
                                   <div>
                                     <h5 className="text-xs font-bold text-white">{emp.name}</h5>
-                                    <p className="text-[10px] text-gray-500">{emp.workerType} — {t.nipColon} <span className="font-mono text-white select-all font-bold">{emp.nip}</span></p>
+                                    <p className="text-[10px] text-gray-500">{emp.workerType}</p>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-4 text-xs font-mono">
@@ -4527,56 +4318,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-[10px] text-gray-400 mt-0.5">{fmt(t.companySubtitle, { region: regionName })}</p>
                         </div>
 
-                        {/* Pays / Province ou État — pilote tous les libellés et calculs de paie de l'application */}
-                        <div className="p-3 bg-gray-950 border border-orange-500/20 rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">{t.countryLabel}</label>
-                            <select
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
-                              value={companyCountry}
-                              onChange={(e) => {
-                                const nextCountry = e.target.value as 'CA' | 'US';
-                                const nextRegion = (nextCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS)[0];
-                                updateCompanyInfo({
-                                  country: nextCountry,
-                                  region: nextRegion.code,
-                                  taxRate1: nextRegion.taxRate1,
-                                  taxRate2: nextRegion.taxRate2,
-                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
-                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
-                                });
-                              }}
-                            >
-                              <option value="CA">Canada</option>
-                              <option value="US">{t.usOption}</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">{t.provinceStateLabel}</label>
-                            <select
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs cursor-pointer"
-                              value={companyRegion.code}
-                              onChange={(e) => {
-                                const nextRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === e.target.value);
-                                if (!nextRegion) return;
-                                updateCompanyInfo({
-                                  region: nextRegion.code,
-                                  taxRate1: nextRegion.taxRate1,
-                                  taxRate2: nextRegion.taxRate2,
-                                  taxRate1Name: currentLanguage === 'FR' ? nextRegion.taxRate1NameFR : nextRegion.taxRate1NameEN,
-                                  taxRate2Name: currentLanguage === 'FR' ? nextRegion.taxRate2NameFR : nextRegion.taxRate2NameEN,
-                                });
-                              }}
-                            >
-                              {(companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).map(r => (
-                                <option key={r.code} value={r.code}>{currentLanguage === 'FR' ? r.nameFR : r.nameEN}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <p className="sm:col-span-2 text-[9px] text-gray-500">
-                            {fmt(t.regionDetermines, { wc: workersCompName })}
-                          </p>
-                        </div>
+                        <Suspense fallback={<LazySectionFallback />}>
+                          <CompanyComplianceSettings />
+                        </Suspense>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
@@ -4586,16 +4330,6 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
                               defaultValue={companyInfo.name}
                               onChange={(e) => updateCompanyInfo({ name: e.target.value })}
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-[10px] text-gray-500 uppercase font-mono">{t.logoLabel}</label>
-                            <input
-                              type="text"
-                              className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs font-sans text-left"
-                              defaultValue={companyInfo.logo || "📐 Hailite Xteriors Pro"}
-                              onChange={(e) => updateCompanyInfo({ logo: e.target.value })}
                             />
                           </div>
 
@@ -5427,7 +5161,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               setEditEmployeeForm({
                                 id: emp.id,
                                 name: emp.name,
-                                nip: emp.nip,
+                                nip: '',
                                 role: emp.role,
                                 hourlyRate: emp.hourlyRate,
                                 workerType: emp.workerType || 'salaried',
@@ -5435,9 +5169,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 phone: emp.phone || '',
                                 address: emp.address || '',
                                 businessName: emp.businessName || '',
+                                businessLogo: emp.businessLogo || '',
                                 gstNumber: emp.gstNumber || '',
                                 sin: emp.sin || '',
-                                employeeProvince: emp.employeeProvince || 'QC',
+                                employeeProvince: emp.employeeProvince || companyRegion.code,
                                 payFrequency: emp.payFrequency || 'weekly',
                                 annualSalary: emp.annualSalary || 0,
                                 hireDate: emp.hireDate || '2026-06-03',
@@ -5479,7 +5214,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           )}
                                         </div>
                                         <p className="text-[10px] text-gray-400 mt-0.5 text-left">
-                                          PIN: <span className="font-mono text-white font-bold bg-black px-1 rounded">{emp.nip}</span> — 
+                                          {currentLanguage === 'FR' ? 'NIP sécurisé (non affiché)' : 'Secured PIN (not displayed)'} —
                                           {isContractor ? ` ${t.businessLabel} ${emp.businessName || t.naShort}` : ` ${t.provinceLabel} ${emp.employeeProvince || 'QC'} • ${t.frequencyLabel} ${emp.payFrequency || 'weekly'}`}
                                         </p>
                                       </div>
@@ -5590,6 +5325,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           type="text" 
                                           className="w-full mt-1 p-1.5 bg-[#12141C] text-white text-xs font-mono rounded border border-gray-800"
                                           maxLength={4}
+                                          inputMode="numeric"
+                                          autoComplete="new-password"
+                                          placeholder={currentLanguage === 'FR' ? 'Nouveau NIP (facultatif)' : 'New PIN (optional)'}
                                           value={editEmployeeForm.nip}
                                           onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, nip: e.target.value })}
                                         />
@@ -5628,10 +5366,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               value={editEmployeeForm.employeeProvince}
                                               onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, employeeProvince: e.target.value })}
                                             >
-                                              <option value="QC">{t.provQuebec}</option>
-                                              <option value="AB">{t.provAlberta}</option>
-                                              <option value="ON">{t.provOntario}</option>
-                                              <option value="BC">{t.provBC}</option>
+                                      {getRegionsForMarket(companyCountry).map(region => (
+                                        <option key={region.code} value={region.code}>{currentLanguage === 'FR' ? region.nameFR : region.nameEN}</option>
+                                      ))}
                                             </select>
                                           </div>
                                           <div>
@@ -5703,6 +5440,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           </div>
                                         </div>
                                       </div>
+                                    )}
+
+                                    {editEmployeeForm.workerType === 'contractor' && (
+                                      <Suspense fallback={<LazySectionFallback />}>
+                                        <BusinessLogoField
+                                          value={editEmployeeForm.businessLogo || ''}
+                                          onChange={(businessLogo) => setEditEmployeeForm({ ...editEmployeeForm, businessLogo })}
+                                          businessName={editEmployeeForm.businessName || editEmployeeForm.name}
+                                          currentLanguage={currentLanguage}
+                                          inputId={`business-logo-edit-${emp.id}`}
+                                        />
+                                      </Suspense>
                                     )}
 
                                     {/* Avatar Custom Photo selection inside edit form */}
@@ -5780,6 +5529,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               address: editEmployeeForm.address,
                                               avatar: editEmployeeForm.avatar || emp.avatar,
                                               businessName: editEmployeeForm.businessName,
+                                              businessLogo: editEmployeeForm.businessLogo,
                                               gstNumber: editEmployeeForm.gstNumber,
                                               sin: editEmployeeForm.sin,
                                               employeeProvince: editEmployeeForm.employeeProvince,
@@ -5882,10 +5632,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     value={newEmployeeForm.employeeProvince}
                                     onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, employeeProvince: e.target.value })}
                                   >
-                                    <option value="QC">{t.provQuebec}</option>
-                                    <option value="AB">{t.provAlberta}</option>
-                                    <option value="ON">{t.provOntario}</option>
-                                    <option value="BC">{t.provBC}</option>
+                                      {getRegionsForMarket(companyCountry).map(region => (
+                                        <option key={region.code} value={region.code}>{currentLanguage === 'FR' ? region.nameFR : region.nameEN}</option>
+                                      ))}
                                   </select>
                                 </div>
                                 <div>
@@ -5957,6 +5706,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 </div>
                               </div>
                             </div>
+                          )}
+
+                          {newEmployeeForm.workerType === 'contractor' && (
+                            <Suspense fallback={<LazySectionFallback />}>
+                              <BusinessLogoField
+                                value={newEmployeeForm.businessLogo}
+                                onChange={(businessLogo) => setNewEmployeeForm({ ...newEmployeeForm, businessLogo })}
+                                businessName={newEmployeeForm.businessName || newEmployeeForm.name}
+                                currentLanguage={currentLanguage}
+                                inputId="business-logo-new"
+                              />
+                            </Suspense>
                           )}
 
                           {/* Avatar Selection Row */}
@@ -6066,6 +5827,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 phone: newEmployeeForm.phone || '(418) 555-0199',
                                 address: newEmployeeForm.address || `${companyRegion.nameFR}, ${companyRegion.code}`,
                                 businessName: newEmployeeForm.businessName,
+                                businessLogo: newEmployeeForm.businessLogo,
                                 gstNumber: newEmployeeForm.gstNumber,
                                 sin: newEmployeeForm.sin,
                                 employeeProvince: newEmployeeForm.employeeProvince,
@@ -6085,9 +5847,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 hireDate: '2026-06-03',
                                 avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&q=80',
                                 businessName: '',
+                                businessLogo: '',
                                 gstNumber: '',
                                 sin: '',
-                                employeeProvince: 'QC',
+                                employeeProvince: companyInfo.region || 'AB',
                                 payFrequency: 'weekly',
                                 annualSalary: 0,
                                 credentials: []
@@ -6526,7 +6289,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     onChange={(e) => setNewPayrollFormSetting({ ...newPayrollFormSetting, employeeId: e.target.value })}
                                   >
                                     <option value="">{t.selectEmployeeOption}</option>
-                                    {employees.map(emp => (
+                                    {employees.filter(emp => !emp.id.startsWith('test-former-')).map(emp => (
                                       <option key={emp.id} value={emp.id}>{emp.name}</option>
                                     ))}
                                   </select>
@@ -6731,7 +6494,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-700'
                                 }`}
                               >
-                                {p.label}
+                                <span className="block">{p.label}</span>
+                                <span className={`block mt-1 text-[9px] font-mono ${
+                                  aiProviderStatus?.[p.id]?.configured ? 'text-green-200' : 'text-orange-100/80'
+                                }`}>
+                                  {aiProviderStatus?.[p.id]?.configured
+                                    ? (currentLanguage === 'FR' ? 'Clé Vercel détectée' : 'Vercel key detected')
+                                    : (currentLanguage === 'FR' ? 'Clé non détectée' : 'Key not detected')}
+                                </span>
                               </button>
                             ))}
                           </div>
@@ -6748,6 +6518,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           </p>
                           <p className="text-[10px] text-gray-600">
                             {t.keyBadgeHint}
+                          </p>
+                          {aiProviderStatusError && (
+                            <p className="text-[10px] text-red-300">
+                              {currentLanguage === 'FR'
+                                ? 'Impossible de vérifier les clés : reconnectez-vous au profil, puis revenez dans Réglages IA.'
+                                : 'Unable to verify keys: sign in again, then return to AI Settings.'}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-gray-500">
+                            {currentLanguage === 'FR'
+                              ? `Fournisseur actif : ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI ChatGPT' : 'Google Gemini'}. La variable Vercel correspondante sera utilisée automatiquement.`
+                              : `Active provider: ${companyInfo.aiProvider === 'anthropic' ? 'Anthropic Claude' : companyInfo.aiProvider === 'openai' ? 'OpenAI ChatGPT' : 'Google Gemini'}. Its matching Vercel variable will be used automatically.`}
                           </p>
                         </div>
                       </div>
@@ -7037,6 +6819,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   <span className="text-[10px] uppercase font-black text-center leading-tight">{item.label}</span>
                 </button>
               ))}
+
+              <button
+                type="button"
+                onClick={() => { setHelpCenterOpen(true); setShowMoreMenu(false); }}
+                className="flex flex-col items-center gap-2 rounded-2xl border border-gray-800 bg-gray-900 p-4 text-gray-300 transition hover:border-orange-500/50 hover:text-orange-300"
+              >
+                <span className="text-3xl" aria-hidden="true">❓</span>
+                <span className="text-center text-[10px] font-black uppercase leading-tight">
+                  {currentLanguage === 'FR' ? 'Aide et formation' : 'Help and training'}
+                </span>
+              </button>
 
               <button
                 type="button"
@@ -7391,16 +7184,35 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </div>
               </div>
 
-              {/* Custom rate value */}
-              <div>
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.modalConfirmRate}</label>
-                <input 
-                  type="number"
-                  value={homeRateCustom}
-                  onChange={e => setHomeRateCustom(Number(e.target.value))}
-                  className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs font-mono font-semibold text-white"
-                />
-              </div>
+              {/* Le montant demandé dépend du mode de rémunération. */}
+              {homePayMode !== 'surface' ? (
+                <div className="rounded-xl border border-gray-800 bg-gray-950/55 p-3">
+                  <label className="text-[10px] text-gray-400 font-mono uppercase font-black">
+                    {homePayMode === 'horaire'
+                      ? (currentLanguage === 'FR' ? 'Taux horaire confirmé ($/h)' : 'Confirmed hourly rate ($/h)')
+                      : (currentLanguage === 'FR' ? 'Montant total du forfait ($)' : 'Total fixed job amount ($)')}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={homeRateCustom || ''}
+                    onChange={e => setHomeRateCustom(Number(e.target.value))}
+                    className="w-full mt-2 p-3 bg-gray-900 rounded-xl border border-gray-700 text-lg font-mono font-black text-amber-300 text-center"
+                  />
+                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
+                    {homePayMode === 'horaire'
+                      ? (currentLanguage === 'FR' ? 'Le compteur d’argent augmentera à chaque seconde selon ce taux.' : 'The money counter will increase every second using this rate.')
+                      : (currentLanguage === 'FR' ? 'Le rendement horaire restera à 0 pendant la première heure, puis le forfait sera divisé par le temps réellement travaillé.' : 'Hourly yield stays at 0 during the first hour, then the fixed amount is divided by actual worked time.')}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-[11px] leading-relaxed text-blue-200">
+                  {currentLanguage === 'FR'
+                    ? 'Aucun faux montant ne sera affiché pendant la journée. Au Punch Out, vous pourrez déclarer plusieurs produits, leurs quantités et leurs prix; le total et le rendement horaire seront calculés automatiquement.'
+                    : 'No estimated amount is shown during the day. At Punch Out, declare multiple products, quantities and prices; total and hourly yield are calculated automatically.'}
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3 pt-3 border-t border-gray-850">
@@ -7412,7 +7224,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </button>
               <button 
                 onClick={handlePunchInStart}
-                disabled={!homePunchProject}
+                disabled={!homePunchProject || (homePayMode !== 'surface' && homeRateCustom <= 0)}
                 className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-40"
               >
                 {t.modalConfirmBtn}
@@ -7468,8 +7280,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                   <div className="space-y-2">
                     {/* Catalog Material choices quick click */}
-                    <div className="grid grid-cols-2 gap-2">
-                      {catalogue.slice(0, 4).map(catItem => {
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
+                      {catalogue.map(catItem => {
                         const unitLabel = unitLabels[catItem.unit || 'pi2'];
                         return (
                           <button
@@ -7491,9 +7303,49 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-gray-500 text-center py-2 italic font-sans animate-none">{t.noMaterialsDeclared}</p>
                         ) : (
                           reportedMaterials.map((m, idx) => (
-                            <div key={idx} className="flex justify-between items-center text-gray-300 font-mono">
-                              <span className="font-sans">{m.emoji} {m.name} ({m.quantity} {m.unit || unitLabels['pi2']})</span>
-                              <span className="font-bold">{(m.quantity * m.unitPrice).toFixed(2)}$</span>
+                            <div key={`${m.name}-${idx}`} className="rounded-xl border border-gray-800 bg-gray-900 p-3 space-y-2">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="font-sans text-xs font-black text-white">{m.emoji} {m.name}</p>
+                                  <p className="text-[9px] text-gray-500">{m.unit || unitLabels['pi2']}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setReportedMaterials(current => current.filter((_, itemIndex) => itemIndex !== idx))}
+                                  className="rounded-lg border border-red-500/20 bg-red-500/10 p-1.5 text-red-400 hover:bg-red-500/20"
+                                  aria-label={currentLanguage === 'FR' ? 'Retirer ce produit' : 'Remove this product'}
+                                >
+                                  <Trash className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-[9px] font-black uppercase text-gray-500">
+                                  {currentLanguage === 'FR' ? 'Quantité' : 'Quantity'}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={m.quantity || ''}
+                                    onChange={event => setReportedMaterials(current => current.map((item, itemIndex) => itemIndex === idx ? { ...item, quantity: Math.max(0, Number(event.target.value)) } : item))}
+                                    className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 p-2 text-right font-mono text-xs font-black text-white"
+                                  />
+                                </label>
+                                <label className="text-[9px] font-black uppercase text-gray-500">
+                                  {currentLanguage === 'FR' ? 'Prix unitaire' : 'Unit price'}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={m.unitPrice || ''}
+                                    onChange={event => setReportedMaterials(current => current.map((item, itemIndex) => itemIndex === idx ? { ...item, unitPrice: Math.max(0, Number(event.target.value)) } : item))}
+                                    className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 p-2 text-right font-mono text-xs font-black text-amber-300"
+                                  />
+                                </label>
+                              </div>
+                              <div className="flex items-center justify-between border-t border-gray-800 pt-2 text-[10px]">
+                                <span className="font-bold text-gray-500">{currentLanguage === 'FR' ? 'Sous-total' : 'Subtotal'}</span>
+                                <span className="font-mono text-sm font-black text-amber-300">{(m.quantity * m.unitPrice).toFixed(2)} $</span>
+                              </div>
                             </div>
                           ))
                         )}
@@ -7503,15 +7355,35 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 )}
               </div>
 
-              {/* Total simulated earnings displaying large */}
-              <div className="p-3 bg-green-950/20 border border-green-500/20 rounded-xl text-center font-sans animate-none mt-3">
-                <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest block">{t.modalRevenueEarned}</span>
-                <span className="text-2xl font-black text-green-400 font-mono">
-                  {activePunchSession.payMode === 'surface'
-                    ? reportedMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0).toFixed(2)
-                    : earningsSimulation}$
-                </span>
-              </div>
+              {/* Résumé financier : total réel et rendement horaire selon le mode. */}
+              {(() => {
+                const declaredSurfaceTotal = reportedMaterials.reduce((sum, material) => sum + (material.quantity * material.unitPrice), 0);
+                return (
+                  <div className="mt-3 space-y-3">
+                    <LiveCompensationPanel
+                      session={activePunchSession}
+                      elapsedSeconds={elapsedWorkSeconds}
+                      grossAmount={activePunchSession.payMode === 'surface' ? declaredSurfaceTotal : earningsSimulation}
+                      surfaceTotal={declaredSurfaceTotal}
+                      currentLanguage={currentLanguage}
+                      currency={companyInfo.currency || 'CAD'}
+                      compact
+                    />
+                    {activePunchSession.payMode === 'surface' && reportedMaterials.length > 0 && (
+                      <div className="grid grid-cols-2 gap-2 text-center">
+                        <div className="rounded-xl border border-gray-800 bg-gray-900 p-3">
+                          <p className="text-[9px] font-black uppercase text-gray-500">{currentLanguage === 'FR' ? 'Produits déclarés' : 'Declared products'}</p>
+                          <p className="mt-1 text-xl font-black text-white">{reportedMaterials.length}</p>
+                        </div>
+                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
+                          <p className="text-[9px] font-black uppercase text-amber-200/70">{currentLanguage === 'FR' ? 'Total de la journée' : 'Day total'}</p>
+                          <p className="mt-1 font-mono text-xl font-black text-amber-300">{declaredSurfaceTotal.toFixed(2)} $</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
               <button 
@@ -7592,75 +7464,25 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </div>
       )}
 
-      {/* -------------------- INTERACTIVE VALIDATION TOUR OVERLAY -------------------- */}
-      {tourStep !== null && TOUR_STEPS[tourStep] && (
-        <div id="interactive-val-tour" className="fixed bottom-6 right-6 left-6 md:left-auto md:w-[440px] bg-[#16191F]/95 backdrop-blur-md border border-orange-500/30 rounded-2xl p-5 shadow-2xl z-[9999] text-left space-y-4 animate-fade-in font-sans">
-          <div className="flex justify-between items-start gap-4">
-            <span className="p-1 px-2.5 bg-orange-600/15 border border-orange-500/20 text-orange-400 font-bold uppercase font-mono text-[9px] rounded-lg tracking-wider">
-              {TOUR_STEPS[tourStep].badgeText} ({t.tourStepWord} {tourStep + 1} / {TOUR_STEPS.length})
-            </span>
-            <button 
-              onClick={() => setTourStep(null)}
-              className="text-gray-400 hover:text-white transition cursor-pointer font-bold text-xs"
-            >
-              {t.skipBtn}
-            </button>
-          </div>
-
-          <div className="space-y-1.5">
-            <h4 className="text-sm font-black text-white flex items-center gap-1.5">
-              <span className="text-orange-400">⚡</span> {TOUR_STEPS[tourStep].title}
-            </h4>
-            <p className="text-[11px] text-gray-300 leading-relaxed">
-              {TOUR_STEPS[tourStep].description}
-            </p>
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-gray-850">
-            <button
-              disabled={tourStep === 0}
-              onClick={() => {
-                const prev = tourStep - 1;
-                setTourStep(prev);
-                const step = TOUR_STEPS[prev];
-                if (step && step.targetTab) {
-                  setActiveTab(step.targetTab as any);
-                }
-              }}
-              className="px-3 py-1 bg-gray-800 hover:bg-gray-750 text-gray-300 text-[10px] font-bold rounded-lg transition disabled:opacity-30 cursor-pointer"
-            >
-              {t.prevStepBtn}
-            </button>
-
-            <div className="flex gap-1.5">
-              {tourStep < TOUR_STEPS.length - 1 ? (
-                <button
-                  onClick={() => {
-                    const next = tourStep + 1;
-                    setTourStep(next);
-                    const step = TOUR_STEPS[next];
-                    if (step && step.targetTab) {
-                      setActiveTab(step.targetTab as any);
-                    }
-                  }}
-                  className="px-3 py-1 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white text-[10px] font-black rounded-lg transition shadow cursor-pointer text-center"
-                >
-                  {t.nextStepBtn}
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    setTourStep(null);
-                    alert(t.tourCongrats);
-                  }}
-                  className="px-4 py-1 bg-green-600 hover:bg-green-500 text-white text-[10px] font-black rounded-lg transition cursor-pointer"
-                >
-                  {t.finishTourBtn}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* -------------------- CENTRE D’AIDE ET DE FORMATION -------------------- */}
+      {helpCenterOpen && (
+        <Suspense fallback={<LazySectionFallback />}>
+          <UserHelpCenter
+            open={helpCenterOpen}
+            onClose={() => setHelpCenterOpen(false)}
+            language={currentLanguage}
+            role={activeEmployee?.role || 'employee'}
+            employeeId={activeEmployee?.id || 'guest'}
+            employeeName={activeEmployee?.name || (currentLanguage === 'FR' ? 'nouvel utilisateur' : 'new user')}
+            activeTab={activeTab}
+            onNavigate={(tab, settingsTab) => {
+              setActiveTab(tab);
+              if (typeof settingsTab === 'number') setActiveSettingsTab(settingsTab);
+              setShowMoreMenu(false);
+              setHelpCenterOpen(false);
+            }}
+          />
+        </Suspense>
       )}
 
     </div>

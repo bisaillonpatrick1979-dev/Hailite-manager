@@ -1,14 +1,15 @@
 // Couche de synchronisation avec la base de données Supabase (voir server.ts /api/db,
-// /api/hydrate, et db.ts). Conçue pour être résiliente : le store applicatif reste
-// fonctionnel sur LocalStorage même si ces appels échouent (réseau absent, Supabase non
-// configuré, etc.) — voir chaque action de store.ts, qui appelle ces fonctions en
-// "best effort" (jamais bloquant, jamais fatal pour l'UI).
+// /api/hydrate, et db.ts). Les changements sont reflétés immédiatement en mémoire,
+// mais les données métier ne sont plus persistées dans localStorage. Tout échec cloud
+// déclenche un état visible dans l'interface afin que l'utilisateur sache que la
+// sauvegarde distante n'a pas abouti.
 import type {
-  Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
+  Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem, ToolAsset, ToolTheftReport,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
   GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead,
   ShiftAssignment, SafetyRecord
 } from './types';
+import { LOCAL_TEST_MODE } from './testProfiles';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
 // identifiants "prefix-Date.now()" ne sont pas des UUID valides et feraient échouer
@@ -25,41 +26,41 @@ export function genId(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Session : jeton JWT signé par le serveur (voir auth.ts). Le NIP est vérifié
-// CÔTÉ SERVEUR ; le navigateur ne conserve que le jeton de session.
+// Session : le serveur place le JWT dans un cookie HttpOnly SameSite=Strict.
+// JavaScript ne peut donc ni le lire ni l'exfiltrer depuis localStorage.
 // ---------------------------------------------------------------------------
-const TOKEN_KEY = 'gcp_authToken';
-let authToken: string | null = (() => {
-  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
-})();
+let authenticatedSession = false;
 
-export function setAuthToken(token: string | null) {
-  authToken = token;
+export function setAuthenticatedSession(active: boolean) {
+  authenticatedSession = active;
+  // Purge les jetons lisibles laissés par les versions précédentes.
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem('gcp_authToken');
+    localStorage.removeItem('gcp_auth_token');
+    localStorage.removeItem('gcp_ai_token');
   } catch { /* stockage local indisponible */ }
 }
-export function getAuthToken(): string | null { return authToken; }
+export function hasAuthenticatedSession(): boolean { return authenticatedSession; }
 
 export function authHeaders(): Record<string, string> {
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+  return {};
 }
 
 export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
 
-// Connexion vérifiée côté serveur : retourne et mémorise le jeton de session.
+// Connexion vérifiée côté serveur : le cookie HttpOnly est mémorisé par le navigateur.
 export async function authLogin(employeeId: string, nip: string):
   Promise<{ status: AuthLoginStatus; user?: { id: string; name: string; role: string } }> {
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ employeeId, nip })
     });
     if (res.ok) {
       const data = await res.json();
-      setAuthToken(data.token);
+      setAuthenticatedSession(true);
       return { status: 'ok', user: data.user };
     }
     if (res.status === 401) return { status: 'invalid' };
@@ -70,11 +71,19 @@ export async function authLogin(employeeId: string, nip: string):
   }
 }
 
-// Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
-export interface DirectoryUser { id: string; name: string; role: string; workerType: string; avatar: string }
-export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
+export async function authLogout(): Promise<void> {
+  setAuthenticatedSession(false);
   try {
-    const res = await fetch('/api/auth/directory');
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch { /* le cookie expirera côté serveur même si le réseau est coupé */ }
+}
+
+// Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
+export interface DirectoryUser { id: string; name: string; avatar: string }
+export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
+  if (!cloudSyncAllowed) return [];
+  try {
+    const res = await fetch('/api/auth/directory', { credentials: 'same-origin' });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data.users) ? data.users : [];
@@ -84,20 +93,36 @@ export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
 }
 
 let cloudEnabled = false;
-export function isCloudEnabled() { return cloudEnabled; }
+const localTestModeEnabled = () => LOCAL_TEST_MODE;
+let cloudSyncAllowed = (() => {
+  if (localTestModeEnabled()) return false;
+  try {
+    const company = JSON.parse(localStorage.getItem('gcp_companyInfo') || '{}');
+    return ['supabase', 'hybrid', 'cloud'].includes(company?.dataStorageMode);
+  } catch { return true; }
+})();
+export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed; }
+export function setCloudSyncAllowed(allowed: boolean) {
+  cloudSyncAllowed = localTestModeEnabled() ? false : allowed;
+  if (!cloudSyncAllowed) cloudEnabled = false;
+}
+export function isCloudSyncAllowed() { return cloudSyncAllowed; }
 
 let cachedCompanyId: string | null = null;
 export function getCompanyId() { return cachedCompanyId; }
 
 async function dbList(table: string): Promise<any[]> {
-  const res = await fetch(`/api/db/${table}`, { headers: authHeaders() });
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
+  const res = await fetch(`/api/db/${table}?limit=500`, { headers: authHeaders(), credentials: 'same-origin' });
   if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
   return res.json();
 }
 
 async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
@@ -106,8 +131,10 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
 }
 
 async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, {
     method: 'PUT',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
@@ -116,8 +143,10 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
 }
 
 async function dbUpdate(table: string, id: string, row: Record<string, any>): Promise<any> {
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}/${id}`, {
     method: 'PATCH',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
@@ -126,7 +155,8 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
 }
 
 async function dbDelete(table: string, id: string): Promise<void> {
-  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders() });
+  if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
+  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders(), credentials: 'same-origin' });
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
 }
 
@@ -138,11 +168,30 @@ let lastMutationAt = 0;
 export function noteMutation() { lastMutationAt = Date.now(); }
 export function msSinceLastMutation() { return Date.now() - lastMutationAt; }
 
-// "Best effort" : ne jamais laisser un échec réseau/Supabase casser l'interface.
-function bestEffort(promise: Promise<any>, label: string) {
+export interface CloudSyncStatusDetail {
+  status: 'pending' | 'synced' | 'error';
+  label: string;
+  message?: string;
+}
+
+function notifySync(detail: CloudSyncStatusDetail): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent<CloudSyncStatusDetail>('gcp:sync-status', { detail }));
+  }
+}
+
+// Les actions locales restent instantanées, mais un échec distant est désormais
+// visible dans l'interface au lieu d'être caché uniquement dans la console.
+function bestEffort(promise: Promise<any>, label: string): Promise<void> {
   noteMutation();
-  promise
-    .catch(err => console.warn(`[cloud-sync] ${label} a échoué (le mode local reste actif) :`, err.message))
+  notifySync({ status: 'pending', label });
+  return promise
+    .then(() => { notifySync({ status: 'synced', label }); })
+    .catch(err => {
+      const message = String(err?.message || 'Erreur de synchronisation');
+      console.warn(`[cloud-sync] ${label} a échoué :`, message);
+      notifySync({ status: 'error', label, message });
+    })
     .finally(noteMutation);
 }
 
@@ -165,10 +214,6 @@ const legacyRoleMap: Record<string, Employee['role']> = {
   secretary: 'secretary', accountant: 'accountant'
 };
 
-// Les anciens NIP sont stockés hachés (bcrypt, "$2a$...") : impossible à retaper tel
-// quel dans l'écran de connexion — on le vide pour que l'admin en attribue un nouveau.
-const isHashedNip = (v: string) => v.startsWith('$2');
-
 // Normalisation des rôles hérités pour tout usage côté client (annuaire de
 // connexion inclus) : "owner" doit donner accès admin dans l'interface.
 export const normalizeAppRole = (r: string | null | undefined): Employee['role'] =>
@@ -177,7 +222,9 @@ export const normalizeAppRole = (r: string | null | undefined): Employee['role']
 export function employeeToRow(e: Employee, companyId?: string) {
   return {
     id: e.id, company_id: companyId, full_name: e.name, avatar_initials: e.name.slice(0, 2).toUpperCase(),
-    role: e.role, access_code_hash: e.nip, pay_mode: workModeToPayMode[e.workMode || 'hour'] || 'horaire',
+    role: e.role,
+    ...(/^\d{4}$/.test(e.nip || '') ? { access_code: e.nip } : {}),
+    pay_mode: workModeToPayMode[e.workMode || 'hour'] || 'horaire',
     pay_rate: e.hourlyRate, is_active: true, worker_type: e.workerType, as_number: e.asNumber,
     phone: e.phone, address: e.address, hire_date: e.hireDate || null, avatar: e.avatar,
     level: e.level, xp: e.xp, contract_renewal_date: e.contractRenewalDate || null,
@@ -186,14 +233,16 @@ export function employeeToRow(e: Employee, companyId?: string) {
     emergency_contact_phone: e.emergencyContactPhone, emergency_contact_relation: e.emergencyContactRelation,
     business_name: e.businessName, gst_number: e.gstNumber, sin: e.sin, employee_province: e.employeeProvince,
     pay_frequency: e.payFrequency, pay_period_start: e.payPeriodStart || null, annual_salary: e.annualSalary,
-    credentials: e.credentials || []
+    credentials: e.credentials || [], business_logo: e.businessLogo,
+    privacy_notice_version: e.privacyNoticeVersion, privacy_notice_acknowledged_at: e.privacyNoticeAcknowledgedAt || null,
+    location_notice_acknowledged_at: e.locationNoticeAcknowledgedAt || null
   };
 }
 
 export function rowToEmployee(r: any): Employee {
   return {
     id: r.id, name: r.full_name,
-    nip: r.access_code_hash && !isHashedNip(r.access_code_hash) ? r.access_code_hash : '',
+    nip: '',
     role: legacyRoleMap[r.role] || 'employee', hourlyRate: r.pay_rate || 0,
     workerType: r.worker_type || '', asNumber: r.as_number || '', phone: r.phone || '', address: r.address || '',
     hireDate: r.hire_date || '', avatar: r.avatar || '', level: r.level || 1, xp: r.xp || 0,
@@ -205,7 +254,10 @@ export function rowToEmployee(r: any): Employee {
     gstNumber: r.gst_number || undefined, sin: r.sin || undefined, employeeProvince: r.employee_province || undefined,
     payFrequency: r.pay_frequency || undefined, payPeriodStart: r.pay_period_start || undefined,
     annualSalary: r.annual_salary ?? undefined,
-    credentials: Array.isArray(r.credentials) ? r.credentials : []
+    credentials: Array.isArray(r.credentials) ? r.credentials : [], businessLogo: r.business_logo || undefined,
+    privacyNoticeVersion: r.privacy_notice_version || undefined,
+    privacyNoticeAcknowledgedAt: r.privacy_notice_acknowledged_at || undefined,
+    locationNoticeAcknowledgedAt: r.location_notice_acknowledged_at || undefined
   };
 }
 
@@ -236,7 +288,6 @@ export function rowToProject(r: any, tasks: any[], tools: any[], assignments: an
 // bloc "delete puis reinsert", l'identité exacte n'a pas d'importance côté cloud).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const asUuid = (id: string) => (UUID_RE.test(id) ? id : genId());
-export const isUuid = (id: string) => UUID_RE.test(id);
 
 export function projectTasksToRows(p: Project) {
   return (p.tasks || []).map(t => ({ id: asUuid(t.id), project_id: p.id, title: t.text, status: t.done ? 'done' : 'todo', priority: t.priority }));
@@ -248,67 +299,33 @@ export function projectAssignmentsToRows(p: Project) {
   return p.assignedEmployees.map(empId => ({ project_id: p.id, user_id: empId }));
 }
 
-// Remplace toutes les tâches/outils/assignations distants d'un chantier par son état
-// courant (même stratégie "delete puis reinsert" que syncDocumentLines : ces
-// sous-listes n'ont pas d'identité stable côté UI, un diff fin serait fragile).
-export async function syncProjectChildren(project: Project) {
-  noteMutation();
-  try {
-    const [existingTasks, existingTools, existingAssignments] = await Promise.all([
-      dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
-    ]);
-    const staleTasks = existingTasks.filter((r: any) => r.project_id === project.id);
-    const staleTools = existingTools.filter((r: any) => r.project_id === project.id);
-    const staleAssignments = existingAssignments.filter((r: any) => r.project_id === project.id);
-    await Promise.all([
-      ...staleTasks.map((r: any) => dbDelete('project_tasks', r.id)),
-      ...staleTools.map((r: any) => dbDelete('project_tools', r.id)),
-      ...staleAssignments.map((r: any) => dbDelete('project_assignments', r.id))
-    ]);
-    await Promise.all([
-      ...projectTasksToRows(project).map(r => dbInsert('project_tasks', r)),
-      ...projectToolsToRows(project).map(r => dbInsert('project_tools', r)),
-      ...projectAssignmentsToRows(project).map(r => dbInsert('project_assignments', r))
-    ]);
-  } catch (err: any) {
-    console.warn('[cloud-sync] syncProjectChildren a échoué :', err.message);
-  } finally {
-    noteMutation();
-  }
+async function replaceProjectChildren(project: Project): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(project.id)}/children`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      tasks: projectTasksToRows(project),
+      tools: projectToolsToRows(project),
+      assignments: projectAssignmentsToRows(project)
+    })
+  });
+  if (!res.ok) throw new Error(`PUT project children → ${res.status}`);
+}
+
+// Une seule requête appelle une fonction Postgres transactionnelle : aucune
+// fenêtre ne subsiste entre la suppression et la réinsertion des enfants.
+export function syncProjectChildren(project: Project): Promise<void> {
+  return bestEffort(replaceProjectChildren(project), `chantier ${project.id}`);
 }
 
 // Insère d'abord le chantier (contrainte de clé étrangère des tables enfants),
 // puis synchronise tâches/outils/assignations — ne doivent pas partir en parallèle.
-export async function syncProjectInsert(project: Project) {
-  noteMutation();
-  try {
-    await dbInsert('projects', projectToRow(project));
-    await syncProjectChildren(project);
-  } catch (err: any) {
-    console.warn('[cloud-sync] syncProjectInsert a échoué :', err.message);
-  } finally {
-    noteMutation();
-  }
-}
-
-// Supprime les enfants distants d'un chantier avant sa suppression, en défense
-// contre l'absence éventuelle de ON DELETE CASCADE sur project_tasks/project_assignments.
-export async function syncDeleteProjectChildren(projectId: string) {
-  noteMutation();
-  try {
-    const [existingTasks, existingTools, existingAssignments] = await Promise.all([
-      dbList('project_tasks'), dbList('project_tools'), dbList('project_assignments')
-    ]);
-    await Promise.all([
-      ...existingTasks.filter((r: any) => r.project_id === projectId).map((r: any) => dbDelete('project_tasks', r.id)),
-      ...existingTools.filter((r: any) => r.project_id === projectId).map((r: any) => dbDelete('project_tools', r.id)),
-      ...existingAssignments.filter((r: any) => r.project_id === projectId).map((r: any) => dbDelete('project_assignments', r.id))
-    ]);
-  } catch (err: any) {
-    console.warn('[cloud-sync] syncDeleteProjectChildren a échoué :', err.message);
-  } finally {
-    noteMutation();
-  }
+export function syncProjectInsert(project: Project): Promise<void> {
+  return bestEffort(
+    dbInsert('projects', projectToRow(project)).then(() => replaceProjectChildren(project)),
+    `création chantier ${project.id}`
+  );
 }
 
 export function punchToRow(p: PunchSession, companyId?: string) {
@@ -339,7 +356,10 @@ export function invoiceToRow(i: Invoice, companyId?: string) {
     invoice_number: i.invoiceNumber, date: i.date, session_ids: i.sessionIds, hours: i.totalHours,
     amount: i.amount, gst_amount: i.gstAmount, qst_amount: i.qstAmount, total_with_taxes: i.totalWithTaxes,
     status: i.status, notes: i.notes, tax_included: i.taxIncluded, employee_signature: i.employeeSignature,
-    employee_signed_at: i.employeeSignedAt
+    employee_signed_at: i.employeeSignedAt, currency: i.currency, tax_rate1: i.taxRate1, tax_rate2: i.taxRate2,
+    local_tax_rate: i.localTaxRate, local_tax_amount: i.localTaxAmount, tax_rate1_name: i.taxRate1Name,
+    tax_rate2_name: i.taxRate2Name, issuer_name: i.issuerName, issuer_address: i.issuerAddress,
+    issuer_tax_number: i.issuerTaxNumber, issuer_logo: i.issuerLogo, recipient_name: i.recipientName
   };
 }
 
@@ -349,7 +369,13 @@ export function rowToInvoice(r: any): Invoice {
     date: r.date || '', sessionIds: r.session_ids || [], totalHours: r.hours || 0, amount: r.amount || 0,
     gstAmount: r.gst_amount || 0, qstAmount: r.qst_amount || 0, totalWithTaxes: r.total_with_taxes || 0,
     status: r.status || 'draft', notes: r.notes || undefined, taxIncluded: r.tax_included || false,
-    employeeSignature: r.employee_signature || undefined, employeeSignedAt: r.employee_signed_at || undefined
+    employeeSignature: r.employee_signature || undefined, employeeSignedAt: r.employee_signed_at || undefined,
+    currency: r.currency || undefined, taxRate1: r.tax_rate1 ?? undefined, taxRate2: r.tax_rate2 ?? undefined,
+    localTaxRate: r.local_tax_rate ?? undefined, localTaxAmount: r.local_tax_amount ?? undefined,
+    taxRate1Name: r.tax_rate1_name || undefined, taxRate2Name: r.tax_rate2_name || undefined,
+    issuerName: r.issuer_name || undefined, issuerAddress: r.issuer_address || undefined,
+    issuerTaxNumber: r.issuer_tax_number || undefined, issuerLogo: r.issuer_logo || undefined,
+    recipientName: r.recipient_name || undefined
   };
 }
 
@@ -383,6 +409,67 @@ export function rowToInventory(r: any): InventoryItem {
   return { id: r.id, name: r.name || '', quantity: r.quantity || 0, unit: r.unit || '', emoji: r.emoji || '📦', minThreshold: r.min_threshold || 0 };
 }
 
+
+export function toolAssetToRow(tool: ToolAsset, companyId?: string) {
+  return {
+    id: tool.id, company_id: companyId, name: tool.name, category: tool.category,
+    brand: tool.brand, model: tool.model, serial_number: tool.serialNumber,
+    asset_tag: tool.assetTag, purchase_date: tool.purchaseDate || null,
+    purchase_price: tool.purchasePrice, replacement_value: tool.replacementValue,
+    seller: tool.seller, warranty_expiry: tool.warrantyExpiry || null,
+    current_location: tool.currentLocation, assigned_employee_id: tool.assignedEmployeeId || null,
+    assigned_employee_name: tool.assignedEmployeeName || null, status: tool.status, notes: tool.notes,
+    tool_photo: tool.toolPhoto || null, serial_photo: tool.serialPhoto || null,
+    receipt_photo: tool.receiptPhoto || null, receipt_file_name: tool.receiptFileName || null,
+    created_at: tool.createdAt, updated_at: tool.updatedAt
+  };
+}
+
+export function rowToToolAsset(r: any): ToolAsset {
+  return {
+    id: r.id, name: r.name || '', category: r.category || 'Autre', brand: r.brand || '',
+    model: r.model || '', serialNumber: r.serial_number || '', assetTag: r.asset_tag || '',
+    purchaseDate: r.purchase_date || '', purchasePrice: Number(r.purchase_price || 0),
+    replacementValue: Number(r.replacement_value || 0), seller: r.seller || '',
+    warrantyExpiry: r.warranty_expiry || '', currentLocation: r.current_location || '',
+    assignedEmployeeId: r.assigned_employee_id || undefined,
+    assignedEmployeeName: r.assigned_employee_name || undefined,
+    status: r.status || 'in_service', notes: r.notes || '', toolPhoto: r.tool_photo || undefined,
+    serialPhoto: r.serial_photo || undefined, receiptPhoto: r.receipt_photo || undefined,
+    receiptFileName: r.receipt_file_name || undefined,
+    createdAt: r.created_at || new Date().toISOString(), updatedAt: r.updated_at || r.created_at || new Date().toISOString()
+  };
+}
+
+export function toolTheftReportToRow(report: ToolTheftReport, companyId?: string) {
+  return {
+    id: report.id, company_id: companyId, incident_date: report.incidentDate,
+    incident_time: report.incidentTime || null, incident_location: report.incidentLocation,
+    circumstances: report.circumstances, discovered_by: report.discoveredBy,
+    police_service: report.policeService, police_file_number: report.policeFileNumber,
+    insurer: report.insurer, insurance_claim_number: report.insuranceClaimNumber,
+    contact_name: report.contactName, contact_phone: report.contactPhone, contact_email: report.contactEmail,
+    tool_ids: report.toolIds, tool_snapshots: report.toolSnapshots,
+    total_replacement_value: report.totalReplacementValue, status: report.status,
+    created_at: report.createdAt, updated_at: report.updatedAt
+  };
+}
+
+export function rowToToolTheftReport(r: any): ToolTheftReport {
+  return {
+    id: r.id, incidentDate: r.incident_date || '', incidentTime: r.incident_time || '',
+    incidentLocation: r.incident_location || '', circumstances: r.circumstances || '',
+    discoveredBy: r.discovered_by || '', policeService: r.police_service || '',
+    policeFileNumber: r.police_file_number || '', insurer: r.insurer || '',
+    insuranceClaimNumber: r.insurance_claim_number || '', contactName: r.contact_name || '',
+    contactPhone: r.contact_phone || '', contactEmail: r.contact_email || '',
+    toolIds: Array.isArray(r.tool_ids) ? r.tool_ids : [],
+    toolSnapshots: Array.isArray(r.tool_snapshots) ? r.tool_snapshots : [],
+    totalReplacementValue: Number(r.total_replacement_value || 0), status: r.status || 'draft',
+    createdAt: r.created_at || new Date().toISOString(), updatedAt: r.updated_at || r.created_at || new Date().toISOString()
+  };
+}
+
 export function supplierOrderToRow(o: SupplierOrder, companyId?: string) {
   return { id: o.id, company_id: companyId, supplier_name: o.supplierName, date: o.date, status: o.status, total_amount: o.totalAmount };
 }
@@ -397,19 +484,15 @@ export function orderItemsToRows(o: SupplierOrder) {
   return o.items.map(it => ({ order_id: o.id, name: it.name, quantity: it.quantity, price: it.price }));
 }
 
-export async function syncOrderItems(order: SupplierOrder) {
-  noteMutation();
-  try {
-    const existing = await dbList('supplier_order_items');
-    const stale = existing.filter((r: any) => r.order_id === order.id);
-    await Promise.all(stale.map((r: any) => dbDelete('supplier_order_items', r.id)));
-    const rows = orderItemsToRows(order);
-    await Promise.all(rows.map(r => dbInsert('supplier_order_items', r)));
-  } catch (err: any) {
-    console.warn('[cloud-sync] syncOrderItems a échoué :', err.message);
-  } finally {
-    noteMutation();
-  }
+async function replaceOrderItems(order: SupplierOrder): Promise<void> {
+  const existing = await dbList('supplier_order_items');
+  const stale = existing.filter((r: any) => r.order_id === order.id);
+  await Promise.all(stale.map((r: any) => dbDelete('supplier_order_items', r.id)));
+  await Promise.all(orderItemsToRows(order).map(row => dbInsert('supplier_order_items', row)));
+}
+
+export function syncOrderItems(order: SupplierOrder): Promise<void> {
+  return bestEffort(replaceOrderItems(order), `articles commande ${order.id}`);
 }
 
 export function clientToRow(c: Client, companyId?: string) {
@@ -437,7 +520,23 @@ export function companyInfoToRow(c: CompanyInfo) {
     payroll_custom2_name: c.payrollCustom2Name, payroll_custom2_amount: c.payrollCustom2Amount,
     is_onboarded: c.isOnboarded, country: c.country, region: c.region, tax_rate1: c.taxRate1, tax_rate2: c.taxRate2,
     tax_rate1_name: c.taxRate1Name, tax_rate2_name: c.taxRate2Name, payment_deposit_pct: c.paymentDepositPct,
-    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider
+    payment_mid_pct: c.paymentMidPct, payment_final_pct: c.paymentFinalPct, ai_provider: c.aiProvider,
+    currency: c.currency, unit_system: c.unitSystem, date_locale: c.dateLocale, local_tax_rate: c.localTaxRate,
+    tax_confirmed_at: c.taxConfirmedAt || null, tax_disclaimer_accepted_at: c.taxDisclaimerAcceptedAt || null,
+    data_storage_mode: c.dataStorageMode, cloud_sync_consent: c.cloudSyncConsent, cloud_region: c.cloudRegion,
+    privacy_policy_version: c.privacyPolicyVersion, privacy_policy_accepted_at: c.privacyPolicyAcceptedAt || null,
+    privacy_contact_email: c.privacyContactEmail, privacy_officer_name: c.privacyOfficerName,
+    retention_months: c.retentionMonths, employee_data_basis_confirmed: c.employeeDataBasisConfirmed,
+    location_data_notice_confirmed: c.locationDataNoticeConfirmed,
+    cross_border_transfer_acknowledged_at: c.crossBorderTransferAcknowledgedAt || null,
+    processor_terms_accepted_at: c.processorTermsAcceptedAt || null, compliance_version: c.complianceVersion,
+    personal_cloud_provider: c.personalCloudProvider || null,
+    backup_folder_name: c.backupFolderName || null,
+    backup_file_name: c.backupFileName || null,
+    backup_connection_method: c.backupConnectionMethod || null,
+    personal_backup_connected: c.personalBackupConnected ?? false,
+    personal_backup_automatic: c.personalBackupAutomatic ?? false,
+    last_personal_backup_at: c.lastPersonalBackupAt || null
   };
 }
 
@@ -462,7 +561,24 @@ export function rowToCompanyInfo(r: any): Partial<CompanyInfo> {
     taxRate1: r.tax_rate1 ?? undefined, taxRate2: r.tax_rate2 ?? undefined, taxRate1Name: r.tax_rate1_name || undefined,
     taxRate2Name: r.tax_rate2_name || undefined, paymentDepositPct: r.payment_deposit_pct ?? undefined,
     paymentMidPct: r.payment_mid_pct ?? undefined, paymentFinalPct: r.payment_final_pct ?? undefined,
-    aiProvider: r.ai_provider || undefined
+    aiProvider: r.ai_provider || undefined, currency: r.currency || undefined, unitSystem: r.unit_system || undefined,
+    dateLocale: r.date_locale || undefined, localTaxRate: r.local_tax_rate ?? undefined,
+    taxConfirmedAt: r.tax_confirmed_at || undefined, taxDisclaimerAcceptedAt: r.tax_disclaimer_accepted_at || undefined,
+    dataStorageMode: r.data_storage_mode || undefined, cloudSyncConsent: r.cloud_sync_consent ?? undefined,
+    cloudRegion: r.cloud_region || undefined, privacyPolicyVersion: r.privacy_policy_version || undefined,
+    privacyPolicyAcceptedAt: r.privacy_policy_accepted_at || undefined, privacyContactEmail: r.privacy_contact_email || undefined,
+    privacyOfficerName: r.privacy_officer_name || undefined, retentionMonths: r.retention_months ?? undefined,
+    employeeDataBasisConfirmed: r.employee_data_basis_confirmed ?? undefined,
+    locationDataNoticeConfirmed: r.location_data_notice_confirmed ?? undefined,
+    crossBorderTransferAcknowledgedAt: r.cross_border_transfer_acknowledged_at || undefined,
+    processorTermsAcceptedAt: r.processor_terms_accepted_at || undefined, complianceVersion: r.compliance_version || undefined,
+    personalCloudProvider: r.personal_cloud_provider || undefined,
+    backupFolderName: r.backup_folder_name || undefined,
+    backupFileName: r.backup_file_name || undefined,
+    backupConnectionMethod: r.backup_connection_method || undefined,
+    personalBackupConnected: r.personal_backup_connected ?? undefined,
+    personalBackupAutomatic: r.personal_backup_automatic ?? undefined,
+    lastPersonalBackupAt: r.last_personal_backup_at || undefined
   };
 }
 
@@ -683,13 +799,20 @@ export function rowToChangeOrder(r: any): ChangeOrder {
 }
 
 export function projectPhotoToRow(p: ProjectPhoto, companyId?: string) {
-  return {
+  const row: Record<string, unknown> = {
     id: p.id, company_id: companyId, project_id: p.projectId, phase: p.phase,
-    image_url: p.imageUrl, caption: p.caption || null, taken_at: p.takenAt,
+    caption: p.caption || null, taken_at: p.takenAt,
     taken_by: p.takenById || null, taken_by_name: p.takenByName || null,
     latitude: typeof p.latitude === 'number' ? p.latitude : null,
     longitude: typeof p.longitude === 'number' ? p.longitude : null
   };
+  // Une nouvelle photo est remise au serveur une seule fois. L'URL
+  // authentifiée reçue à l'hydratation n'est jamais renvoyée comme si elle
+  // contenait les octets de l'image lors d'une simple modification de légende.
+  if (/^data:image\/(?:jpeg|png|webp);base64,/.test(p.imageUrl || '')) {
+    row.image_url = p.imageUrl;
+  }
+  return row;
 }
 export function rowToProjectPhoto(r: any): ProjectPhoto {
   return {
@@ -837,45 +960,39 @@ export function syncDelete(table: string, id: string) { bestEffort(dbDelete(tabl
 // Insère d'abord la ligne "documents" (contrainte de clé étrangère de document_items),
 // puis synchronise ses lignes — les deux appels best-effort ne doivent pas partir en parallèle.
 export async function syncDocumentInsert(doc: GCPDocument) {
-  noteMutation();
-  try {
-    await dbInsert('documents', documentToRow(doc));
-    await syncDocumentLines(doc);
-  } catch (err: any) {
-    console.warn('[cloud-sync] syncDocumentInsert a échoué (le mode local reste actif) :', err.message);
-  } finally {
-    noteMutation();
-  }
+  return bestEffort(
+    dbInsert('documents', documentToRow(doc)).then(() => replaceDocumentLines(doc)),
+    `document ${doc.id}`
+  );
 }
 
-export async function syncDocumentLines(doc: GCPDocument) {
+async function replaceDocumentLines(doc: GCPDocument): Promise<void> {
   // Remplace toutes les lignes existantes du document par l'état courant (plus simple et
   // plus sûr qu'un diff fin, car les lignes n'ont pas d'identité stable côté UI).
-  try {
-    const existing = await dbList('document_items');
-    const stale = existing.filter((r: any) => r.document_id === doc.id);
-    await Promise.all(stale.map((r: any) => dbDelete('document_items', r.id)));
-    const rows = documentLinesToRows(doc);
-    await Promise.all(rows.map(r => dbInsert('document_items', r)));
-  } catch (err: any) {
-    console.warn('[cloud-sync] syncDocumentLines a échoué :', err.message);
-  }
+  const existing = await dbList('document_items');
+  const stale = existing.filter((r: any) => r.document_id === doc.id);
+  await Promise.all(stale.map((r: any) => dbDelete('document_items', r.id)));
+  await Promise.all(documentLinesToRows(doc).map(row => dbInsert('document_items', row)));
+}
+
+export function syncDocumentLines(doc: GCPDocument): Promise<void> {
+  return bestEffort(replaceDocumentLines(doc), `lignes document ${doc.id}`);
 }
 
 export interface CloudHydrateResult {
   enabled: boolean;
   needsAuth?: boolean;
   companyId?: string;
+  viewer?: { userId: string; role: string; name?: string };
   tables: Record<string, any[]>;
 }
 
 export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
+  if (!cloudSyncAllowed) return { enabled: false, tables: {} };
   try {
-    const res = await fetch('/api/hydrate', { headers: authHeaders() });
+    const res = await fetch('/api/hydrate', { headers: authHeaders(), credentials: 'same-origin' });
     if (res.status === 401) {
-      // Session absente ou expirée : les données restent locales tant que
-      // l'utilisateur ne s'est pas connecté (le jeton périmé est purgé).
-      if (authToken) setAuthToken(null);
+      setAuthenticatedSession(false);
       cloudEnabled = false;
       return { enabled: false, needsAuth: true, tables: {} };
     }
@@ -883,10 +1000,11 @@ export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
     const data = await res.json();
     cloudEnabled = !!data.enabled;
     if (!cloudEnabled) return { enabled: false, tables: {} };
+    setAuthenticatedSession(true);
     cachedCompanyId = data.companyId || null;
-    return { enabled: true, companyId: data.companyId, tables: data };
+    return { enabled: true, companyId: data.companyId, viewer: data.viewer, tables: data };
   } catch (err: any) {
-    console.warn('[cloud-sync] hydrateFromCloud a échoué, mode local (LocalStorage) actif :', err.message);
+    console.warn('[cloud-sync] hydrateFromCloud a échoué; les données en mémoire sont conservées :', err.message);
     cloudEnabled = false;
     return { enabled: false, tables: {} };
   }

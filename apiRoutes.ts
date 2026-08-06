@@ -9,19 +9,21 @@
 // redaction des colonnes sensibles (NIP, NAS/SIN, banque, clés API) et un
 // journal d'audit sur toutes les écritures.
 import express from 'express';
+import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 // Extension .js obligatoire (ESM sur Vercel) — voir le commentaire dans api/index.ts.
 import { supabase, supabaseEnabled, resolveCompanyId, TABLES_WITH_COMPANY_ID, TABLE_ID_COLUMN } from './db.js';
 import {
   AppRole, AuthContext, AuthedRequest,
   requireAuth, attachAuthOptional, verifyCredentials, signSession,
-  isLoginThrottled, recordLoginFailure, clearLoginFailures, logAudit
+  isLoginThrottled, recordLoginFailure, clearLoginFailures, logAudit,
+  createLoginHandle, hashPin, SESSION_COOKIE_NAME
 } from './auth.js';
 
 // Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
 const KNOWN_TABLES = [
   'companies', 'app_users', 'projects', 'project_tools', 'project_assignments', 'project_tasks',
-  'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders', 'supplier_order_items',
+  'punches', 'catalog_items', 'suppliers', 'inventory_items', 'tool_assets', 'tool_theft_reports', 'supplier_orders', 'supplier_order_items',
   'clients', 'documents', 'document_items', 'document_payments', 'payroll_entries', 'payroll_payments',
   'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
   'project_photos', 'change_orders', 'insurance_claims', 'leads', 'shift_assignments', 'safety_records'
@@ -39,12 +41,13 @@ const TABLE_READ_ROLES: Record<string, AppRole[]> = {
   companies: ALL_ROLES, app_users: ALL_ROLES,
   projects: ALL_ROLES, project_tasks: ALL_ROLES, project_tools: ALL_ROLES, project_assignments: ALL_ROLES,
   punches: ALL_ROLES, catalog_items: ALL_ROLES, suppliers: ALL_ROLES, inventory_items: ALL_ROLES,
+  tool_assets: OFFICE, tool_theft_reports: OFFICE,
   supplier_orders: ALL_ROLES, supplier_order_items: ALL_ROLES,
   clients: OFFICE, documents: OFFICE, document_items: OFFICE, document_payments: OFFICE,
-  payroll_entries: ALL_ROLES, payroll_payments: ALL_ROLES, production_entries: ALL_ROLES,
+  payroll_entries: ALL_ROLES, payroll_payments: ALL_ROLES, production_entries: OFFICE,
   weekly_goals: ALL_ROLES, motivation_teams: ALL_ROLES, motivation_goals: ALL_ROLES,
   hr_alerts: MANAGERS, expenses: OFFICE, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
-  insurance_claims: ALL_ROLES, leads: OFFICE, shift_assignments: ALL_ROLES,
+  insurance_claims: OFFICE, leads: OFFICE, shift_assignments: ALL_ROLES,
   safety_records: ALL_ROLES
 };
 
@@ -52,6 +55,7 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
   companies: ADMIN_ONLY, app_users: ADMIN_ONLY,
   projects: MANAGERS, project_tasks: ALL_ROLES, project_tools: ALL_ROLES, project_assignments: MANAGERS,
   punches: ALL_ROLES, catalog_items: MANAGERS, suppliers: MANAGERS, inventory_items: MANAGERS,
+  tool_assets: MANAGERS, tool_theft_reports: MANAGERS,
   supplier_orders: MANAGERS, supplier_order_items: MANAGERS,
   clients: MANAGERS, documents: MANAGERS, document_items: MANAGERS, document_payments: MANAGERS,
   payroll_entries: ALL_ROLES, payroll_payments: ADMIN_ONLY, production_entries: MANAGERS,
@@ -71,23 +75,28 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
 
 // Colonne "propriétaire" pour les contraintes de ligne des rôles non gestionnaires
 const OWNER_COLUMN: Record<string, string> = {
+  app_users: 'id',
   punches: 'employee_id',
   payroll_entries: 'user_id',
   payroll_payments: 'employee_id',
-  weekly_goals: 'employee_id'
+  weekly_goals: 'employee_id',
+  shift_assignments: 'employee_id'
 };
 // Lecture restreinte à ses propres lignes pour les rôles hors bureau
-const READ_OWN_ONLY = new Set(['payroll_entries', 'payroll_payments']);
+const READ_OWN_ONLY = new Set([
+  'app_users', 'punches', 'payroll_entries', 'payroll_payments', 'weekly_goals', 'shift_assignments'
+]);
 // Écriture restreinte à ses propres lignes pour les rôles non gestionnaires
 const WRITE_OWN_ONLY = new Set(['punches', 'payroll_entries', 'weekly_goals']);
 
 // ---------------------------------------------------------------------------
 // Redaction des colonnes sensibles — le navigateur (et donc le modèle IA qui
 // reçoit son contexte) ne voit jamais : clés API, NIP, NAS/SIN, coordonnées
-// bancaires. Le NIP reste visible à l'admin (il le gère dans Réglages).
+// bancaires. Le NIP n'est visible pour aucun rôle, y compris l'administrateur.
 // ---------------------------------------------------------------------------
 const SENSITIVE_ALWAYS: Record<string, string[]> = {
-  companies: ['ai_api_key']
+  companies: ['ai_api_key'],
+  app_users: ['access_code_hash', 'access_code', 'nip']
 };
 const SENSITIVE_NON_ADMIN: Record<string, string[]> = {
   app_users: ['access_code_hash', 'sin'],
@@ -100,6 +109,11 @@ function sanitizeRow(table: string, row: Record<string, any>, role: AppRole): Re
   if (role !== 'admin') {
     for (const col of SENSITIVE_NON_ADMIN[table] || []) delete out[col];
   }
+  if (table === 'project_photos' && out.id) {
+    // Le chemin Storage ou l'ancienne data URL ne quitte jamais l'API. Le
+    // téléchargement passe par une route authentifiée et scopée au tenant.
+    out.image_url = `/api/files/project-photo/${encodeURIComponent(String(out.id))}`;
+  }
   return out;
 }
 function sanitizeRows(table: string, rows: any[], role: AppRole): any[] {
@@ -109,6 +123,155 @@ function sanitizeRows(table: string, rows: any[], role: AppRole): any[] {
 const isManager = (role: AppRole) => role === 'admin' || role === 'secretary';
 const canRead = (table: string, role: AppRole) => (TABLE_READ_ROLES[table] || ADMIN_ONLY).includes(role);
 const canWrite = (table: string, role: AppRole) => (TABLE_WRITE_ROLES[table] || ADMIN_ONLY).includes(role);
+const protectedRuntime = supabaseEnabled || process.env.NODE_ENV === 'production';
+const PROJECT_MEDIA_BUCKET = process.env.SUPABASE_PROJECT_MEDIA_BUCKET || 'project-media';
+
+const EMPLOYEE_PROJECT_TABLES = new Set([
+  'project_tasks', 'project_tools', 'project_assignments', 'project_photos',
+  'change_orders', 'safety_records'
+]);
+const PARENT_SCOPE: Record<string, { table: string; foreignKey: string }> = {
+  supplier_order_items: { table: 'supplier_orders', foreignKey: 'order_id' },
+  document_items: { table: 'documents', foreignKey: 'document_id' },
+  document_payments: { table: 'documents', foreignKey: 'document_id' },
+  weekly_goals: { table: 'app_users', foreignKey: 'employee_id' }
+};
+const USER_REFERENCE_COLUMN: Record<string, string> = {
+  project_assignments: 'user_id',
+  project_tasks: 'assigned_user_id',
+  punches: 'employee_id',
+  payroll_entries: 'user_id',
+  payroll_payments: 'employee_id',
+  production_entries: 'user_id',
+  weekly_goals: 'employee_id',
+  hr_alerts: 'employee_id',
+  motivation_goals: 'employee_id',
+  shift_assignments: 'employee_id'
+};
+
+async function employeeProjectIds(auth: AuthContext): Promise<string[]> {
+  if (auth.role !== 'employee' || !supabase) return [];
+  const { data, error } = await supabase
+    .from('project_assignments')
+    .select('project_id')
+    .eq('company_id', auth.companyId)
+    .eq('user_id', auth.userId)
+    .limit(500);
+  if (error) throw error;
+  return Array.from(new Set((data || []).map((row: any) => String(row.project_id)).filter(Boolean)));
+}
+
+function applyReadScope(query: any, table: string, auth: AuthContext, projectIds: string[]): any {
+  if (auth.role !== 'employee') return query;
+  if (READ_OWN_ONLY.has(table)) return query.eq(OWNER_COLUMN[table], auth.userId);
+  if (table === 'projects') {
+    return projectIds.length > 0 ? query.in('id', projectIds) : query.eq('id', '00000000-0000-0000-0000-000000000000');
+  }
+  if (table === 'project_assignments') return query.eq('user_id', auth.userId);
+  if (EMPLOYEE_PROJECT_TABLES.has(table)) {
+    return projectIds.length > 0
+      ? query.in('project_id', projectIds)
+      : query.eq('project_id', '00000000-0000-0000-0000-000000000000');
+  }
+  return query;
+}
+
+async function hasProjectAccess(auth: AuthContext, projectId: unknown): Promise<boolean> {
+  if (!supabase || typeof projectId !== 'string' || !projectId) return false;
+  const { data: project, error } = await supabase
+    .from('projects')
+    .select('id')
+    .eq('id', projectId)
+    .eq('company_id', auth.companyId)
+    .maybeSingle();
+  if (error || !project) return false;
+  if (auth.role !== 'employee') return true;
+  const { data: assignment, error: assignmentError } = await supabase
+    .from('project_assignments')
+    .select('project_id')
+    .eq('company_id', auth.companyId)
+    .eq('project_id', projectId)
+    .eq('user_id', auth.userId)
+    .maybeSingle();
+  return !assignmentError && !!assignment;
+}
+
+async function parentBelongsToCompany(table: string, payload: Record<string, any>, companyId: string): Promise<boolean> {
+  if (!supabase || !PARENT_SCOPE[table]) return true;
+  const parent = PARENT_SCOPE[table];
+  const parentId = String(payload[parent.foreignKey] || '');
+  if (!parentId) return false;
+  const { data, error } = await supabase
+    .from(parent.table)
+    .select('id')
+    .eq('id', parentId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  return !error && !!data;
+}
+
+async function userReferenceBelongsToCompany(
+  table: string,
+  payload: Record<string, any>,
+  companyId: string
+): Promise<boolean> {
+  if (!supabase) return false;
+  const column = USER_REFERENCE_COLUMN[table];
+  if (!column) return true;
+  const rawUserId = payload[column];
+  // Certaines références sont facultatives (p. ex. tâche non assignée).
+  // Les contraintes NOT NULL de la table valident les références obligatoires.
+  if (rawUserId === undefined || rawUserId === null || rawUserId === '') return true;
+  const { data, error } = await supabase
+    .from('app_users')
+    .select('id')
+    .eq('id', String(rawUserId))
+    .eq('company_id', companyId)
+    .maybeSingle();
+  return !error && !!data;
+}
+
+async function prepareAppUserPin(payload: Record<string, any>, required: boolean): Promise<void> {
+  const rawPin = payload.access_code ?? payload.nip;
+  delete payload.access_code;
+  delete payload.nip;
+  // Le client n'a jamais le droit de fournir directement un prétendu hash.
+  delete payload.access_code_hash;
+  if (rawPin === undefined || rawPin === null || rawPin === '') {
+    if (required) throw new Error('PIN_REQUIRED');
+    return;
+  }
+  const pin = String(rawPin);
+  if (!/^\d{4}$/.test(pin)) throw new Error('PIN_INVALID');
+  payload.access_code_hash = await hashPin(pin);
+}
+
+function decodeImageDataUrl(value: unknown): { bytes: Buffer; mimeType: string; extension: string } | null {
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(value || ''));
+  if (!match) return null;
+  const bytes = Buffer.from(match[2], 'base64');
+  if (bytes.length === 0 || bytes.length > 5 * 1024 * 1024) return null;
+  const extension = match[1] === 'image/png' ? 'png' : match[1] === 'image/webp' ? 'webp' : 'jpg';
+  return { bytes, mimeType: match[1], extension };
+}
+
+async function uploadProjectPhoto(auth: AuthContext, projectId: string, photoId: string, dataUrl: unknown): Promise<string> {
+  if (!supabase) throw new Error('STORAGE_UNAVAILABLE');
+  const decoded = decodeImageDataUrl(dataUrl);
+  if (!decoded) throw new Error('PHOTO_INVALID');
+  const objectPath = `${auth.companyId}/${projectId}/${photoId}-${crypto.randomBytes(8).toString('hex')}.${decoded.extension}`;
+  const { error } = await supabase.storage
+    .from(PROJECT_MEDIA_BUCKET)
+    .upload(objectPath, decoded.bytes, { contentType: decoded.mimeType, upsert: false });
+  if (error) throw error;
+  return objectPath;
+}
+
+function applyTenantWriteScope(query: any, table: string, auth: AuthContext): any {
+  if (TABLES_WITH_COMPANY_ID.has(table)) return query.eq('company_id', auth.companyId);
+  if (table === 'companies') return query.eq('id', auth.companyId);
+  return query;
+}
 
 // ---------------------------------------------------------------------------
 // Instruction système de l'assistant IA
@@ -458,6 +621,23 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI'
 };
 
+// Variables reconnues pour chaque fournisseur. La première est le nom officiel
+// affiché dans l'interface ; les alias Gemini permettent de conserver les noms
+// de variables déjà utilisés dans certains anciens déploiements.
+const PROVIDER_ENV_ALIASES: Record<string, string[]> = {
+  gemini: ['GEMINI_API_KEY', 'GOOGLE_GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+  anthropic: ['ANTHROPIC_API_KEY'],
+  openai: ['OPENAI_API_KEY']
+};
+
+function resolveProviderApiKey(provider: string): string | undefined {
+  for (const envName of PROVIDER_ENV_ALIASES[provider] || []) {
+    const value = process.env[envName];
+    if (value && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 function requireKnownTable(table: string, res: express.Response): boolean {
   if (!KNOWN_TABLES.includes(table)) {
     res.status(404).json({ error: `Table inconnue : ${table}` });
@@ -475,34 +655,43 @@ export function registerApiRoutes(app: express.Express): void {
   // données ; le navigateur ne reçoit jamais les NIP des autres utilisateurs.
   // -------------------------------------------------------------------------
   app.post('/api/auth/login', async (req, res) => {
+    const { employeeId: loginHandle, nip } = req.body || {};
+    if (typeof loginHandle !== 'string' || typeof nip !== 'string' || !/^\d{4}$/.test(nip)) {
+      return res.status(400).json({ error: 'Requête invalide' });
+    }
+
     if (!supabaseEnabled) {
       return res.status(503).json({ error: 'Authentification indisponible (base de données non configurée)', code: 'AUTH_UNAVAILABLE' });
     }
-    const { employeeId, nip } = req.body || {};
-    if (typeof employeeId !== 'string' || typeof nip !== 'string' || !/^\d{4}$/.test(nip)) {
-      return res.status(400).json({ error: 'Requête invalide' });
-    }
-    const throttleKey = `${req.ip || 'noip'}|${employeeId}`;
-    if (isLoginThrottled(throttleKey)) {
-      logAudit(null, 'login_throttled', 'auth', employeeId);
+    const clientIp = req.ip || req.socket.remoteAddress || 'noip';
+    const throttleKey = `${clientIp}|${loginHandle}`;
+    const ipThrottleKey = `${clientIp}|*`;
+    if (await isLoginThrottled(throttleKey) || await isLoginThrottled(ipThrottleKey)) {
+      logAudit(null, 'login_throttled', 'auth');
       return res.status(429).json({ error: 'Trop de tentatives. Réessayez dans quelques minutes.', code: 'THROTTLED' });
     }
     try {
-      const result = await verifyCredentials(employeeId, nip);
+      const result = await verifyCredentials(loginHandle, nip);
       if (!result.ok || !result.ctx) {
         if (result.reason === 'unavailable') {
           return res.status(503).json({ error: 'Authentification indisponible', code: 'AUTH_UNAVAILABLE' });
         }
-        recordLoginFailure(throttleKey);
-        logAudit(null, 'login_failed', 'auth', employeeId);
+        await Promise.all([recordLoginFailure(throttleKey), recordLoginFailure(ipThrottleKey)]);
+        logAudit(null, 'login_failed', 'auth');
         return res.status(401).json({ error: 'NIP incorrect', code: 'INVALID_CREDENTIALS' });
       }
-      clearLoginFailures(throttleKey);
+      await clearLoginFailures(throttleKey);
       const ctx = result.ctx;
       const { token, expiresAt } = signSession(ctx);
+      res.cookie(SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: Math.max(0, expiresAt - Date.now())
+      });
       logAudit(ctx, 'login', 'auth', ctx.userId);
       return res.json({
-        token,
         expiresAt,
         user: { id: ctx.userId, name: ctx.name, role: ctx.role }
       });
@@ -512,25 +701,63 @@ export function registerApiRoutes(app: express.Express): void {
     }
   });
 
+  app.post('/api/auth/logout', (_req, res) => {
+    res.clearCookie(SESSION_COOKIE_NAME, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/'
+    });
+    return res.status(204).end();
+  });
+
+  app.get('/api/auth/session', requireAuth, (req: AuthedRequest, res) => {
+    const auth = req.auth as AuthContext;
+    return res.json({ user: { id: auth.userId, name: auth.name, role: auth.role } });
+  });
+
   // Annuaire minimal pour l'écran de connexion (avant authentification) :
-  // uniquement id, nom, rôle, métier et avatar — jamais de NIP, NAS ou salaire.
+  // uniquement id, nom et avatar — jamais de rôle, NIP, NAS ou salaire.
   app.get('/api/auth/directory', async (_req, res) => {
     if (!supabaseEnabled || !supabase) return res.json({ enabled: false, users: [] });
     try {
+      const companyId = await resolveCompanyId();
       const { data, error } = await supabase
         .from('app_users')
-        .select('id, full_name, role, worker_type, avatar, is_active');
+        .select('id, full_name, avatar, is_active')
+        .eq('company_id', companyId)
+        .limit(250);
       if (error) throw error;
       return res.json({
         enabled: true,
         users: (data || [])
           .filter((u: any) => u.is_active !== false)
-          .map((u: any) => ({ id: u.id, name: u.full_name || '', role: u.role || 'employee', workerType: u.worker_type || '', avatar: u.avatar || '' }))
+          .map((u: any) => ({
+            id: createLoginHandle(companyId, String(u.id)),
+            name: u.full_name || '',
+            avatar: u.avatar || ''
+          }))
       });
     } catch (error: any) {
       console.error('Error on /api/auth/directory:', error);
       return res.status(500).json({ error: 'Erreur de chargement de l’annuaire' });
     }
+  });
+
+  // État des fournisseurs, sans jamais retourner la valeur d'une clé.
+  app.get('/api/ai/status', attachAuthOptional, (req: AuthedRequest, res) => {
+    if (protectedRuntime && !req.auth) {
+      return res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
+    }
+    return res.json({
+      providers: Object.fromEntries(
+        Object.keys(PROVIDER_ENV_KEYS).map(provider => [provider, {
+          configured: Boolean(resolveProviderApiKey(provider)),
+          envNames: PROVIDER_ENV_ALIASES[provider],
+          label: PROVIDER_LABELS[provider]
+        }])
+      )
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -543,13 +770,13 @@ export function registerApiRoutes(app: express.Express): void {
       const { message, provider, regionLabel, image, appContext, language, allowActions } = req.body;
 
       // Dès que le cloud est configuré, l'accès au modèle exige une session valide.
-      if (supabaseEnabled && !req.auth) {
+      if (protectedRuntime && !req.auth) {
         return res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
       }
 
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
       // Clé serveur uniquement : req.body.apiKey (ancienne version) est ignoré.
-      const apiKey = process.env[PROVIDER_ENV_KEYS[selectedProvider]];
+      const apiKey = resolveProviderApiKey(selectedProvider);
 
       // Les outils (actions) ne sont proposés au modèle que pour un rôle de
       // bureau vérifié par jeton — jamais sur la seule foi du client.
@@ -597,7 +824,7 @@ export function registerApiRoutes(app: express.Express): void {
       });
     } catch (error: any) {
       console.error('Error on /api/chat:', error);
-      return res.status(500).json({ error: error.message || 'Error occurred while calling the AI provider' });
+      return res.status(500).json({ error: 'Le fournisseur IA n’a pas pu traiter la demande' });
     }
   });
 
@@ -619,21 +846,30 @@ export function registerApiRoutes(app: express.Express): void {
     }
     const auth = req.auth as AuthContext;
     try {
-      const companyId = await resolveCompanyId();
-      const results: Record<string, any> = { enabled: true, companyId, viewer: { userId: auth.userId, role: auth.role } };
+      const companyId = auth.companyId;
+      const projectIds = await employeeProjectIds(auth);
+      const results: Record<string, any> = {
+        enabled: true,
+        companyId,
+        viewer: { userId: auth.userId, role: auth.role, name: auth.name }
+      };
       for (const table of KNOWN_TABLES) {
         if (!canRead(table, auth.role)) {
           // Table non lisible par ce rôle : forme conservée, contenu vide
           results[table] = [];
           continue;
         }
-        let query = supabase.from(table).select('*');
+        const columns = table === 'project_photos'
+          ? 'id,company_id,project_id,phase,caption,taken_at,taken_by,taken_by_name,latitude,longitude'
+          : '*';
+        let query: any = supabase.from(table).select(columns);
         if (TABLES_WITH_COMPANY_ID.has(table)) {
           query = query.eq('company_id', companyId);
+        } else if (table === 'companies') {
+          query = query.eq('id', companyId);
         }
-        if (READ_OWN_ONLY.has(table) && !OFFICE.includes(auth.role)) {
-          query = query.eq(OWNER_COLUMN[table], auth.userId);
-        }
+        query = applyReadScope(query, table, auth, projectIds);
+        query = query.limit(table === 'project_photos' ? 250 : 1000);
         const { data, error } = await query;
         if (error) throw error;
         results[table] = sanitizeRows(table, data || [], auth.role);
@@ -641,7 +877,7 @@ export function registerApiRoutes(app: express.Express): void {
       return res.json(results);
     } catch (error: any) {
       console.error('Error on /api/hydrate:', error);
-      return res.status(500).json({ error: error.message || 'Erreur de chargement des données' });
+      return res.status(500).json({ error: 'Erreur de chargement des données' });
     }
   });
 
@@ -653,19 +889,104 @@ export function registerApiRoutes(app: express.Express): void {
     const auth = req.auth as AuthContext;
     if (!canRead(table, auth.role)) return res.status(403).json({ error: 'Lecture non autorisée pour ce rôle' });
     try {
-      let query = supabase.from(table).select('*');
+      const projectIds = await employeeProjectIds(auth);
+      const requestedLimit = Number.parseInt(String(req.query.limit || '250'), 10);
+      const requestedOffset = Number.parseInt(String(req.query.offset || '0'), 10);
+      const limit = Number.isFinite(requestedLimit) ? Math.min(500, Math.max(1, requestedLimit)) : 250;
+      const offset = Number.isFinite(requestedOffset) ? Math.max(0, requestedOffset) : 0;
+      const columns = table === 'project_photos'
+        ? 'id,company_id,project_id,phase,caption,taken_at,taken_by,taken_by_name,latitude,longitude'
+        : '*';
+      let query: any = supabase.from(table).select(columns);
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         query = query.eq('company_id', auth.companyId);
+      } else if (table === 'companies') {
+        query = query.eq('id', auth.companyId);
       }
-      if (READ_OWN_ONLY.has(table) && !OFFICE.includes(auth.role)) {
-        query = query.eq(OWNER_COLUMN[table], auth.userId);
-      }
+      query = applyReadScope(query, table, auth, projectIds).range(offset, offset + limit - 1);
       const { data, error } = await query;
       if (error) throw error;
       return res.json(sanitizeRows(table, data || [], auth.role));
     } catch (error: any) {
       console.error(`Error on GET /api/db/${table}:`, error);
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: 'Erreur de lecture des données' });
+    }
+  });
+
+  // Les images demeurent dans un bucket privé. Cette route vérifie à nouveau
+  // la compagnie et l'accès au chantier avant de transmettre les octets.
+  app.get('/api/files/project-photo/:id', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Stockage indisponible' });
+    const auth = req.auth as AuthContext;
+    try {
+      const { data: photo, error } = await supabase
+        .from('project_photos')
+        .select('id,project_id,image_url')
+        .eq('id', req.params.id)
+        .eq('company_id', auth.companyId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!photo || !(await hasProjectAccess(auth, photo.project_id))) {
+        return res.status(404).json({ error: 'Photo introuvable' });
+      }
+      const legacy = decodeImageDataUrl(photo.image_url);
+      if (legacy) {
+        res.setHeader('Content-Type', legacy.mimeType);
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        return res.end(legacy.bytes);
+      }
+      const { data: file, error: downloadError } = await supabase.storage
+        .from(PROJECT_MEDIA_BUCKET)
+        .download(String(photo.image_url || ''));
+      if (downloadError || !file) return res.status(404).json({ error: 'Fichier introuvable' });
+      const bytes = Buffer.from(await file.arrayBuffer());
+      res.setHeader('Content-Type', file.type || 'image/jpeg');
+      res.setHeader('Content-Length', String(bytes.length));
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.end(bytes);
+    } catch (error: any) {
+      console.error('Error on project photo download:', error);
+      return res.status(500).json({ error: 'Erreur de téléchargement de la photo' });
+    }
+  });
+
+  // Remplacement transactionnel des tâches, outils et assignations d'un
+  // chantier. La fonction Postgres réalise tout ou rien : une coupure réseau ne
+  // peut plus laisser le chantier vidé entre DELETE et INSERT.
+  app.put('/api/projects/:id/children', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
+    const auth = req.auth as AuthContext;
+    const projectId = String(req.params.id || '');
+    if (!(await hasProjectAccess(auth, projectId))) return res.status(404).json({ error: 'Chantier introuvable' });
+    const tasks = Array.isArray(req.body?.tasks) ? req.body.tasks : [];
+    const tools = Array.isArray(req.body?.tools) ? req.body.tools : [];
+    const assignments = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+    if (tasks.length > 500 || tools.length > 500 || assignments.length > 250) {
+      return res.status(413).json({ error: 'Trop d’éléments à synchroniser' });
+    }
+    if (tasks.some((item: any) => typeof item?.title !== 'string' || item.title.length > 500) ||
+        tools.some((item: any) => typeof item?.name !== 'string' || item.name.length > 250)) {
+      return res.status(400).json({ error: 'Contenu de chantier invalide' });
+    }
+    try {
+      const { error } = await supabase.rpc('replace_project_children', {
+        p_company_id: auth.companyId,
+        p_project_id: projectId,
+        p_tasks: tasks,
+        p_tools: tools,
+        p_assignments: assignments,
+        p_replace_assignments: isManager(auth.role)
+      });
+      if (error) throw error;
+      logAudit(auth, 'replace_children', 'projects', projectId, {
+        taskCount: tasks.length,
+        toolCount: tools.length,
+        assignmentCount: isManager(auth.role) ? assignments.length : undefined
+      });
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error('Error on transactional project sync:', error);
+      return res.status(500).json({ error: 'La synchronisation du chantier a échoué' });
     }
   });
 
@@ -721,13 +1042,27 @@ export function registerApiRoutes(app: express.Express): void {
     const { table } = req.params;
     if (!requireKnownTable(table, res)) return;
     const auth = req.auth as AuthContext;
+    if (table === 'companies') return res.status(403).json({ error: 'Création de compagnie non autorisée par cette route' });
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'POST')) return res.status(403).json({ error: 'Non autorisé' });
+    let uploadedProjectPhotoPath: string | null = null;
     try {
       const payload = { ...req.body };
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
+      }
+      if (table === 'app_users') {
+        await prepareAppUserPin(payload, true);
+      }
+      if (!(await parentBelongsToCompany(table, payload, auth.companyId))) {
+        return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
+      }
+      if (!(await userReferenceBelongsToCompany(table, payload, auth.companyId))) {
+        return res.status(400).json({ error: 'Employé inconnu pour cette compagnie' });
+      }
+      if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
+        return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
       }
       if (table === 'safety_records') {
         payload.created_by = auth.userId;
@@ -849,18 +1184,14 @@ export function registerApiRoutes(app: express.Express): void {
         if (!['before', 'during', 'after'].includes(String(payload.phase))) {
           return res.status(400).json({ error: 'Phase de photo invalide' });
         }
-        const image = String(payload.image_url || '');
-        if (!image.startsWith('data:image/')) {
-          return res.status(400).json({ error: 'Image de chantier invalide' });
-        }
-        // ~8 Mo de data URL : au-delà, la photo n'a pas été redimensionnée
-        if (image.length > 8_000_000) {
-          return res.status(413).json({ error: 'Photo trop volumineuse' });
-        }
-        const { data: proj } = await supabase
-          .from('projects').select('id, company_id').eq('id', payload.project_id).maybeSingle();
-        if (!proj || (proj.company_id && String(proj.company_id) !== auth.companyId)) {
-          return res.status(400).json({ error: 'Chantier inconnu pour cette compagnie' });
+        const photoId = String(payload.id || crypto.randomUUID());
+        payload.id = photoId;
+        try {
+          payload.image_url = await uploadProjectPhoto(auth, String(payload.project_id), photoId, payload.image_url);
+          uploadedProjectPhotoPath = String(payload.image_url);
+        } catch (error: any) {
+          if (error?.message === 'PHOTO_INVALID') return res.status(413).json({ error: 'Photo invalide ou trop volumineuse (maximum 5 Mo)' });
+          throw error;
         }
       }
       if (table === 'expenses' && !OFFICE.includes(auth.role)) {
@@ -903,7 +1234,15 @@ export function registerApiRoutes(app: express.Express): void {
       return res.json(sanitizeRow(table, data, auth.role));
     } catch (error: any) {
       console.error(`Error on POST /api/db/${table}:`, error);
-      return res.status(500).json({ error: error.message });
+      if (uploadedProjectPhotoPath && supabase) {
+        const { error: cleanupError } = await supabase.storage
+          .from(PROJECT_MEDIA_BUCKET)
+          .remove([uploadedProjectPhotoPath]);
+        if (cleanupError) console.error('[storage] nettoyage de photo orpheline impossible :', cleanupError.message);
+      }
+      if (error?.message === 'PIN_REQUIRED') return res.status(400).json({ error: 'Un NIP à quatre chiffres est requis' });
+      if (error?.message === 'PIN_INVALID') return res.status(400).json({ error: 'Le NIP doit contenir exactement quatre chiffres' });
+      return res.status(500).json({ error: 'La sauvegarde a échoué' });
     }
   });
 
@@ -913,6 +1252,7 @@ export function registerApiRoutes(app: express.Express): void {
     const { table } = req.params;
     if (!requireKnownTable(table, res)) return;
     const auth = req.auth as AuthContext;
+    if (table === 'companies') return res.status(403).json({ error: 'Opération non autorisée par cette route' });
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
@@ -928,13 +1268,43 @@ export function registerApiRoutes(app: express.Express): void {
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
       }
-      const { data, error } = await supabase.from(table).upsert(payload).select().single();
-      if (error) throw error;
+      if (!(await parentBelongsToCompany(table, payload, auth.companyId))) {
+        return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
+      }
+      if (!(await userReferenceBelongsToCompany(table, payload, auth.companyId))) {
+        return res.status(400).json({ error: 'Employé inconnu pour cette compagnie' });
+      }
+      if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
+        return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
+      }
+      const idColumn = TABLE_ID_COLUMN[table] || 'id';
+      const idValue = payload[idColumn];
+      if (!idValue) return res.status(400).json({ error: 'Identifiant manquant' });
+      let existingQuery: any = supabase.from(table).select(idColumn).eq(idColumn, idValue);
+      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
+      const { data: existing, error: existingError } = await existingQuery.maybeSingle();
+      if (existingError) throw existingError;
+      let data: any;
+      if (table === 'app_users') await prepareAppUserPin(payload, !existing);
+      if (existing) {
+        delete payload.company_id;
+        let updateQuery: any = supabase.from(table).update(payload).eq(idColumn, idValue);
+        updateQuery = applyTenantWriteScope(updateQuery, table, auth);
+        const result = await updateQuery.select().single();
+        if (result.error) throw result.error;
+        data = result.data;
+      } else {
+        const result = await supabase.from(table).insert(payload).select().single();
+        if (result.error) throw result.error;
+        data = result.data;
+      }
       logAudit(auth, 'upsert', table, data?.id ?? null, { fields: Object.keys(payload) });
       return res.json(sanitizeRow(table, data, auth.role));
     } catch (error: any) {
       console.error(`Error on PUT /api/db/${table}:`, error);
-      return res.status(500).json({ error: error.message });
+      if (error?.message === 'PIN_REQUIRED') return res.status(400).json({ error: 'Un NIP à quatre chiffres est requis' });
+      if (error?.message === 'PIN_INVALID') return res.status(400).json({ error: 'Le NIP doit contenir exactement quatre chiffres' });
+      return res.status(500).json({ error: 'La sauvegarde a échoué' });
     }
   });
 
@@ -951,29 +1321,82 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'safety_records' && !allowSafetyMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
+    let uploadedProjectPhotoPath: string | null = null;
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
-      // Rôles non gestionnaires : la ligne visée doit leur appartenir
+      const existingColumns = Array.from(new Set([
+        idColumn,
+        ...(OWNER_COLUMN[table] ? [OWNER_COLUMN[table]] : []),
+        ...(EMPLOYEE_PROJECT_TABLES.has(table) ? ['project_id'] : []),
+        ...(PARENT_SCOPE[table] ? [PARENT_SCOPE[table].foreignKey] : []),
+        ...(USER_REFERENCE_COLUMN[table] ? [USER_REFERENCE_COLUMN[table]] : []),
+        ...(table === 'project_photos' ? ['image_url'] : [])
+      ])).join(',');
+      let existingQuery: any = supabase.from(table).select(existingColumns).eq(idColumn, id);
+      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
+      const { data: existing, error: readErr } = await existingQuery.maybeSingle();
+      if (readErr) throw readErr;
+      if (!existing) return res.status(404).json({ error: 'Enregistrement introuvable' });
       if (WRITE_OWN_ONLY.has(table) && !isManager(auth.role)) {
         const ownerCol = OWNER_COLUMN[table];
-        const { data: existing, error: readErr } = await supabase.from(table).select(ownerCol).eq(idColumn, id).maybeSingle();
-        if (readErr) throw readErr;
-        if (!existing || String((existing as any)[ownerCol] || '') !== auth.userId) {
+        if (String((existing as any)[ownerCol] || '') !== auth.userId) {
           return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
         }
       }
-      const payload = { ...req.body };
-      if (TABLES_WITH_COMPANY_ID.has(table)) {
-        // Empêche toute réaffectation de tenant via PATCH
-        delete payload.company_id;
+      if ((existing as any).project_id && !(await hasProjectAccess(auth, (existing as any).project_id))) {
+        return res.status(404).json({ error: 'Chantier introuvable ou non assigné' });
       }
-      const { data, error } = await supabase.from(table).update(payload).eq(idColumn, id).select().single();
+      const payload = { ...req.body };
+      // Empêche toute réaffectation de tenant ou de clé primaire via PATCH.
+      delete payload.company_id;
+      delete payload[idColumn];
+      if (table === 'app_users') await prepareAppUserPin(payload, false);
+      if (!(await parentBelongsToCompany(table, { ...existing, ...payload }, auth.companyId))) {
+        return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
+      }
+      if (!(await userReferenceBelongsToCompany(table, { ...existing, ...payload }, auth.companyId))) {
+        return res.status(400).json({ error: 'Employé inconnu pour cette compagnie' });
+      }
+      if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
+        return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
+      }
+      if (table === 'project_photos' && payload.image_url) {
+        payload.image_url = await uploadProjectPhoto(
+          auth,
+          String(payload.project_id || (existing as any).project_id),
+          id,
+          payload.image_url
+        );
+        uploadedProjectPhotoPath = String(payload.image_url);
+      }
+      let updateQuery: any = supabase.from(table).update(payload).eq(idColumn, id);
+      updateQuery = applyTenantWriteScope(updateQuery, table, auth);
+      const { data, error } = await updateQuery.select().maybeSingle();
       if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Enregistrement introuvable' });
+      if (table === 'project_photos' && payload.image_url) {
+        const previousPath = String((existing as any).image_url || '');
+        const nextPath = String((data as any).image_url || '');
+        if (previousPath && previousPath !== nextPath && !previousPath.startsWith('data:')) {
+          const { error: storageError } = await supabase.storage
+            .from(PROJECT_MEDIA_BUCKET)
+            .remove([previousPath]);
+          if (storageError) console.error('[storage] ancienne photo non supprimée :', storageError.message);
+        }
+      }
       logAudit(auth, 'update', table, id, { fields: Object.keys(payload) });
       return res.json(sanitizeRow(table, data, auth.role));
     } catch (error: any) {
       console.error(`Error on PATCH /api/db/${table}/${id}:`, error);
-      return res.status(500).json({ error: error.message });
+      if (uploadedProjectPhotoPath && supabase) {
+        const { error: cleanupError } = await supabase.storage
+          .from(PROJECT_MEDIA_BUCKET)
+          .remove([uploadedProjectPhotoPath]);
+        if (cleanupError) console.error('[storage] nettoyage de photo orpheline impossible :', cleanupError.message);
+      }
+      if (error?.message === 'PIN_INVALID') return res.status(400).json({ error: 'Le NIP doit contenir exactement quatre chiffres' });
+      if (error?.message === 'PHOTO_INVALID') return res.status(413).json({ error: 'Photo invalide ou trop volumineuse (maximum 5 Mo)' });
+      return res.status(500).json({ error: 'La mise à jour a échoué' });
     }
   });
 
@@ -983,6 +1406,7 @@ export function registerApiRoutes(app: express.Express): void {
     const { table, id } = req.params;
     if (!requireKnownTable(table, res)) return;
     const auth = req.auth as AuthContext;
+    if (table === 'companies') return res.status(403).json({ error: 'Suppression de compagnie non autorisée' });
     if (!canWrite(table, auth.role)) return res.status(403).json({ error: 'Écriture non autorisée pour ce rôle' });
     if (table === 'hr_alerts' && !allowHrAlertMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'expenses' && !allowExpenseMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
@@ -992,21 +1416,40 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
+      const existingColumns = Array.from(new Set([
+        idColumn,
+        ...(OWNER_COLUMN[table] ? [OWNER_COLUMN[table]] : []),
+        ...(EMPLOYEE_PROJECT_TABLES.has(table) ? ['project_id'] : []),
+        ...(table === 'project_photos' ? ['image_url'] : [])
+      ])).join(',');
+      let existingQuery: any = supabase.from(table).select(existingColumns).eq(idColumn, id);
+      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
+      const { data: existing, error: readErr } = await existingQuery.maybeSingle();
+      if (readErr) throw readErr;
+      if (!existing) return res.status(404).json({ error: 'Enregistrement introuvable' });
       if (WRITE_OWN_ONLY.has(table) && !isManager(auth.role)) {
         const ownerCol = OWNER_COLUMN[table];
-        const { data: existing, error: readErr } = await supabase.from(table).select(ownerCol).eq(idColumn, id).maybeSingle();
-        if (readErr) throw readErr;
-        if (!existing || String((existing as any)[ownerCol] || '') !== auth.userId) {
+        if (String((existing as any)[ownerCol] || '') !== auth.userId) {
           return res.status(403).json({ error: 'Suppression limitée à vos propres enregistrements' });
         }
       }
-      const { error } = await supabase.from(table).delete().eq(idColumn, id);
+      if ((existing as any).project_id && !(await hasProjectAccess(auth, (existing as any).project_id))) {
+        return res.status(404).json({ error: 'Chantier introuvable ou non assigné' });
+      }
+      let deleteQuery: any = supabase.from(table).delete().eq(idColumn, id);
+      deleteQuery = applyTenantWriteScope(deleteQuery, table, auth);
+      const { error } = await deleteQuery;
       if (error) throw error;
+      const storagePath = table === 'project_photos' ? String((existing as any).image_url || '') : '';
+      if (storagePath && !storagePath.startsWith('data:')) {
+        const { error: storageError } = await supabase.storage.from(PROJECT_MEDIA_BUCKET).remove([storagePath]);
+        if (storageError) console.error('[storage] photo supprimée de la base mais pas du bucket :', storageError.message);
+      }
       logAudit(auth, 'delete', table, id);
       return res.json({ success: true });
     } catch (error: any) {
       console.error(`Error on DELETE /api/db/${table}/${id}:`, error);
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: 'La suppression a échoué' });
     }
   });
 }

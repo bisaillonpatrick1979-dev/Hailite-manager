@@ -9,18 +9,19 @@ La clé `SUPABASE_SERVICE_ROLE_KEY` reste **exclusivement côté serveur**
 (`db.ts`). Depuis cette version, aucune route de données n'est servie sans
 identité vérifiée :
 
-- **Authentification par jeton (JWT HS256)** — `auth.ts`
+- **Session signée dans un cookie HttpOnly (JWT HS256)** — `auth.ts`
   - `POST /api/auth/login` : le NIP est vérifié **côté serveur** contre la base
-    (comparaison en temps constant) ; le navigateur ne reçoit et ne stocke que
-    le jeton de session signé (12 h). Limitation à 5 tentatives / 15 min par
-    IP + employé (anti force brute).
+    avec bcrypt ; le navigateur ne peut ni lire ni stocker le jeton de session
+    (`HttpOnly`, `Secure` en production, `SameSite=Strict`, expiration 4 h).
+    Limitation à 5 tentatives / 15 min par IP + employé, persistée dans
+    `auth_login_attempts` pour couvrir toutes les instances serverless.
   - `GET /api/auth/directory` : annuaire minimal pour l'écran de connexion
-    (id, nom, rôle, métier, avatar) — jamais de NIP, NAS ou salaire.
+    (référence HMAC opaque, nom, avatar) — jamais d'UUID de base, rôle, NIP,
+    NAS ou salaire.
   - Le jeton transporte `user_id`, `company_id` et `role`, vérifiés à chaque
     requête par le middleware `requireAuth`.
-  - ⚠️ `SESSION_SECRET` doit être défini dans les variables d'environnement
-    (Vercel). Sans lui, un secret éphémère est généré (sessions perdues à
-    chaque redémarrage — dev seulement).
+  - `SESSION_SECRET` doit contenir au moins 32 caractères. Le serveur refuse de
+    démarrer en production avec Supabase si ce secret stable manque.
 
 - **Matrice de permissions par table et par rôle** — `apiRoutes.ts`
   - `admin` / `secretary` / `accountant` / `employee`, avec écritures
@@ -36,8 +37,10 @@ identité vérifiée :
 - **Redaction des colonnes sensibles** (le navigateur — et donc le modèle IA —
   ne les voit jamais) :
   - `companies.ai_api_key` : supprimé de **toutes** les réponses ;
-  - `app_users.access_code_hash` (NIP) et `app_users.sin` (NAS/SIN) : admin
-    uniquement ;
+  - `app_users.access_code_hash` (NIP) : supprimé de **toutes** les réponses,
+    y compris pour l'administrateur ; le NIP saisi est un champ d'écriture
+    temporaire puis est haché côté serveur ;
+  - `app_users.sin` (NAS/SIN) : administrateur uniquement ;
   - coordonnées bancaires et courriel Interac : admin uniquement.
   - Le contexte envoyé au modèle (`buildAiAppContext`) est un agrégat qui ne
     contient ni NIP, ni NAS, ni clés, ni coordonnées bancaires, et
@@ -85,6 +88,7 @@ fournisseurs (tools Anthropic, tools OpenAI, functionDeclarations Gemini) :
 | --- | --- |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Accès base (serveur seulement) |
 | `SESSION_SECRET` | Signature des jetons de session (≥ 32 caractères aléatoires) |
+| `DEFAULT_COMPANY_ID` | Tenant des routes publiques; obligatoire dès qu'il existe plusieurs compagnies |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | Fournisseur(s) IA (serveur seulement) |
 
 ## Prochaines étapes recommandées
@@ -93,11 +97,8 @@ fournisseurs (tools Anthropic, tools OpenAI, functionDeclarations Gemini) :
   (comptes courriel + MFA pour les rôles de bureau), avec politiques RLS par
   `auth.uid()` en plus du filtrage serveur actuel (`supabase_security.sql`
   active déjà RLS en mode « deny all » pour la clé anon).
-- **NIP hachés** : stocker les NIP en hash (bcrypt/argon2) plutôt qu'en clair
-  dans `app_users.access_code_hash`.
 - **Routes dédiées** : continuer à remplacer les routes génériques par des
   fonctions métier précises (ex. `POST /api/punches/start`), qui portent leurs
   invariants (géorepérage, statut) côté serveur.
-- **Rate limiting partagé** : déplacer le compteur anti force brute en mémoire
-  vers un stockage partagé (table/Upstash) pour couvrir le multi-instance
-  serverless.
+- **MFA pour le bureau** : remplacer à terme le NIP à quatre chiffres des rôles
+  administratifs par Supabase Auth avec mot de passe robuste et second facteur.

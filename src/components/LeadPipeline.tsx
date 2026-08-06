@@ -8,7 +8,7 @@
 //
 // L'écran est construit autour de deux questions : qu'est-ce que je dois
 // relancer aujourd'hui, et combien je convertis.
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import useAppStore from '../store';
 import { translations } from '../translations';
 import type { Lead, LeadSource, LeadStatus } from '../types';
@@ -75,10 +75,12 @@ export default function LeadPipeline() {
   );
 
   // Une relance est « due » si sa date est passée et que le dossier est encore ouvert.
-  const isDue = (lead: Lead) =>
-    !!lead.nextFollowUp && lead.nextFollowUp <= today && OPEN_STATUSES.includes(lead.status);
+  const isDue = useCallback(
+    (lead: Lead) => !!lead.nextFollowUp && lead.nextFollowUp <= today && OPEN_STATUSES.includes(lead.status),
+    [today]
+  );
 
-  const dueLeads = useMemo(() => sorted.filter(isDue), [sorted, today]);
+  const dueLeads = useMemo(() => sorted.filter(isDue), [sorted, isDue]);
 
   const stats = useMemo(() => {
     const won = leads.filter(l => l.status === 'won').length;

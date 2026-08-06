@@ -56,9 +56,9 @@ export default function LegacyDataImporter({ isFR, onImported }: LegacyDataImpor
     if (!parsed) return;
     const result = importMappedMigrationRows({ type, rows: parsed.rows, mapping });
     setOk(result.ok);
-    setMessage(isFR
+    setMessage(result.message || (isFR
       ? `${result.imported} élément(s) importé(s), ${result.skipped} ignoré(s).`
-      : `${result.imported} item(s) imported, ${result.skipped} skipped.`);
+      : `${result.imported} item(s) imported, ${result.skipped} skipped.`));
     if (result.ok) {
       const next = totalImported + result.imported;
       setTotalImported(next);

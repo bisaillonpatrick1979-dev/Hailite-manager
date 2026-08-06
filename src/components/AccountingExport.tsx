@@ -9,7 +9,7 @@
 //     virgule. Le choix est donc offert plutôt que deviné.
 //   • la marque d'ordre d'octets (BOM) UTF-8 en tête de fichier, sans laquelle
 //     Excel affiche « Ã© » à la place des accents.
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import useAppStore from '../store';
 import { translations } from '../translations';
 import { Download, FileSpreadsheet } from 'lucide-react';
@@ -73,11 +73,11 @@ export default function AccountingExport() {
     }
   }, [period, from, to]);
 
-  const inRange = (date?: string | null) => {
+  const inRange = useCallback((date?: string | null) => {
     if (!date) return false;
     const d = String(date).slice(0, 10);
     return d >= range.from && d <= range.to;
-  };
+  }, [range.from, range.to]);
 
   const projectName = (id?: string) => projects.find(p => p.id === id)?.name || '';
   const num = (v: unknown) => Number(v || 0).toFixed(2);
@@ -89,13 +89,13 @@ export default function AccountingExport() {
   // ---------------------------------------------------------------------------
   const sales = useMemo(
     () => documents.filter(d => d.type === 'invoice' && inRange(d.date)),
-    [documents, range]
+    [documents, inRange]
   );
-  const periodExpenses = useMemo(() => expenses.filter(e => inRange(e.date)), [expenses, range]);
-  const periodPayroll = useMemo(() => payrollPayments.filter(p => inRange(p.date)), [payrollPayments, range]);
+  const periodExpenses = useMemo(() => expenses.filter(e => inRange(e.date)), [expenses, inRange]);
+  const periodPayroll = useMemo(() => payrollPayments.filter(p => inRange(p.date)), [payrollPayments, inRange]);
   const periodPunches = useMemo(
     () => punchSessions.filter(p => p.endTime && inRange(p.startTime)),
-    [punchSessions, range]
+    [punchSessions, inRange]
   );
 
   const totals = useMemo(() => ({
