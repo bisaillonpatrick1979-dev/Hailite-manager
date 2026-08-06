@@ -596,3 +596,36 @@ export interface ShiftAssignment {
   createdById?: string;    // imposé par le serveur
   createdByName?: string;
 }
+
+
+// ---------------------------------------------------------------------------
+// Sécurité de chantier — causeries et analyses de risques
+// ---------------------------------------------------------------------------
+// L'OH&S de l'Alberta exige une évaluation des dangers propre au chantier avant
+// le début des travaux. Ce qui donne sa valeur au document n'est pas la liste
+// des dangers, c'est la SIGNATURE des travailleurs présents : une fiche non
+// signée ne prouve rien.
+export type SafetyRecordType = 'toolbox' | 'hazard';
+
+export interface SafetyAttendee {
+  employeeId: string;
+  employeeName: string;
+  signature?: string;   // data URL
+  signedAt?: string;
+}
+
+export interface SafetyRecord {
+  id: string;
+  type: SafetyRecordType;
+  projectId: string;
+  date: string;            // AAAA-MM-JJ
+  topic: string;
+  hazards?: string[];      // dangers cochés (analyse de risques)
+  controls?: string;       // mesures de contrôle appliquées
+  weather?: string;        // conditions du jour — déterminant en toiture
+  notes?: string;
+  attendees: SafetyAttendee[];
+  createdAt: string;
+  createdById?: string;    // imposé par le serveur
+  createdByName?: string;
+}

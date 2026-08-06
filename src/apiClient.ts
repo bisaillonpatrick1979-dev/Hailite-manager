@@ -7,7 +7,7 @@ import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
   GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead,
-  ShiftAssignment
+  ShiftAssignment, SafetyRecord
 } from './types';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -521,6 +521,40 @@ export function rowToHRAlert(r: any): HRAlert {
   return {
     id: r.id, type: r.type, title: r.title || '', message: r.message || '', date: r.date || '',
     employeeId: r.employee_id || undefined, employeeName: r.employee_name || undefined, resolved: r.resolved || false
+  };
+}
+
+export function safetyRecordToRow(r: SafetyRecord, companyId?: string) {
+  return {
+    id: r.id, company_id: companyId, type: r.type, project_id: r.projectId,
+    date: r.date, topic: r.topic, hazards: r.hazards || null,
+    controls: r.controls || null, weather: r.weather || null, notes: r.notes || null,
+    attendees: r.attendees || [], created_at: r.createdAt,
+    created_by: r.createdById || null, created_by_name: r.createdByName || null
+  };
+}
+export function rowToSafetyRecord(r: any): SafetyRecord {
+  return {
+    id: r.id,
+    type: (r.type === 'hazard' ? 'hazard' : 'toolbox') as SafetyRecord['type'],
+    projectId: r.project_id || '',
+    date: r.date || '',
+    topic: r.topic || '',
+    hazards: Array.isArray(r.hazards) ? r.hazards : undefined,
+    controls: r.controls || undefined,
+    weather: r.weather || undefined,
+    notes: r.notes || undefined,
+    attendees: Array.isArray(r.attendees)
+      ? r.attendees.map((a: any) => ({
+          employeeId: String(a.employeeId || a.employee_id || ''),
+          employeeName: String(a.employeeName || a.employee_name || ''),
+          signature: a.signature || undefined,
+          signedAt: a.signedAt || a.signed_at || undefined
+        }))
+      : [],
+    createdAt: r.created_at || '',
+    createdById: r.created_by || undefined,
+    createdByName: r.created_by_name || undefined
   };
 }
 
