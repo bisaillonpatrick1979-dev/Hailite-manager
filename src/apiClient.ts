@@ -6,7 +6,8 @@
 import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
-  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead
+  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead,
+  ShiftAssignment
 } from './types';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -520,6 +521,28 @@ export function rowToHRAlert(r: any): HRAlert {
   return {
     id: r.id, type: r.type, title: r.title || '', message: r.message || '', date: r.date || '',
     employeeId: r.employee_id || undefined, employeeName: r.employee_name || undefined, resolved: r.resolved || false
+  };
+}
+
+export function shiftAssignmentToRow(a: ShiftAssignment, companyId?: string) {
+  return {
+    id: a.id, company_id: companyId, date: a.date, project_id: a.projectId,
+    employee_id: a.employeeId, employee_name: a.employeeName || null,
+    note: a.note || null, created_at: a.createdAt,
+    created_by: a.createdById || null, created_by_name: a.createdByName || null
+  };
+}
+export function rowToShiftAssignment(r: any): ShiftAssignment {
+  return {
+    id: r.id,
+    date: r.date || '',
+    projectId: r.project_id || '',
+    employeeId: r.employee_id || '',
+    employeeName: r.employee_name || undefined,
+    note: r.note || undefined,
+    createdAt: r.created_at || '',
+    createdById: r.created_by || undefined,
+    createdByName: r.created_by_name || undefined
   };
 }
 

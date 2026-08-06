@@ -26,6 +26,8 @@ const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
 const MotivationTab = lazy(() => import('./components/MotivationTab'));
 const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
+const CrewScheduleCalendar = lazy(() => import('./components/CrewScheduleCalendar'));
+const MyScheduleStrip = lazy(() => import('./components/MyScheduleStrip'));
 const LeadPipeline = lazy(() => import('./components/LeadPipeline'));
 const ProjectPhotoGallery = lazy(() => import('./components/ProjectPhotoGallery'));
 const ProjectTasksAndTools = lazy(() => import('./components/ProjectTasksAndTools'));
@@ -279,7 +281,7 @@ export default function App() {
   const { coords, gpsError, isChecking, checkLocation, evaluateProjectGeofence } = useGeofencing();
 
   // App Navigation state
-  const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation' | 'prospects'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation' | 'prospects' | 'schedule'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
   const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
   // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
@@ -1784,6 +1786,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         </>
                       )}
                     </div>
+
+                    {/* Mon horaire : où je vais aujourd'hui et les jours suivants */}
+                    <Suspense fallback={null}>
+                      <MyScheduleStrip />
+                    </Suspense>
 
                     {/* Checklist Tâches & Outils du chantier actif */}
                     {activePunchSession && (() => {
@@ -4445,6 +4452,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </Suspense>
             )}
 
+            {/* -------------------- VIEW CONTAINER : HORAIRE DES ÉQUIPES -------------------- */}
+            {activeTab === 'schedule' && (
+              <Suspense fallback={<LazySectionFallback />}>
+                <CrewScheduleCalendar />
+              </Suspense>
+            )}
+
             {/* -------------------- VIEW CONTAINER : REGLAGES (12 ONGLETS) -------------------- */}
             {activeTab === 'settings' && (
               <div id="view-settings-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
@@ -6997,7 +7011,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 { tab: 'inventory' as const, icon: '📦', label: t.navShortInventory },
                 { tab: 'commandes' as const, icon: '🚚', label: t.navShortOrders },
                 { tab: 'motivation' as const, icon: '🎯', label: t.navShortGoals },
-                { tab: 'prospects' as const, icon: '📇', label: t.navShortLeads }
+                { tab: 'prospects' as const, icon: '📇', label: t.navShortLeads },
+                { tab: 'schedule' as const, icon: '🗓️', label: t.navShortSchedule }
               ].map(item => (
                 <button
                   key={item.tab}
@@ -7090,7 +7105,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 <button
                   onClick={() => setShowMoreMenu(value => !value)}
                   className={`relative flex flex-col items-center gap-1 cursor-pointer transition ${
-                    showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings', 'prospects'].includes(activeTab)
+                    showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings', 'prospects', 'schedule'].includes(activeTab)
                       ? 'text-orange-500 font-bold scale-105'
                       : 'text-gray-400 hover:text-white'
                   }`}
