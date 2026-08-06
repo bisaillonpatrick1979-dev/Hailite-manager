@@ -11,8 +11,9 @@
 // avec courriel + RLS par jeton Supabase) — voir SECURITY.md. En attendant,
 // aucune requête de données n'est servie sans identité vérifiée.
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import type express from 'express';
-import { supabase, supabaseEnabled, resolveCompanyId } from './db.js';
+import { resolveCompanyId, supabase, supabaseEnabled } from './db.js';
 
 export type AppRole = 'admin' | 'secretary' | 'accountant' | 'employee';
 
@@ -38,12 +39,15 @@ export function normalizeRole(role: string | null | undefined): AppRole {
 // Secret de session
 // ---------------------------------------------------------------------------
 // SESSION_SECRET doit être défini dans les variables d'environnement (Vercel).
-// À défaut, un secret éphémère est généré : les sessions ne survivent alors pas
-// à un redémarrage / une nouvelle instance serverless — acceptable en dev,
-// à proscrire en production (un avertissement est journalisé).
+// En production, démarrer sans secret stable rendrait les sessions incohérentes
+// entre les instances serverless. On échoue donc explicitement au lieu de créer
+// silencieusement un secret différent sur chaque instance.
 const SESSION_SECRET: string = (() => {
   const fromEnv = process.env.SESSION_SECRET;
-  if (fromEnv && fromEnv.trim().length >= 16) return fromEnv.trim();
+  if (fromEnv && fromEnv.trim().length >= 32) return fromEnv.trim();
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_SECRET doit contenir au moins 32 caractères en production');
+  }
   const ephemeral = crypto.randomBytes(32).toString('hex');
   if (supabaseEnabled) {
     console.warn('[auth] SESSION_SECRET manquant : secret éphémère généré. ' +
@@ -52,7 +56,8 @@ const SESSION_SECRET: string = (() => {
   return ephemeral;
 })();
 
-const SESSION_TTL_SECONDS = 12 * 60 * 60; // 12 h
+const SESSION_TTL_SECONDS = 4 * 60 * 60; // 4 h
+export const SESSION_COOKIE_NAME = 'gcp_session';
 
 // ---------------------------------------------------------------------------
 // JWT HS256 minimal (crypto natif Node — aucune dépendance supplémentaire)
@@ -64,6 +69,12 @@ const b64urlJson = (obj: unknown) => b64url(JSON.stringify(obj));
 
 function hmac(data: string): string {
   return b64url(crypto.createHmac('sha256', SESSION_SECRET).update(data).digest());
+}
+
+// Référence opaque utilisée par l'annuaire public. Elle est stable pour le
+// couple compagnie/utilisateur, mais ne révèle aucun UUID de la base.
+export function createLoginHandle(companyId: string, userId: string): string {
+  return hmac(`directory-login|${companyId}|${userId}`);
 }
 
 export function signSession(ctx: AuthContext): { token: string; expiresAt: number } {
@@ -108,13 +119,17 @@ export function verifySession(token: string): AuthContext | null {
 // ---------------------------------------------------------------------------
 // Limitation des tentatives de connexion (anti force brute sur les NIP)
 // ---------------------------------------------------------------------------
-// En mémoire par instance : suffisant pour ralentir un balayage de NIP à 4
-// chiffres. Un stockage partagé (table/Redis) est recommandé à terme.
+// La table auth_login_attempts est partagée entre toutes les instances Vercel.
+// Le Map local reste uniquement un filet de sécurité lorsque Supabase est
+// indisponible; il n'est jamais considéré comme la protection principale.
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map<string, { count: number; firstAt: number }>();
 
-export function isLoginThrottled(key: string): boolean {
+const throttleHash = (key: string) =>
+  crypto.createHash('sha256').update(`${SESSION_SECRET}|${key}`).digest('hex');
+
+function isMemoryLoginThrottled(key: string): boolean {
   const entry = loginAttempts.get(key);
   if (!entry) return false;
   if (Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
@@ -124,7 +139,7 @@ export function isLoginThrottled(key: string): boolean {
   return entry.count >= LOGIN_MAX_ATTEMPTS;
 }
 
-export function recordLoginFailure(key: string): void {
+function recordMemoryLoginFailure(key: string): void {
   const entry = loginAttempts.get(key);
   if (!entry || Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
     loginAttempts.set(key, { count: 1, firstAt: Date.now() });
@@ -133,8 +148,59 @@ export function recordLoginFailure(key: string): void {
   }
 }
 
-export function clearLoginFailures(key: string): void {
+function clearMemoryLoginFailures(key: string): void {
   loginAttempts.delete(key);
+}
+
+export async function isLoginThrottled(key: string): Promise<boolean> {
+  if (!supabaseEnabled || !supabase) return isMemoryLoginThrottled(key);
+  try {
+    const { data, error } = await supabase
+      .from('auth_login_attempts')
+      .select('failure_count, first_failed_at, blocked_until')
+      .eq('key_hash', throttleHash(key))
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return false;
+    const blockedUntil = data.blocked_until ? new Date(data.blocked_until).getTime() : 0;
+    if (blockedUntil > Date.now()) return true;
+    const firstAt = data.first_failed_at ? new Date(data.first_failed_at).getTime() : 0;
+    return firstAt > Date.now() - LOGIN_WINDOW_MS && Number(data.failure_count || 0) >= LOGIN_MAX_ATTEMPTS;
+  } catch (error: any) {
+    console.error('[auth] throttle partagé indisponible :', error?.message || error);
+    return isMemoryLoginThrottled(key);
+  }
+}
+
+export async function recordLoginFailure(key: string): Promise<void> {
+  recordMemoryLoginFailure(key);
+  if (!supabaseEnabled || !supabase) return;
+  try {
+    // La fonction SQL verrouille la ligne et incrémente atomiquement : deux
+    // instances Vercel concurrentes ne peuvent pas perdre une tentative.
+    const { error } = await supabase.rpc('record_auth_login_failure', {
+      p_key_hash: throttleHash(key),
+      p_window_seconds: Math.floor(LOGIN_WINDOW_MS / 1000),
+      p_max_attempts: LOGIN_MAX_ATTEMPTS
+    });
+    if (error) throw error;
+  } catch (error: any) {
+    console.error('[auth] échec de mise à jour du throttle partagé :', error?.message || error);
+  }
+}
+
+export async function clearLoginFailures(key: string): Promise<void> {
+  clearMemoryLoginFailures(key);
+  if (!supabaseEnabled || !supabase) return;
+  try {
+    const { error } = await supabase
+      .from('auth_login_attempts')
+      .delete()
+      .eq('key_hash', throttleHash(key));
+    if (error) throw error;
+  } catch (error: any) {
+    console.error('[auth] échec du nettoyage du throttle partagé :', error?.message || error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,34 +212,62 @@ export interface CredentialCheck {
   reason?: 'unavailable' | 'invalid' | 'inactive';
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PIN_RE = /^\d{4}$/;
+const LOGIN_HANDLE_RE = /^[A-Za-z0-9_-]{43}$/;
+const BCRYPT_RE = /^\$2[aby]\$/;
+const BCRYPT_ROUNDS = 12;
 
-export async function verifyCredentials(employeeId: string, nip: string): Promise<CredentialCheck> {
+export async function hashPin(pin: string): Promise<string> {
+  if (!PIN_RE.test(pin)) throw new Error('Le NIP doit contenir exactement quatre chiffres');
+  return bcrypt.hash(pin, BCRYPT_ROUNDS);
+}
+
+export async function verifyPin(pin: string, storedHash: string): Promise<{ match: boolean; legacyPlaintext: boolean }> {
+  if (!PIN_RE.test(pin) || !storedHash) return { match: false, legacyPlaintext: false };
+  if (BCRYPT_RE.test(storedHash)) {
+    return { match: await bcrypt.compare(pin, storedHash), legacyPlaintext: false };
+  }
+  if (!PIN_RE.test(storedHash)) return { match: false, legacyPlaintext: false };
+  const candidate = Buffer.from(pin);
+  const legacy = Buffer.from(storedHash);
+  const match = candidate.length === legacy.length && crypto.timingSafeEqual(candidate, legacy);
+  return { match, legacyPlaintext: match };
+}
+
+export async function verifyCredentials(loginHandle: string, nip: string): Promise<CredentialCheck> {
   if (!supabaseEnabled || !supabase) return { ok: false, reason: 'unavailable' };
-  // Identifiant local hérité (ex: "emp-1" des données de démonstration) : cet
-  // utilisateur n'existe pas dans la base — on répond "unavailable" plutôt
-  // qu'"invalid" pour que le client bascule sur sa vérification locale au lieu
-  // d'afficher "NIP incorrect" à tort.
-  if (!UUID_RE.test(employeeId)) return { ok: false, reason: 'unavailable' };
+  if (!LOGIN_HANDLE_RE.test(loginHandle) || !PIN_RE.test(nip)) return { ok: false, reason: 'invalid' };
 
-  const { data: user, error } = await supabase
+  const companyId = await resolveCompanyId();
+  const { data: users, error } = await supabase
     .from('app_users')
     .select('id, full_name, role, company_id, access_code_hash, is_active')
-    .eq('id', employeeId)
-    .maybeSingle();
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .limit(250);
+  const submittedHandle = Buffer.from(loginHandle);
+  const user = (users || []).find(candidate => {
+    const expectedHandle = Buffer.from(createLoginHandle(companyId, String(candidate.id)));
+    return expectedHandle.length === submittedHandle.length && crypto.timingSafeEqual(expectedHandle, submittedHandle);
+  });
   if (error || !user) return { ok: false, reason: 'invalid' };
   if (user.is_active === false) return { ok: false, reason: 'inactive' };
 
   const stored = String(user.access_code_hash || '');
-  // Les anciens NIP hachés (bcrypt "$2...") ne sont plus utilisables : l'admin
-  // doit en attribuer un nouveau. Comparaison en temps constant sinon.
-  if (!stored || stored.startsWith('$2')) return { ok: false, reason: 'invalid' };
-  const a = Buffer.from(stored);
-  const b = Buffer.from(String(nip || ''));
-  const match = a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (!match) return { ok: false, reason: 'invalid' };
+  const verified = await verifyPin(nip, stored);
+  if (!verified.match) return { ok: false, reason: 'invalid' };
 
-  const companyId = user.company_id || await resolveCompanyId();
+  // Migration transparente des quatre chiffres historiques : après la première
+  // connexion réussie, la valeur en clair n'existe plus dans la base.
+  if (verified.legacyPlaintext) {
+    const nextHash = await hashPin(nip);
+    const { error: migrateError } = await supabase
+      .from('app_users')
+      .update({ access_code_hash: nextHash })
+      .eq('id', user.id)
+      .eq('company_id', companyId);
+    if (migrateError) throw migrateError;
+  }
   return {
     ok: true,
     ctx: {
@@ -193,9 +287,14 @@ export interface AuthedRequest extends express.Request {
 }
 
 export function extractAuth(req: express.Request): AuthContext | null {
-  const header = req.headers.authorization || '';
-  if (!header.startsWith('Bearer ')) return null;
-  return verifySession(header.slice(7).trim());
+  const cookieHeader = req.headers.cookie || '';
+  const cookie = cookieHeader
+    .split(';')
+    .map(value => value.trim())
+    .find(value => value.startsWith(`${SESSION_COOKIE_NAME}=`));
+  if (!cookie) return null;
+  const token = decodeURIComponent(cookie.slice(SESSION_COOKIE_NAME.length + 1));
+  return verifySession(token);
 }
 
 // Exige une session valide. Toutes les routes de données passent par ici.

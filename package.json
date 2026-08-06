@@ -4,21 +4,27 @@
   "version": "0.0.8",
   "type": "module",
   "scripts": {
-    "prepare:app": "python3 scripts/apply_global_compliance.py && python3 scripts/fix_global_compliance_output.py && python3 scripts/apply_local_test_mode.py && python3 scripts/patch_test_network_guard.py && python3 scripts/fix_ai_provider_access.py && python3 scripts/ensure_ai_test_session.py && python3 scripts/apply_live_compensation.py && python3 scripts/fix_onboarding_scroll.py && python3 scripts/apply_storage_and_migration.py && python3 scripts/fix_storage_summary_markup.py && python3 scripts/apply_storage_cloud_mapper.py && python3 scripts/apply_tool_registry.py && python3 scripts/apply_migration_cloud_sync.py && python3 scripts/normalize_document_watermark_anchor.py && python3 scripts/apply_professional_document_workflow.py && python3 scripts/fix_professional_document_filters.py && python3 scripts/simplify_document_search_panel.py && python3 scripts/apply_editable_documents_and_contract_lock.py && python3 scripts/improve_catalogue_price_editing.py && python3 scripts/fix_catalogue_card_layout.py && python3 scripts/apply_project_search_and_full_edit.py && python3 scripts/apply_professional_help_center.py && python3 scripts/apply_assistant_voice.py && python3 scripts/fix_assistant_voice_always_on.py && python3 scripts/fix_onboarding_hook_order.py && tsx scripts/validate_test_dataset.ts && tsx scripts/validate_live_compensation.ts && tsx scripts/validate_onboarding_scroll.ts && tsx scripts/validate_tool_registry.ts && tsx scripts/validate_storage_and_migration.ts && tsx scripts/validate_professional_document_workflow.ts && tsx scripts/validate_catalogue_price_editing.ts && tsx scripts/validate_catalogue_card_layout.ts && tsx scripts/validate_project_search_and_document_editing.ts && tsx scripts/validate_professional_help_center.ts && tsx scripts/validate_assistant_voice.ts",
-    "dev": "npm run prepare:app && tsx server.ts",
-    "build": "npm run prepare:app && tsc --noEmit && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "build:vercel": "npm run prepare:app && tsc --noEmit && vite build",
-    "start": "node dist/server.cjs",
+    "dev": "tsx server.ts",
+    "dev:client": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=dist/server.mjs",
+    "build:vercel": "npm run typecheck && vite build",
+    "start": "node dist/server.mjs",
     "clean": "rm -rf dist server.js",
-    "lint": "npm run prepare:app && tsc --noEmit"
+    "lint": "eslint .",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "audit": "npm audit --audit-level=high"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
+    "@google/genai": "^2.16.0",
     "@supabase/supabase-js": "^2.110.1",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "bcryptjs": "^3.0.2",
     "dotenv": "^17.2.3",
-    "express": "^4.21.2",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.1.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
@@ -27,13 +33,19 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
+    "@eslint/js": "^9.33.0",
+    "@types/express": "^4.17.25",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "eslint": "^9.33.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.3.0",
+    "puppeteer-core": "^24.15.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
+    "typescript-eslint": "^8.39.0",
     "vite": "^6.2.3"
   }
 }

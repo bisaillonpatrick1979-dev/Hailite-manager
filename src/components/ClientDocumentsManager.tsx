@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import useAppStore from '../store';
+import CompanyLogo from './CompanyLogo';
 import { 
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, 
   GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine,
@@ -9,9 +10,9 @@ import {
   Plus, Search, FileText, Trash2, Edit2, CheckCircle, Calendar,
   DollarSign, AlertCircle, TrendingUp, Briefcase, ShieldCheck,
   FileCheck, PenTool, Printer, ArrowRight, History, User, MapPin,
-  CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat
+  CreditCard, X, ChevronDown, Check, Coins, Layers, HardHat, Lock
 } from 'lucide-react';
-import { CANADIAN_REGIONS, US_REGIONS } from '../regionsData';
+import { getDefaultRegion, marketLabel, type MarketCode } from '../internationalRegions';
 import { translations, fmt } from '../translations';
 import SignaturePad from './SignaturePad';
 import { genId } from '../apiClient';
@@ -19,24 +20,28 @@ import { genId } from '../apiClient';
 export default function ClientDocumentsManager() {
   const {
     documents, addGCPDocument, updateGCPDocument, deleteGCPDocument,
-    convertQuoteToInvoice, addPartialPayment, clients, projects, companyInfo,
+    addPartialPayment, clients, projects, companyInfo,
     currentTheme, currentLanguage
   } = useAppStore();
 
-  const companyCountry = companyInfo.country || 'CA';
-  const companyRegion = (companyCountry === 'US' ? US_REGIONS : CANADIAN_REGIONS).find(r => r.code === companyInfo.region) || CANADIAN_REGIONS[0];
+  const companyCountry: MarketCode = companyInfo.country === 'US' || companyInfo.country === 'EU' ? companyInfo.country : 'CA';
+  const companyRegion = getDefaultRegion(companyCountry, companyInfo.region);
   const isQuebec = companyCountry === 'CA' && companyRegion.code === 'QC';
   const regionName = currentLanguage === 'FR' ? companyRegion.nameFR : companyRegion.nameEN;
   const t = translations[currentLanguage];
-  const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
+  const dateLocale = companyInfo.dateLocale || (currentLanguage === 'FR' ? 'fr-CA' : 'en-CA');
+  const currency = companyInfo.currency || (companyCountry === 'US' ? 'USD' : companyCountry === 'EU' ? 'EUR' : 'CAD');
+  const money = (value: number) => new Intl.NumberFormat(dateLocale, { style: 'currency', currency }).format(Number(value || 0));
 
   const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'invoice' | 'quote' | 'contract'>('all');
-  const [activeStatusTab, setActiveStatusTab] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'paid' | 'overdue'>('all');
+  const [activeStatusTab, setActiveStatusTab] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'completed' | 'paid' | 'overdue'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modals state
   const [selectedDocForView, setSelectedDocForView] = useState<GCPDocument | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [sourceDocument, setSourceDocument] = useState<GCPDocument | null>(null);
+  const [editingDocument, setEditingDocument] = useState<GCPDocument | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState<string | null>(null); // docId
 
   // Payment capture form state
@@ -52,11 +57,17 @@ export default function ClientDocumentsManager() {
     holdback: "Retenue de garantie contractuelle limitée à un maximum de 10% de la valeur des travaux en vertu de la loi sur le privilège de construction, libérable 45 jours après la réception finale de l'ouvrage sans réserve."
   };
 
+
+  const isSignedContract = (doc: GCPDocument): boolean => Boolean(
+    doc.type === 'contract' && doc.clientSignature && doc.ownerSignature && doc.signedAt
+  );
+
   // Create Document States
   const [newDocType, setNewDocType] = useState<'invoice' | 'quote' | 'contract'>('quote');
   const [newClientId, setNewClientId] = useState('');
   const [newIsSimple, setNewIsSimple] = useState(true);
   const [newDueDate, setNewDueDate] = useState('');
+  const [newSiteAddress, setNewSiteAddress] = useState('');
   const [remarks, setRemarks] = useState('');
 
   // Simple lines form list
@@ -96,10 +107,13 @@ export default function ClientDocumentsManager() {
   const [signaturePadResetKey, setSignaturePadResetKey] = useState(0);
 
   const resetCreateForm = () => {
+    setSourceDocument(null);
+    setEditingDocument(null);
     setNewDocType('quote');
     setNewClientId(clients[0]?.id || '');
     setNewIsSimple(true);
     setNewDueDate(new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0]);
+    setNewSiteAddress(clients[0]?.address || '');
     setRemarks('');
     setSimpleLines([{ desc: 'Fourniture et pose de revêtement extérieur', qty: 1, unit: 'forfait', price: 5000 }]);
     setRichMaterials([]);
@@ -123,100 +137,253 @@ export default function ClientDocumentsManager() {
     setSignaturePadResetKey(k => k + 1);
   };
 
+  const openCreateDocument = (type: 'invoice' | 'quote' | 'contract', source?: GCPDocument) => {
+    resetCreateForm();
+    setNewDocType(type);
+    setShowCreateModal(true);
+
+    if (!source) {
+      setNewClientId(clients[0]?.id || '');
+      setNewSiteAddress(clients[0]?.address || '');
+      return;
+    }
+
+    setSourceDocument(source);
+    setNewClientId(source.clientId);
+    setNewSiteAddress(source.siteAddress || source.clientAddress || '');
+    setNewDueDate(new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0]);
+    setNewIsSimple(source.isSimpleLayout);
+    setSimpleLines(source.lineItems.map(line => ({
+      desc: line.description,
+      qty: line.qty,
+      unit: line.unit,
+      price: line.unitPrice
+    })));
+    setRichMaterials(source.materialLines.map(line => ({
+      claddingType: line.claddingType,
+      brand: line.brand,
+      thickness: line.thickness,
+      qtySqft: line.qtySqft,
+      supplier: line.supplier,
+      price: line.unitPrice
+    })));
+    setRichLabours(source.labourLines.map(line => ({
+      task: line.task,
+      hours: line.estimatedHours,
+      rate: line.rate,
+      isFlat: line.isFlatRate
+    })));
+    setRichOthers(source.otherLines.map(line => ({ desc: line.description, amount: line.amount })));
+    setRichSubcontracts(source.subcontractLines.map(line => ({
+      companyName: line.companyName,
+      phone: line.phone,
+      workType: line.workType,
+      amount: line.amount
+    })));
+    setDiscountPct(source.discountPct || 0);
+    setHoldbackPct(source.holdbackPct || 0);
+    setDepositAmount(source.depositAmount || 0);
+    setDepositPct(source.depositPct || 25);
+    setMidPct(source.paymentMidPct || 25);
+    setFinalPct(source.paymentFinalPct || 50);
+    setWarrantyYears(source.warrantyYears || companyInfo.defaultWarrantyYears || 2);
+    setHasInsurance(source.hasInsurance);
+    setSubcontractAuthorized(source.subcontractAuthorized);
+    setRemarks(source.contractObject || '');
+    setClauseChange(source.clauseChangeOrder || companyInfo.defaultClauseChangeOrder || clausePresets.changeOrder);
+    setClauseResil(source.clauseResiliation || companyInfo.defaultClauseResiliation || clausePresets.resiliation);
+    setClauseWarr(source.clauseWarrantyDetails || clausePresets.warranty);
+    // Un nouveau document légal reçoit ses propres signatures. On ne recopie
+    // jamais silencieusement la signature d’un devis sur un contrat.
+    setOwnerSignatureData(null);
+    setClientSignatureData(null);
+    setSignaturePadResetKey(key => key + 1);
+  };
+
+  const openEditDocument = (doc: GCPDocument) => {
+    if (isSignedContract(doc)) {
+      alert(currentLanguage === 'FR'
+        ? 'Ce contrat est signé. Son contenu est verrouillé définitivement.'
+        : 'This contract is signed. Its content is permanently locked.');
+      return;
+    }
+
+    resetCreateForm();
+    setEditingDocument(doc);
+    setSourceDocument(null);
+    setNewDocType(doc.type);
+    setNewClientId(doc.clientId);
+    setNewDueDate(doc.dueDate);
+    setNewSiteAddress(doc.siteAddress || doc.clientAddress || '');
+    setNewIsSimple(doc.isSimpleLayout);
+    setSimpleLines(doc.lineItems.map(line => ({
+      desc: line.description,
+      qty: line.qty,
+      unit: line.unit,
+      price: line.unitPrice
+    })));
+    setRichMaterials(doc.materialLines.map(line => ({
+      claddingType: line.claddingType,
+      brand: line.brand,
+      thickness: line.thickness,
+      qtySqft: line.qtySqft,
+      supplier: line.supplier,
+      price: line.unitPrice
+    })));
+    setRichLabours(doc.labourLines.map(line => ({
+      task: line.task,
+      hours: line.estimatedHours,
+      rate: line.rate,
+      isFlat: line.isFlatRate
+    })));
+    setRichOthers(doc.otherLines.map(line => ({ desc: line.description, amount: line.amount })));
+    setRichSubcontracts(doc.subcontractLines.map(line => ({
+      companyName: line.companyName,
+      phone: line.phone,
+      workType: line.workType,
+      amount: line.amount
+    })));
+    setDiscountPct(doc.discountPct || 0);
+    setHoldbackPct(doc.holdbackPct || 0);
+    setDepositAmount(doc.depositAmount || 0);
+    setDepositPct(doc.depositPct || 25);
+    setMidPct(doc.paymentMidPct || 25);
+    setFinalPct(doc.paymentFinalPct || 50);
+    setWarrantyYears(doc.warrantyYears || companyInfo.defaultWarrantyYears || 2);
+    setHasInsurance(doc.hasInsurance);
+    setSubcontractAuthorized(doc.subcontractAuthorized);
+    setRemarks(doc.contractObject || '');
+    setClauseChange(doc.clauseChangeOrder || companyInfo.defaultClauseChangeOrder || clausePresets.changeOrder);
+    setClauseResil(doc.clauseResiliation || companyInfo.defaultClauseResiliation || clausePresets.resiliation);
+    setClauseWarr(doc.clauseWarrantyDetails || clausePresets.warranty);
+    setOwnerSignatureData(doc.ownerSignature || null);
+    setClientSignatureData(doc.clientSignature || null);
+    setSignaturePadResetKey(key => key + 1);
+    setShowCreateModal(true);
+  };
+
   const handleCreateDocument = () => {
     const cli = clients.find(c => c.id === newClientId) || clients[0];
     if (!cli) {
       alert(t.cdmSelectClientFirst);
       return;
     }
+    if (editingDocument && isSignedContract(editingDocument)) {
+      alert(currentLanguage === 'FR'
+        ? 'Ce contrat est déjà signé et ne peut plus être modifié.'
+        : 'This contract is already signed and can no longer be edited.');
+      return;
+    }
 
-    if (!ownerSignatureData) {
+    const hasOwnerSignature = Boolean(ownerSignatureData);
+    const hasClientSignature = Boolean(clientSignatureData);
+    if (newDocType !== 'contract' && !hasOwnerSignature) {
       alert(t.cdmContractorSignRequired);
       return;
     }
-    if (newDocType === 'contract' && !clientSignatureData) {
-      alert(t.cdmClientSignRequired);
+    if (newDocType === 'contract' && hasOwnerSignature !== hasClientSignature) {
+      alert(currentLanguage === 'FR'
+        ? 'Pour signer le contrat, la signature de l’entrepreneur ET celle du client sont requises. Effacez les deux signatures pour garder un brouillon modifiable.'
+        : 'To sign the contract, both contractor and client signatures are required. Clear both signatures to keep an editable draft.');
       return;
     }
 
-    // Format Simple lines
-    const lineItems: GCPDocumentLineItem[] = simpleLines.map((l, idx) => ({
-      id: genId(),
-      description: l.desc,
-      qty: Number(l.qty) || 0,
-      unit: l.unit,
-      unitPrice: Number(l.price) || 0,
-      total: Number(((l.qty || 0) * (l.price || 0)).toFixed(2))
+    const contractWillBeSigned = newDocType === 'contract' && hasOwnerSignature && hasClientSignature;
+    const idFor = (group: 'simple' | 'material' | 'labour' | 'other' | 'subcontract', index: number): string => {
+      if (!editingDocument) return genId();
+      if (group === 'simple') return editingDocument.lineItems[index]?.id || genId();
+      if (group === 'material') return editingDocument.materialLines[index]?.id || genId();
+      if (group === 'labour') return editingDocument.labourLines[index]?.id || genId();
+      if (group === 'other') return editingDocument.otherLines[index]?.id || genId();
+      return editingDocument.subcontractLines[index]?.id || genId();
+    };
+
+    const lineItems: GCPDocumentLineItem[] = simpleLines
+      .filter(line => line.desc.trim() || Number(line.qty) || Number(line.price))
+      .map((line, index) => ({
+        id: idFor('simple', index),
+        description: line.desc.trim(),
+        qty: Number(line.qty) || 0,
+        unit: line.unit,
+        unitPrice: Number(line.price) || 0,
+        total: Number(((line.qty || 0) * (line.price || 0)).toFixed(2))
+      }));
+    const materialLines: GCPDocumentMaterialLine[] = richMaterials.map((line, index) => ({
+      id: idFor('material', index),
+      claddingType: line.claddingType,
+      brand: line.brand,
+      thickness: line.thickness,
+      qtySqft: Number(line.qtySqft) || 0,
+      supplier: line.supplier,
+      unitPrice: Number(line.price) || 0,
+      total: Number(((line.qtySqft || 0) * (line.price || 0)).toFixed(2))
+    }));
+    const labourLines: GCPDocumentLabourLine[] = richLabours.map((line, index) => ({
+      id: idFor('labour', index),
+      task: line.task,
+      estimatedHours: Number(line.hours) || 0,
+      rate: Number(line.rate) || 0,
+      isFlatRate: line.isFlat,
+      total: line.isFlat ? Number(line.rate) || 0 : Number(((line.hours || 0) * (line.rate || 0)).toFixed(2))
+    }));
+    const otherLines: GCPDocumentOtherLine[] = richOthers.map((line, index) => ({
+      id: idFor('other', index),
+      description: line.desc,
+      amount: Number(line.amount) || 0
+    }));
+    const subcontractLines: GCPDocumentSubcontractLine[] = richSubcontracts.map((line, index) => ({
+      id: idFor('subcontract', index),
+      companyName: line.companyName,
+      phone: line.phone,
+      workType: line.workType,
+      amount: Number(line.amount) || 0
     }));
 
-    // Format Rich lines
-    const materialLines: GCPDocumentMaterialLine[] = richMaterials.map((m, idx) => ({
-      id: genId(),
-      claddingType: m.claddingType,
-      brand: m.brand,
-      thickness: m.thickness,
-      qtySqft: Number(m.qtySqft) || 0,
-      supplier: m.supplier,
-      unitPrice: Number(m.price) || 0,
-      total: Number(((m.qtySqft || 0) * (m.price || 0)).toFixed(2))
-    }));
+    const unsignedContractStatus = editingDocument && ['draft', 'sent'].includes(editingDocument.status)
+      ? editingDocument.status
+      : 'draft';
+    const nextStatus = newDocType === 'contract'
+      ? contractWillBeSigned
+        ? (editingDocument?.status === 'completed' ? 'completed' : 'accepted')
+        : unsignedContractStatus
+      : (editingDocument?.status || 'draft');
+    const now = new Date().toISOString();
 
-    const labourLines: GCPDocumentLabourLine[] = richLabours.map((lb, idx) => ({
-      id: genId(),
-      task: lb.task,
-      estimatedHours: Number(lb.hours) || 0,
-      rate: Number(lb.rate) || 0,
-      isFlatRate: lb.isFlat,
-      total: lb.isFlat ? (Number(lb.rate) || 0) : Number(((lb.hours || 0) * (lb.rate || 0)).toFixed(2))
-    }));
-
-    const otherLines: GCPDocumentOtherLine[] = richOthers.map((o, idx) => ({
-      id: genId(),
-      description: o.desc,
-      amount: Number(o.amount) || 0
-    }));
-
-    const subcontractLines: GCPDocumentSubcontractLine[] = richSubcontracts.map((s, idx) => ({
-      id: genId(),
-      companyName: s.companyName,
-      phone: s.phone,
-      workType: s.workType,
-      amount: Number(s.amount) || 0
-    }));
-
-    addGCPDocument({
+    const commonDocument = {
       type: newDocType,
-      date: new Date().toISOString().split('T')[0],
+      date: editingDocument?.date || new Date().toISOString().split('T')[0],
       dueDate: newDueDate,
-      status: 'draft',
+      status: nextStatus as GCPDocument['status'],
+      refQuote: editingDocument?.refQuote || (newDocType === 'contract' && sourceDocument?.type === 'quote' ? sourceDocument.number : newDocType === 'invoice' ? sourceDocument?.refQuote : undefined),
+      refContract: editingDocument?.refContract || (newDocType === 'invoice' && sourceDocument?.type === 'contract' ? sourceDocument.number : undefined),
       clientId: cli.id,
       clientName: cli.name,
       clientAddress: cli.address,
       clientEmail: cli.email,
       clientPhone: cli.phone,
-      siteAddress: cli.address,
+      siteAddress: newSiteAddress.trim() || cli.address,
       isSimpleLayout: newIsSimple,
       lineItems,
       materialLines,
       labourLines,
       otherLines,
       subcontractLines,
-      subtotal: 0, // Auto calculated in store
+      subtotal: editingDocument?.subtotal || 0,
       discountPct: Number(discountPct) || 0,
       taxRate: Number((((companyInfo.taxRate1 !== undefined ? companyInfo.taxRate1 : 0.05) + (companyInfo.taxRate2 !== undefined ? companyInfo.taxRate2 : 0.09975)) * 100).toFixed(4)),
-      taxAmount: 0, // Auto calculated
-      total: 0, // Auto calculated
+      taxAmount: editingDocument?.taxAmount || 0,
+      total: editingDocument?.total || 0,
       holdbackPct: Number(holdbackPct) || 0,
-      holdbackAmount: 0, // Auto calculated
+      holdbackAmount: editingDocument?.holdbackAmount || 0,
       depositAmount: Number(depositAmount) || 0,
-      balanceDue: 0, // Auto calculated
-      acceptedPayments: ['virement', 'etransfer'],
-      lateInterestPct: 2,
+      balanceDue: editingDocument?.balanceDue || 0,
+      acceptedPayments: editingDocument?.acceptedPayments || (['virement', 'etransfer'] as Array<'virement' | 'etransfer'>),
+      lateInterestPct: editingDocument?.lateInterestPct || 2,
       depositPct,
       paymentMidPct: midPct,
       paymentFinalPct: finalPct,
-      quoteValidDays: 30,
-      permitBy: 'contractor',
+      quoteValidDays: editingDocument?.quoteValidDays || 30,
+      permitBy: editingDocument?.permitBy || ('contractor' as const),
       warrantyYears,
       hasInsurance,
       subcontractAuthorized,
@@ -224,14 +391,31 @@ export default function ClientDocumentsManager() {
       clauseChangeOrder: clauseChange,
       clauseResiliation: clauseResil,
       clauseWarrantyDetails: clauseWarr,
-      ownerName: companyInfo.name || 'Hailite Xteriors Inc.',
-      paymentsHistory: [],
-      clientSignature: newDocType === 'contract' ? (clientSignatureData || undefined) : undefined,
-      ownerSignature: ownerSignatureData || undefined,
-      signedAt: new Date().toISOString()
-    });
+      ownerName: editingDocument?.ownerName || companyInfo.name || 'Hailite Xteriors Inc.',
+      paymentsHistory: editingDocument?.paymentsHistory || [],
+      clientSignature: newDocType === 'contract' && contractWillBeSigned ? (clientSignatureData || undefined) : undefined,
+      ownerSignature: newDocType === 'contract'
+        ? (contractWillBeSigned ? (ownerSignatureData || undefined) : undefined)
+        : (ownerSignatureData || undefined),
+      signedAt: newDocType === 'contract'
+        ? (contractWillBeSigned ? (editingDocument?.signedAt || now) : undefined)
+        : (editingDocument?.signedAt || now)
+    };
+
+    if (editingDocument) {
+      updateGCPDocument({
+        ...editingDocument,
+        ...commonDocument,
+        id: editingDocument.id,
+        number: editingDocument.number
+      });
+    } else {
+      addGCPDocument(commonDocument);
+    }
 
     setShowCreateModal(false);
+    setActiveTypeTab(newDocType);
+    setActiveStatusTab('all');
     resetCreateForm();
   };
 
@@ -275,15 +459,31 @@ export default function ClientDocumentsManager() {
     window.print();
   };
 
-  // Filters calculation
+  // Recherche unique dans tous les devis, contrats et factures.
+  const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredDocs = documents.filter(doc => {
-    const matchesType = activeTypeTab === 'all' || doc.type === activeTypeTab;
-    const matchesStatus = activeStatusTab === 'all' || doc.status === activeStatusTab;
-    const matchesSearch = 
-      doc.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      doc.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (doc.refQuote && doc.refQuote.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesType && matchesStatus && matchesSearch;
+    if (!normalizedSearch) return true;
+
+    const documentTypeLabel = doc.type === 'quote'
+      ? 'devis quote soumission'
+      : doc.type === 'contract'
+        ? 'contrat contract travaux'
+        : 'facture invoice';
+
+    return [
+      doc.number,
+      doc.clientName,
+      doc.clientAddress,
+      doc.clientEmail,
+      doc.clientPhone,
+      doc.siteAddress,
+      doc.refQuote,
+      doc.refContract,
+      doc.status,
+      documentTypeLabel
+    ]
+      .filter(Boolean)
+      .some(value => String(value).toLowerCase().includes(normalizedSearch));
   });
 
   // Aggregated totals
@@ -295,11 +495,18 @@ export default function ClientDocumentsManager() {
     .filter(d => d.type === 'quote' && d.status === 'accepted')
     .reduce((sum, d) => sum + d.total, 0);
 
+  const quoteDocumentCount = documents.filter(doc => doc.type === 'quote').length;
+  const contractDocumentCount = documents.filter(doc => doc.type === 'contract').length;
+  const invoiceDocumentCount = documents.filter(doc => doc.type === 'invoice').length;
+  const acceptedQuoteCount = documents.filter(doc => doc.type === 'quote' && doc.status === 'accepted').length;
+  const completedContractCount = documents.filter(doc => doc.type === 'contract' && doc.status === 'completed').length;
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'draft': return 'bg-gray-800 text-gray-300 border-gray-700';
       case 'sent': return 'bg-blue-950/40 text-blue-400 border-blue-900/30';
       case 'accepted': return 'bg-purple-950/40 text-purple-400 border-purple-900/30';
+      case 'completed': return 'bg-teal-950/40 text-teal-300 border-teal-900/30';
       case 'paid': return 'bg-green-950/40 text-green-400 border-green-900/30';
       case 'overdue': return 'bg-red-950/40 text-red-400 border-red-900/30';
       default: return 'bg-gray-800 text-gray-300 border-gray-700';
@@ -311,6 +518,7 @@ export default function ClientDocumentsManager() {
       case 'draft': return t.cdmStatusDraft;
       case 'sent': return t.cdmStatusSent;
       case 'accepted': return t.cdmStatusAccepted;
+      case 'completed': return currentLanguage === 'FR' ? 'Travaux terminés' : 'Work completed';
       case 'paid': return t.cdmStatusPaid;
       case 'overdue': return t.cdmStatusOverdue;
       default: return status;
@@ -330,6 +538,40 @@ export default function ClientDocumentsManager() {
 
   return (
     <div id="clients-documents-manager" className="space-y-6">
+
+      <section id="document-professional-workflow" className="rounded-3xl border border-orange-500/25 bg-gradient-to-br from-[#16191F] to-[#0F1115] p-4 sm:p-6 shadow-xl">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-orange-300"><Layers className="h-6 w-6" /><span className="text-xs font-black uppercase tracking-[0.2em]">{currentLanguage === 'FR' ? 'Parcours des documents' : 'Document workflow'}</span></div>
+            <h2 className="mt-2 text-2xl font-black text-white">{currentLanguage === 'FR' ? 'Devis → Contrat → Facture' : 'Quote → Contract → Invoice'}</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-gray-400">{currentLanguage === 'FR' ? 'Commencez par un devis. Préparez ensuite un contrat brouillon, révisez-le, puis faites-le signer. Dès la signature, son contenu est verrouillé. Quand les travaux sont terminés, transformez le contrat en facture.' : 'Start with a quote. Then prepare and review a draft contract before signing it. Once signed, its content is locked. When work is complete, turn the contract into an invoice.'}</p>
+          </div>
+          <div className="rounded-xl border border-gray-800 bg-black/20 px-4 py-3 text-xs text-gray-300">
+            <b className="text-orange-300">{acceptedQuoteCount}</b> {currentLanguage === 'FR' ? 'devis accepté(s) prêt(s) pour contrat' : 'accepted quote(s) ready for contract'}<br />
+            <b className="text-teal-300">{completedContractCount}</b> {currentLanguage === 'FR' ? 'contrat(s) prêt(s) à facturer' : 'contract(s) ready to invoice'}
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
+          <button type="button" onClick={() => openCreateDocument('quote')} className="group min-h-40 rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4 text-left transition hover:border-blue-300 hover:bg-blue-500/15">
+            <div className="flex items-center justify-between"><FileText className="h-8 w-8 text-blue-300" /><span className="rounded-full bg-black/30 px-3 py-1 text-xs font-black text-blue-200">{quoteDocumentCount}</span></div>
+            <h3 className="mt-4 text-xl font-black text-white">1. {currentLanguage === 'FR' ? 'Créer un devis' : 'Create a quote'}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">{currentLanguage === 'FR' ? 'Description des travaux, matériaux, main-d’œuvre, prix, taxes et durée de validité.' : 'Work description, materials, labour, pricing, taxes, and validity period.'}</p>
+          </button>
+
+          <button type="button" onClick={() => openCreateDocument('contract')} className="group min-h-40 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-4 text-left transition hover:border-purple-300 hover:bg-purple-500/15">
+            <div className="flex items-center justify-between"><FileCheck className="h-8 w-8 text-purple-300" /><span className="rounded-full bg-black/30 px-3 py-1 text-xs font-black text-purple-200">{contractDocumentCount}</span></div>
+            <h3 className="mt-4 text-xl font-black text-white">2. {currentLanguage === 'FR' ? 'Créer un contrat' : 'Create a contract'}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">{currentLanguage === 'FR' ? 'Contrat autonome ou prérempli, sauvegardé comme brouillon modifiable avant les deux signatures.' : 'Standalone or prefilled contract saved as an editable draft before both signatures.'}</p>
+          </button>
+
+          <button type="button" onClick={() => openCreateDocument('invoice')} className="group min-h-40 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-left transition hover:border-emerald-300 hover:bg-emerald-500/15">
+            <div className="flex items-center justify-between"><DollarSign className="h-8 w-8 text-emerald-300" /><span className="rounded-full bg-black/30 px-3 py-1 text-xs font-black text-emerald-200">{invoiceDocumentCount}</span></div>
+            <h3 className="mt-4 text-xl font-black text-white">3. {currentLanguage === 'FR' ? 'Créer une facture' : 'Create an invoice'}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">{currentLanguage === 'FR' ? 'Facture autonome ou facture préremplie depuis un contrat terminé, avec références complètes.' : 'Standalone invoice or one prefilled from a completed contract, with full references.'}</p>
+          </button>
+        </div>
+      </section>
       
       {/* 🌟 STATS OVERVIEW DECK */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -366,80 +608,26 @@ export default function ClientDocumentsManager() {
 
       </div>
 
-      {/* 🔍 FILTER BAR */}
-      <div className="bg-[#12131A] border border-gray-850 rounded-2xl p-4 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          
-          {/* Main search and new create button */}
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-80">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder={t.cdmSearchPh}
-                className="w-full pl-9 pr-4 py-2 bg-gray-900 border border-gray-800 rounded-xl text-xs text-white focus:outline-none focus:border-orange-500"
-              />
-            </div>
-
-            <button
-              onClick={() => { resetCreateForm(); setShowCreateModal(true); }}
-              className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-xl transition flex items-center gap-2 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>{t.cdmNewDocBtn}</span>
-            </button>
-          </div>
-
-          {/* Type filters */}
-          <div className="flex flex-wrap gap-1.5">
-            {[
-              { id: 'all', label: t.cdmFilterAll },
-              { id: 'quote', label: t.cdmFilterQuotes },
-              { id: 'contract', label: t.cdmFilterContracts },
-              { id: 'invoice', label: t.cdmFilterInvoices }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTypeTab(tab.id as any)}
-                className={`px-3 py-1.5 text-xs font-black rounded-lg border transition duration-200 cursor-pointer ${
-                  activeTypeTab === tab.id
-                    ? 'bg-orange-600 border-orange-500 text-white'
-                    : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
+      {/* Recherche unique — les créations restent uniquement dans les trois cartes du haut. */}
+      <div id="document-search-only" className="rounded-2xl border border-gray-850 bg-[#12131A] p-4 sm:p-5">
+        <div className="relative w-full">
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-500" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={event => setSearchQuery(event.target.value)}
+            placeholder={currentLanguage === 'FR'
+              ? 'Rechercher un client, un numéro de devis, de contrat ou de facture…'
+              : 'Search a client, quote, contract, or invoice number…'}
+            aria-label={currentLanguage === 'FR' ? 'Rechercher dans tous les documents' : 'Search all documents'}
+            className="min-h-14 w-full rounded-xl border border-gray-800 bg-gray-900 py-3 pl-12 pr-4 text-base text-white placeholder:text-gray-500 focus:border-orange-500 focus:outline-none"
+          />
         </div>
-
-        {/* Status sub filters */}
-        <div className="flex flex-wrap items-center gap-1 border-t border-gray-800 pt-3">
-          <span className="text-[10px] uppercase font-mono tracking-wide text-gray-500 mr-2">{t.cdmFilterStatus}</span>
-          {[
-            { id: 'all', label: t.cdmFilterAll },
-            { id: 'draft', label: t.cdmStatusDraft },
-            { id: 'sent', label: t.cdmStatusSent },
-            { id: 'accepted', label: t.cdmStatusAccepted },
-            { id: 'paid', label: t.cdmStatusPaidShort },
-            { id: 'overdue', label: t.cdmStatusOverdueShort }
-          ].map(stat => (
-            <button
-              key={stat.id}
-              onClick={() => setActiveStatusTab(stat.id as any)}
-              className={`px-2.5 py-1 text-[11px] font-bold rounded-md border transition cursor-pointer ${
-                activeStatusTab === stat.id
-                  ? 'bg-gray-800 border-gray-700 text-white font-black'
-                  : 'bg-gray-900/40 border-transparent text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              {stat.label}
-            </button>
-          ))}
-        </div>
+        {searchQuery.trim() && (
+          <p className="mt-2 px-1 text-xs font-bold text-gray-400">
+            {filteredDocs.length} {currentLanguage === 'FR' ? 'résultat(s) trouvé(s)' : 'result(s) found'}
+          </p>
+        )}
       </div>
 
       {/* 📋 DOCUMENT GRID / LIST */}
@@ -479,6 +667,9 @@ export default function ClientDocumentsManager() {
                   {doc.refQuote && (
                     <p className="text-[9px] text-blue-400 font-mono">{t.cdmQuoteRef} {doc.refQuote}</p>
                   )}
+                  {doc.refContract && (
+                    <p className="text-[9px] text-purple-300 font-mono">{currentLanguage === 'FR' ? 'Contrat réf.' : 'Contract ref.'} {doc.refContract}</p>
+                  )}
                 </div>
               </div>
 
@@ -486,41 +677,65 @@ export default function ClientDocumentsManager() {
               <div className="bg-gray-950/40 rounded-lg p-2.5 grid grid-cols-3 gap-2 text-center text-xs border border-gray-850">
                 <div>
                   <span className="text-[10px] text-gray-500 font-mono">{t.cdmSubtotal}</span>
-                  <p className="font-bold text-white mt-0.5">{doc.subtotal.toFixed(2)}$</p>
+                  <p className="font-bold text-white mt-0.5">{money(doc.subtotal)}</p>
                 </div>
                 <div>
                   <span className="text-[10px] text-gray-500 font-mono">{t.cdmTaxesTtc}</span>
-                  <p className="font-bold text-white mt-0.5">{doc.total.toFixed(2)}$</p>
+                  <p className="font-bold text-white mt-0.5">{money(doc.total)}</p>
                 </div>
                 <div>
                   <span className="text-[10px] text-gray-500 font-mono text-orange-500">{t.cdmDueShort}</span>
-                  <p className="font-black text-green-400 mt-0.5">{doc.balanceDue.toFixed(2)}$</p>
+                  <p className="font-black text-green-400 mt-0.5">{money(doc.balanceDue)}</p>
                 </div>
               </div>
 
               {/* Action buttons */}
               <div className="flex items-center justify-between border-t border-gray-805 pt-3">
-                <button
-                  onClick={() => deleteGCPDocument(doc.id)}
-                  className="p-1.5 text-gray-500 hover:text-red-400 border border-transparent hover:border-red-950 hover:bg-red-950/20 rounded-lg transition"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {!isSignedContract(doc) ? (
+                  <button
+                    onClick={() => {
+                      const confirmed = window.confirm(currentLanguage === 'FR' ? `Supprimer définitivement ${doc.number}?` : `Permanently delete ${doc.number}?`);
+                      if (confirmed) deleteGCPDocument(doc.id);
+                    }}
+                    className="p-1.5 text-gray-500 hover:text-red-400 border border-transparent hover:border-red-950 hover:bg-red-950/20 rounded-lg transition"
+                    aria-label={currentLanguage === 'FR' ? 'Supprimer le document' : 'Delete document'}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <span className="p-1.5 text-amber-400" title={currentLanguage === 'FR' ? 'Suppression interdite après signature' : 'Deletion prohibited after signing'}><Lock className="h-4 w-4" /></span>
+                )}
 
                 <div className="flex items-center gap-2">
-                  
-                  {/* Convert quote option */}
-                  {doc.type === 'quote' && doc.status === 'accepted' && (
+                  {/* Modification autorisée pour tous les documents sauf le contrat signé. */}
+                  {isSignedContract(doc) ? (
+                    <span className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-black uppercase text-amber-300" title={currentLanguage === 'FR' ? 'Le contenu de ce contrat signé est définitivement verrouillé.' : 'The content of this signed contract is permanently locked.'}>
+                      <Lock className="h-3.5 w-3.5" />
+                      {currentLanguage === 'FR' ? 'Signé · verrouillé' : 'Signed · locked'}
+                    </span>
+                  ) : (
                     <button
-                      onClick={() => {
-                        convertQuoteToInvoice(doc.id);
-                        alert(fmt(t.cdmConvertedAlert, { num: doc.number }));
-                      }}
-                      className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
+                      type="button"
+                      onClick={() => openEditDocument(doc)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-orange-500/30 bg-orange-500/10 px-2.5 py-1.5 text-[10px] font-black uppercase text-orange-300 transition hover:bg-orange-500/20"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                      {currentLanguage === 'FR' ? 'Modifier' : 'Edit'}
+                    </button>
+                  )}
+
+                  {/* Devis accepté -> contrat signé */}
+                  {doc.type === 'quote' && doc.status === 'accepted' && !documents.some(item => item.type === 'contract' && item.refQuote === doc.number) && (
+                    <button
+                      onClick={() => openCreateDocument('contract', doc)}
+                      className="px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
                     >
                       <ArrowRight className="w-3 h-3" />
-                      <span>{t.cdmConvertBtn}</span>
+                      <span>{currentLanguage === 'FR' ? 'Créer contrat' : 'Create contract'}</span>
                     </button>
+                  )}
+                  {doc.type === 'quote' && documents.some(item => item.type === 'contract' && item.refQuote === doc.number) && (
+                    <span className="rounded-lg border border-purple-500/30 bg-purple-500/10 px-2 py-1 text-[10px] font-black text-purple-300">{currentLanguage === 'FR' ? 'Contrat créé' : 'Contract created'}</span>
                   )}
 
                   {/* Accept quote action direct */}
@@ -534,6 +749,31 @@ export default function ClientDocumentsManager() {
                       <CheckCircle className="w-3 h-3" />
                       <span>{t.cdmApproveBtn}</span>
                     </button>
+                  )}
+
+                  {/* Contrat signé -> travaux terminés */}
+                  {doc.type === 'contract' && doc.status === 'accepted' && (
+                    <button
+                      onClick={() => updateGCPDocument({ ...doc, status: 'completed' })}
+                      className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <CheckCircle className="w-3 h-3" />
+                      <span>{currentLanguage === 'FR' ? 'Travaux terminés' : 'Work completed'}</span>
+                    </button>
+                  )}
+
+                  {/* Contrat terminé -> facture */}
+                  {doc.type === 'contract' && doc.status === 'completed' && !documents.some(item => item.type === 'invoice' && item.refContract === doc.number) && (
+                    <button
+                      onClick={() => openCreateDocument('invoice', doc)}
+                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase rounded-lg transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <ArrowRight className="w-3 h-3" />
+                      <span>{currentLanguage === 'FR' ? 'Créer facture' : 'Create invoice'}</span>
+                    </button>
+                  )}
+                  {doc.type === 'contract' && documents.some(item => item.type === 'invoice' && item.refContract === doc.number) && (
+                    <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-black text-emerald-300">{currentLanguage === 'FR' ? 'Facture créée' : 'Invoice created'}</span>
                   )}
 
                   {/* Send action */}
@@ -613,37 +853,33 @@ export default function ClientDocumentsManager() {
               id="gcp-pdf-canvas" 
               className="bg-white text-slate-900 rounded-xl p-8 shadow-2xl relative overflow-hidden font-sans border border-gray-200 select-all print:shadow-none print:border-none"
             >
-              
-              {/* Dynamic Logo Watermark & Diagonal text overlay (from improvements spec) */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
-                {/* Angular watermark */}
-                <div className="relative transform -rotate-12 opacity-[0.09] flex flex-col items-center justify-center">
-                  <div className="w-72 h-72 border-8 border-slate-900 rounded-full flex items-center justify-center p-6 mix-blend-multiply">
-                    <img 
-                      src={companyInfo.logo || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=260&q=80"}
-                      alt="Watermark Logo"
-                      className="w-48 h-48 rounded-full object-cover grayscale"
+              {/* Filigrane professionnel imprimable : logo, type et numéro */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0 overflow-hidden">
+                <div className="relative -rotate-12 opacity-[0.075] flex max-w-[90%] flex-col items-center justify-center text-center">
+                  {companyInfo.logo && (
+                    <img
+                      src={companyInfo.logo}
+                      alt=""
+                      className="mb-4 h-44 w-44 object-contain grayscale"
                       referrerPolicy="no-referrer"
                     />
-                  </div>
-                  {/* Diagonal Type of document PAR-DESSUS exact diagonal overlay */}
-                  <span className="absolute text-5xl font-mono font-black uppercase tracking-widest text-slate-900 mt-2 filter drop-shadow">
-                    {selectedDocForView.status === 'paid' ? t.cdmWmPaid : 
-                     selectedDocForView.status === 'accepted' ? t.cdmWmAccepted : 
-                     selectedDocForView.type === 'quote' ? t.cdmWmQuote : 
-                     selectedDocForView.type === 'contract' ? t.cdmWmContract : t.cdmWmInvoice}
+                  )}
+                  <span className="text-5xl font-black uppercase tracking-[0.18em] text-slate-900">
+                    {selectedDocForView.type === 'quote' ? (currentLanguage === 'FR' ? 'DEVIS' : 'QUOTE') : selectedDocForView.type === 'contract' ? (currentLanguage === 'FR' ? 'CONTRAT' : 'CONTRACT') : (currentLanguage === 'FR' ? 'FACTURE' : 'INVOICE')}
                   </span>
+                  <span className="mt-3 break-all font-mono text-2xl font-black tracking-[0.12em] text-slate-900">{selectedDocForView.number}</span>
                 </div>
               </div>
 
               {/* Real PDF Sheet Content structure */}
+
               <div className="relative z-10 space-y-6">
                 
                 {/* Header row */}
                 <div className="flex justify-between items-start gap-4 border-b border-slate-250 pb-5">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <div className="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center font-bold text-white text-xl">H</div>
+                      <CompanyLogo logo={companyInfo.logo} companyName={companyInfo.name} className="w-12 h-12 rounded-lg border border-slate-200 bg-white p-1" imageClassName="w-full h-full object-contain rounded-md" fallbackClassName="rounded-lg bg-slate-900 text-white text-lg" />
                       <div>
                         <h2 className="text-lg font-black text-slate-900 uppercase leading-none tracking-tighter">{companyInfo.name || "HAILITE XTERIORS"}</h2>
                         <span className="text-[9px] uppercase tracking-wider font-mono text-gray-500">{t.cdmTagline}</span>
@@ -654,8 +890,8 @@ export default function ClientDocumentsManager() {
                       {t.cdmTelColon} {companyInfo.phone || "(514) 876-0000"} | {t.cdmEmailColon} {companyInfo.email || "info@hailitexteriors.ca"}
                     </p>
                     <div className="text-[10px] text-gray-500 font-mono space-y-0.5 mt-1">
-                      {companyInfo.gstNumber && <p>TPS / GST : {companyInfo.gstNumber}</p>}
-                      {companyInfo.qstNumber && <p>TVQ / QST : {companyInfo.qstNumber}</p>}
+                      {companyInfo.gstNumber && <p>{companyInfo.taxRate1Name || (currentLanguage === 'FR' ? companyRegion.taxRate1NameFR : companyRegion.taxRate1NameEN)} : {companyInfo.gstNumber}</p>}
+                      {companyInfo.qstNumber && <p>{companyInfo.taxRate2Name || (currentLanguage === 'FR' ? companyRegion.taxRate2NameFR : companyRegion.taxRate2NameEN)} : {companyInfo.qstNumber}</p>}
                     </div>
                   </div>
 
@@ -668,6 +904,9 @@ export default function ClientDocumentsManager() {
                     <p className="text-xs text-slate-500 font-mono">{t.cdmDueOnColon} <span className="font-bold text-red-600">{selectedDocForView.dueDate}</span></p>
                     {selectedDocForView.refQuote && (
                       <p className="text-[10px] text-blue-600 font-mono mt-1">{t.cdmRefQuoteColon} {selectedDocForView.refQuote}</p>
+                    )}
+                    {selectedDocForView.refContract && (
+                      <p className="text-[10px] text-purple-700 font-mono mt-1">{currentLanguage === 'FR' ? 'Contrat de référence :' : 'Reference contract:'} {selectedDocForView.refContract}</p>
                     )}
                   </div>
                 </div>
@@ -727,8 +966,8 @@ export default function ClientDocumentsManager() {
                             <td className="py-2.5 font-medium text-slate-800">{item.description}</td>
                             <td className="py-2.5 text-center font-mono">{item.qty}</td>
                             <td className="py-2.5 text-center text-slate-500">{item.unit}</td>
-                            <td className="py-2.5 text-right font-mono">{item.unitPrice.toFixed(2)}$</td>
-                            <td className="py-2.5 text-right font-mono font-bold">{item.total.toFixed(2)}$</td>
+                            <td className="py-2.5 text-right font-mono">{money(item.unitPrice)}</td>
+                            <td className="py-2.5 text-right font-mono font-bold">{money(item.total)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -757,8 +996,8 @@ export default function ClientDocumentsManager() {
                                     {m.claddingType} — {m.brand} <span className="text-slate-400 font-normal">({m.thickness})</span>
                                   </td>
                                   <td className="py-1.5 text-center font-mono">{m.qtySqft} pi²</td>
-                                  <td className="py-1.5 text-right font-mono">{m.unitPrice.toFixed(2)}$</td>
-                                  <td className="py-1.5 text-right font-mono font-bold">{m.total.toFixed(2)}$</td>
+                                  <td className="py-1.5 text-right font-mono">{money(m.unitPrice)}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold">{money(m.total)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -784,8 +1023,8 @@ export default function ClientDocumentsManager() {
                                 <tr key={lb.id}>
                                   <td className="py-1.5 text-slate-800 font-medium">{lb.task}</td>
                                   <td className="py-1.5 text-center font-mono">{lb.isFlatRate ? 'N/A' : lb.estimatedHours} h</td>
-                                  <td className="py-1.5 text-right font-mono">{lb.rate.toFixed(2)}$ {lb.isFlatRate ? t.cdmFixedWord : '/h'}</td>
-                                  <td className="py-1.5 text-right font-mono font-bold">{lb.total.toFixed(2)}$</td>
+                                  <td className="py-1.5 text-right font-mono">{money(lb.rate)} {lb.isFlatRate ? t.cdmFixedWord : '/h'}</td>
+                                  <td className="py-1.5 text-right font-mono font-bold">{money(lb.total)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -801,7 +1040,7 @@ export default function ClientDocumentsManager() {
                             {selectedDocForView.otherLines.map(o => (
                               <div key={o.id} className="flex justify-between items-center py-1">
                                 <span className="text-slate-800 font-medium">{o.description}</span>
-                                <span className="font-mono font-bold">{o.amount.toFixed(2)}$</span>
+                                <span className="font-mono font-bold">{money(o.amount)}</span>
                               </div>
                             ))}
                           </div>
@@ -828,7 +1067,7 @@ export default function ClientDocumentsManager() {
                             <span className="font-bold text-slate-800">{p.date}</span>
                             <span className="text-slate-500 italic ml-2">({p.method.toUpperCase()} — {p.notes})</span>
                           </div>
-                          <span className="font-mono font-bold text-emerald-800">-{p.amount.toFixed(2)}$</span>
+                          <span className="font-mono font-bold text-emerald-800">-{money(p.amount)}</span>
                         </div>
                       ))}
                     </div>
@@ -850,7 +1089,7 @@ export default function ClientDocumentsManager() {
                   <div className="space-y-1.5 text-xs text-right pr-2">
                     <div className="flex justify-between items-center">
                       <span className="text-slate-500">{t.cdmGrossSubtotal}</span>
-                      <span className="font-mono">{selectedDocForView.subtotal.toFixed(2)}$</span>
+                      <span className="font-mono">{money(selectedDocForView.subtotal)}</span>
                     </div>
 
                     {selectedDocForView.discountPct > 0 && (
@@ -862,24 +1101,24 @@ export default function ClientDocumentsManager() {
 
                     <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
                       <span className="text-slate-500">{fmt(t.cdmCombinedTaxes, { rate: selectedDocForView.taxRate })}</span>
-                      <span className="font-mono">+{selectedDocForView.taxAmount.toFixed(2)}$</span>
+                      <span className="font-mono">+{money(selectedDocForView.taxAmount)}</span>
                     </div>
 
                     <div className="flex justify-between items-center font-bold text-slate-900 text-sm">
                       <span>{t.cdmGrandTotal}</span>
-                      <span className="font-mono font-black">{selectedDocForView.total.toFixed(2)}$</span>
+                      <span className="font-mono font-black">{money(selectedDocForView.total)}</span>
                     </div>
 
                     {selectedDocForView.holdbackPct > 0 && (
                       <div className="flex justify-between items-center text-amber-800">
                         <span>{fmt(t.cdmLegalHoldback2, { ccq: isQuebec ? ' CCQ' : '', pct: selectedDocForView.holdbackPct })}</span>
-                        <span className="font-mono font-semibold">-{selectedDocForView.holdbackAmount.toFixed(2)}$</span>
+                        <span className="font-mono font-semibold">-{money(selectedDocForView.holdbackAmount)}</span>
                       </div>
                     )}
 
                     <div className="flex justify-between items-center font-black text-green-650 text-base border-t border-slate-205 pt-2">
                       <span className="text-slate-900">{t.cdmBalanceDue}</span>
-                      <span className="font-mono text-green-600">{selectedDocForView.balanceDue.toFixed(2)}$ CAD</span>
+                      <span className="font-mono text-green-600">{money(selectedDocForView.balanceDue)} CAD</span>
                     </div>
                   </div>
 
@@ -1029,32 +1268,20 @@ export default function ClientDocumentsManager() {
           <div className="bg-[#12141C] border border-gray-850 w-full max-w-2xl rounded-2xl p-6 space-y-4 max-h-[95vh] overflow-y-auto">
             
             <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-              <h3 className="text-sm font-black font-mono uppercase tracking-widest text-white">{t.cdmNewDocGenTitle}</h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+              <h3 className="text-sm font-black font-mono uppercase tracking-widest text-white">{editingDocument ? (currentLanguage === 'FR' ? `Modifier ${editingDocument.number}` : `Edit ${editingDocument.number}`) : newDocType === 'quote' ? (currentLanguage === 'FR' ? 'Créer un devis professionnel' : 'Create professional quote') : newDocType === 'contract' ? (currentLanguage === 'FR' ? 'Créer ou préparer le contrat' : 'Create or prepare contract') : (currentLanguage === 'FR' ? 'Créer la facture' : 'Create invoice')}</h3>
+              <button onClick={() => { setShowCreateModal(false); resetCreateForm(); }} className="text-gray-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
 
             <div className="space-y-4 text-xs">
-              
-              {/* Type toggle */}
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'quote', title: t.cdmOptQuote },
-                  { id: 'contract', title: t.cdmOptContract },
-                  { id: 'invoice', title: t.cdmOptInvoice }
-                ].map(op => (
-                  <button
-                    key={op.id}
-                    type="button"
-                    onClick={() => setNewDocType(op.id as any)}
-                    className={`py-2 text-center rounded-lg border font-black transition cursor-pointer ${
-                      newDocType === op.id 
-                        ? 'bg-orange-650 border-orange-500 text-white' 
-                        : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {op.title}
-                  </button>
-                ))}
+              {/* Type choisi depuis le parcours principal */}
+              <div className="rounded-2xl border border-orange-500/25 bg-orange-500/10 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-300">{currentLanguage === 'FR' ? 'Document sélectionné' : 'Selected document'}</span>
+                    <p className="mt-1 text-xl font-black text-white">{newDocType === 'quote' ? (currentLanguage === 'FR' ? 'DEVIS' : 'QUOTE') : newDocType === 'contract' ? (currentLanguage === 'FR' ? 'CONTRAT' : 'CONTRACT') : (currentLanguage === 'FR' ? 'FACTURE' : 'INVOICE')}</p>
+                  </div>
+                  {sourceDocument && <div className="text-right text-xs text-gray-300"><span className="block text-gray-500">{currentLanguage === 'FR' ? 'Prérempli depuis' : 'Prefilled from'}</span><b className="font-mono text-orange-200">{sourceDocument.number}</b></div>}
+                </div>
               </div>
 
               {/* Client Selection */}
@@ -1063,7 +1290,11 @@ export default function ClientDocumentsManager() {
                   <label className="text-gray-400">{t.cdmSelectClient}</label>
                   <select
                     value={newClientId}
-                    onChange={e => setNewClientId(e.target.value)}
+                    onChange={e => {
+                      setNewClientId(e.target.value);
+                      const selectedClient = clients.find(client => client.id === e.target.value);
+                      if (selectedClient) setNewSiteAddress(selectedClient.address || '');
+                    }}
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded-lg p-2 focus:outline-none cursor-pointer"
                   >
                     {clients.map(c => (
@@ -1081,6 +1312,18 @@ export default function ClientDocumentsManager() {
                     className="w-full bg-gray-900 border border-gray-800 text-white rounded-lg p-2 focus:outline-none"
                   />
                 </div>
+              </div>
+
+              {/* Adresse réelle des travaux — modifiable indépendamment de l’adresse de facturation. */}
+              <div className="space-y-1.5">
+                <label className="text-gray-400">{currentLanguage === 'FR' ? 'Adresse du chantier / des travaux' : 'Project / work address'}</label>
+                <input
+                  type="text"
+                  value={newSiteAddress}
+                  onChange={event => setNewSiteAddress(event.target.value)}
+                  placeholder={currentLanguage === 'FR' ? 'Adresse où les travaux seront exécutés' : 'Address where the work will be performed'}
+                  className="w-full rounded-lg border border-gray-800 bg-gray-900 p-2 text-sm text-white outline-none focus:border-orange-500"
+                />
               </div>
 
               {/* Layout layout option toggler */}
@@ -1110,11 +1353,18 @@ export default function ClientDocumentsManager() {
               {newIsSimple ? (
                 /* Simple layout */
                 <div className="space-y-2 border border-gray-800 p-3 rounded-lg">
-                  <div className="flex justify-between items-center mb-1">
+                  <div className="flex justify-between items-center mb-1 gap-3">
                     <span className="font-bold text-white">{t.cdmMainFlatLine}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSimpleLines([...simpleLines, { desc: '', qty: 1, unit: 'unité', price: 0 }])}
+                      className="rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 text-[10px] font-black uppercase text-orange-300 hover:bg-orange-500/20"
+                    >
+                      + {currentLanguage === 'FR' ? 'Ajouter une ligne' : 'Add line'}
+                    </button>
                   </div>
                   {simpleLines.map((l, idx) => (
-                    <div key={idx} className="grid grid-cols-7 gap-2 items-center">
+                    <div key={idx} className="grid grid-cols-8 gap-2 items-center">
                       <input
                         type="text"
                         value={l.desc}
@@ -1161,6 +1411,14 @@ export default function ClientDocumentsManager() {
                         placeholder="$/unit"
                         className="col-span-2 bg-gray-900 border border-gray-800 text-white rounded p-1.5 text-xs text-right"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setSimpleLines(simpleLines.filter((_, lineIndex) => lineIndex !== idx))}
+                        className="col-span-1 flex h-9 items-center justify-center rounded border border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                        aria-label={currentLanguage === 'FR' ? 'Supprimer la ligne' : 'Delete line'}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1353,6 +1611,22 @@ export default function ClientDocumentsManager() {
                 </div>
               )}
 
+              {newDocType === 'contract' && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-100">
+                  <div className="flex items-start gap-3">
+                    <Lock className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
+                    <div>
+                      <p className="font-black">{currentLanguage === 'FR' ? 'Règle de verrouillage du contrat' : 'Contract locking rule'}</p>
+                      <p className="mt-1 text-xs text-amber-100/80">
+                        {currentLanguage === 'FR'
+                          ? 'Sans signature, le contrat est enregistré comme brouillon et reste modifiable. Dès que les deux signatures sont présentes et que vous enregistrez, le contenu devient définitivement non modifiable.'
+                          : 'Without signatures, the contract is saved as an editable draft. Once both signatures are present and you save, the content becomes permanently locked.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Signatures tactiles réelles (dessinées au doigt ou à la souris) */}
               <div className={`grid gap-4 border-t border-gray-800 pt-3 ${newDocType === 'contract' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
                 <div key={`owner-${signaturePadResetKey}`}>
@@ -1360,7 +1634,7 @@ export default function ClientDocumentsManager() {
                     label={t.cdmContractorSignAlt}
                     value={ownerSignatureData}
                     onChange={setOwnerSignatureData}
-                    required
+                    required={newDocType !== 'contract'}
                     accentClass="text-gray-400"
                   />
                 </div>
@@ -1371,7 +1645,7 @@ export default function ClientDocumentsManager() {
                       label={t.cdmClientSignAlt}
                       value={clientSignatureData}
                       onChange={setClientSignatureData}
-                      required
+                      required={false}
                       accentClass="text-orange-500"
                     />
                   </div>
@@ -1389,7 +1663,7 @@ export default function ClientDocumentsManager() {
                 className="w-full py-2.5 bg-orange-600 hover:bg-orange-500 text-white font-black uppercase tracking-wider rounded-xl transition cursor-pointer flex items-center justify-center gap-2 mt-4"
               >
                 <Check className="w-4 h-4" />
-                <span>{t.cdmGenerateBtn}</span>
+                <span>{editingDocument ? (newDocType === 'contract' && ownerSignatureData && clientSignatureData ? (currentLanguage === 'FR' ? 'Signer et verrouiller le contrat' : 'Sign and lock contract') : (currentLanguage === 'FR' ? 'Enregistrer les modifications' : 'Save changes')) : newDocType === 'quote' ? (currentLanguage === 'FR' ? 'Enregistrer le devis' : 'Save quote') : newDocType === 'contract' ? (ownerSignatureData && clientSignatureData ? (currentLanguage === 'FR' ? 'Signer et verrouiller le contrat' : 'Sign and lock contract') : (currentLanguage === 'FR' ? 'Enregistrer le brouillon modifiable' : 'Save editable draft')) : (currentLanguage === 'FR' ? 'Enregistrer la facture' : 'Save invoice')}</span>
               </button>
 
             </div>

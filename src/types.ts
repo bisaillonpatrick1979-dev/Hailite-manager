@@ -34,7 +34,7 @@ export interface EmployeeCredential {
 export interface Employee {
   id: string;
   name: string;
-  nip: string; // 4-digit PIN
+  nip: string; // valeur transitoire d'écriture seulement; jamais relue ni persistée
   role: EmployeeRole;
   hourlyRate: number;
   workerType: string; // ex: 'Compagnon', 'Salarié', 'Apprenti', etc.
@@ -65,6 +65,10 @@ export interface Employee {
   payPeriodStart?: string;
   annualSalary?: number;
   credentials?: EmployeeCredential[];
+  businessLogo?: string;
+  privacyNoticeVersion?: string;
+  privacyNoticeAcknowledgedAt?: string;
+  locationNoticeAcknowledgedAt?: string;
 }
 
 export interface ProjectTask {
@@ -140,6 +144,18 @@ export interface Invoice {
   // Tactile signature required from the employee/sous-traitant before sending to the company
   employeeSignature?: string; // Base64 signature image data
   employeeSignedAt?: string;
+  currency?: string;
+  taxRate1?: number;
+  taxRate2?: number;
+  localTaxRate?: number;
+  localTaxAmount?: number;
+  taxRate1Name?: string;
+  taxRate2Name?: string;
+  issuerName?: string;
+  issuerAddress?: string;
+  issuerTaxNumber?: string;
+  issuerLogo?: string;
+  recipientName?: string;
 }
 
 export interface Supplier {
@@ -174,6 +190,77 @@ export interface InventoryItem {
   unit: string;
   emoji: string;
   minThreshold: number;
+}
+
+
+export type ToolAssetStatus = 'in_service' | 'loaned' | 'repair' | 'missing' | 'stolen' | 'retired';
+
+export interface ToolAsset {
+  id: string;
+  name: string;
+  category: string;
+  brand: string;
+  model: string;
+  serialNumber: string;
+  assetTag: string;
+  purchaseDate: string;
+  purchasePrice: number;
+  replacementValue: number;
+  seller: string;
+  warrantyExpiry: string;
+  currentLocation: string;
+  assignedEmployeeId?: string;
+  assignedEmployeeName?: string;
+  status: ToolAssetStatus;
+  notes: string;
+  toolPhoto?: string;
+  serialPhoto?: string;
+  receiptPhoto?: string;
+  receiptFileName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolTheftSnapshot {
+  toolId: string;
+  name: string;
+  category: string;
+  brand: string;
+  model: string;
+  serialNumber: string;
+  assetTag: string;
+  purchaseDate: string;
+  purchasePrice: number;
+  replacementValue: number;
+  currentLocation: string;
+  assignedEmployeeName?: string;
+  notes: string;
+  hasToolPhoto: boolean;
+  hasSerialPhoto: boolean;
+  hasReceipt: boolean;
+  receiptFileName?: string;
+}
+
+export interface ToolTheftReport {
+  id: string;
+  incidentDate: string;
+  incidentTime: string;
+  incidentLocation: string;
+  circumstances: string;
+  discoveredBy: string;
+  policeService: string;
+  policeFileNumber: string;
+  insurer: string;
+  insuranceClaimNumber: string;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  toolIds: string[];
+  toolSnapshots: ToolTheftSnapshot[];
+  totalReplacementValue: number;
+  status: 'draft' | 'reported' | 'insurance_submitted' | 'closed';
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SupplierOrderItem {
@@ -246,7 +333,7 @@ export interface CompanyInfo {
   
   // Onboarding metadata
   isOnboarded?: boolean;
-  country?: 'CA' | 'US';
+  country?: 'CA' | 'US' | 'EU';
   region?: string;
   taxRate1?: number; // Federal tax rate e.g. 0.05
   taxRate2?: number; // Provincial/state tax rate e.g. 0.09975
@@ -255,6 +342,35 @@ export interface CompanyInfo {
   paymentDepositPct?: number;
   paymentMidPct?: number;
   paymentFinalPct?: number;
+
+  // Internationalisation, fiscalité et confidentialité
+  currency?: string;
+  unitSystem?: 'imperial' | 'metric';
+  dateLocale?: string;
+  localTaxRate?: number;
+  taxConfirmedAt?: string;
+  taxDisclaimerAcceptedAt?: string;
+  dataStorageMode?: 'local' | 'supabase' | 'personal_cloud' | 'hybrid' | 'cloud';
+  cloudSyncConsent?: boolean;
+  cloudRegion?: string;
+  personalCloudProvider?: 'google_drive' | 'onedrive' | 'dropbox' | 'icloud_drive' | 'samsung_cloud' | 'device_folder' | 'other';
+  backupFolderName?: string;
+  backupFileName?: string;
+  backupConnectionMethod?: 'directory_handle' | 'file_handle' | 'system_export';
+  personalBackupConnected?: boolean;
+  personalBackupAutomatic?: boolean;
+  lastPersonalBackupAt?: string;
+  privacyPolicyVersion?: string;
+  privacyPolicyAcceptedAt?: string;
+  privacyContactEmail?: string;
+  privacyOfficerName?: string;
+  retentionMonths?: number;
+  employeeDataBasisConfirmed?: boolean;
+  locationDataNoticeConfirmed?: boolean;
+  crossBorderTransferAcknowledgedAt?: string;
+  processorTermsAcceptedAt?: string;
+  complianceVersion?: string;
+  testMode?: boolean;
 
   // Assistant IA
   aiProvider?: 'gemini' | 'anthropic' | 'openai';
@@ -368,7 +484,7 @@ export interface GCPDocument {
   number: string; // Auto generated e.g., FAC-2026-0001
   date: string;
   dueDate: string;
-  status: 'draft' | 'sent' | 'accepted' | 'paid' | 'overdue';
+  status: 'draft' | 'sent' | 'accepted' | 'completed' | 'paid' | 'overdue';
   refQuote?: string;
   refContract?: string;
 

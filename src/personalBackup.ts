@@ -375,13 +375,23 @@ export async function importApplicationBackup(file: File): Promise<{ ok: boolean
     }
     const storage = safeLocalStorage();
     if (!storage) return { ok: false, count: 0, message: 'Le stockage local est indisponible.' };
+    // Une sauvegarde historique peut contenir des employés, NIP, NAS, paie ou
+    // clients. Elle ne doit plus repeupler localStorage. Seules les préférences
+    // visuelles explicitement non sensibles sont restaurées.
+    const allowedPreferences = new Set(['gcp_currentLanguage', 'gcp_currentTheme', 'gcp_aiVoiceEnabled']);
     let count = 0;
     for (const [key, value] of Object.entries(parsed.data)) {
-      if (!key.startsWith('gcp_') || EXCLUDED_KEYS.has(key)) continue;
+      if (!allowedPreferences.has(key)) continue;
       storage.setItem(key, JSON.stringify(value));
       count += 1;
     }
-    return { ok: true, count, message: `${count} sections de données ont été restaurées.` };
+    return {
+      ok: count > 0,
+      count,
+      message: count > 0
+        ? `${count} préférence(s) non sensible(s) ont été restaurées.`
+        : 'Cette sauvegarde doit être importée après connexion par le service de migration sécurisé.'
+    };
   } catch {
     return { ok: false, count: 0, message: 'Le fichier ne peut pas être lu.' };
   }

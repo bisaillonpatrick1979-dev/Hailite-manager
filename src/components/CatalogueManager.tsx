@@ -239,6 +239,7 @@ export default function CatalogueManager() {
   const [showSupplierManager, setShowSupplierManager] = useState(false);
   const [newSupplierName, setNewSupplierName] = useState('');
   const [newSupplierPhone, setNewSupplierPhone] = useState('');
+  const [priceUpdateNotice, setPriceUpdateNotice] = useState('');
 
   const handleNameChange = (name: string, form: CatalogueFormState, setForm: (f: CatalogueFormState) => void) => {
     let updated = { ...form, name };
@@ -293,6 +294,10 @@ export default function CatalogueManager() {
       imageAlt: editForm.imageAlt || editForm.name || undefined
     });
     setEditingId(null);
+    setPriceUpdateNotice(currentLanguage === 'FR'
+      ? `Les prix de « ${editForm.name} » ont été mis à jour. Aucun nouveau matériau n’a été créé.`
+      : `Prices for “${editForm.name}” were updated. No new material was created.`);
+    window.setTimeout(() => setPriceUpdateNotice(''), 5000);
   };
 
   const marginFor = (mat: CatalogueMaterial) => {
@@ -412,6 +417,13 @@ export default function CatalogueManager() {
           </div>
         )}
       </div>
+
+      {priceUpdateNotice && (
+        <div role="status" className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm font-bold text-green-200">
+          <Check className="mr-2 inline h-4 w-4" />
+          {priceUpdateNotice}
+        </div>
+      )}
 
       {/* Supplier Manager */}
       {showSupplierManager && canManage && (
@@ -594,7 +606,17 @@ export default function CatalogueManager() {
 
           if (isEditing) {
             return (
-              <div key={cat.id} className="p-4 bg-gray-900 border border-orange-500/40 rounded-2xl text-xs space-y-3 text-left">
+              <div key={cat.id} className="p-4 bg-gray-900 border border-orange-500/40 rounded-2xl text-xs space-y-4 text-left">
+                <div className="rounded-xl border border-orange-500/25 bg-orange-500/10 p-3">
+                  <h5 className="text-base font-black text-white">
+                    {currentLanguage === 'FR' ? 'Modifier les prix du matériau' : 'Edit material prices'}
+                  </h5>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-300">
+                    {currentLanguage === 'FR'
+                      ? 'Modifiez librement le prix fournisseur, le prix sous-traitant et le prix client. Cette action met à jour le matériau existant sans en créer un autre.'
+                      : 'Update the supplier, subcontractor, and client prices freely. This updates the existing material without creating another one.'}
+                  </p>
+                </div>
                 <input
                   type="text"
                   className="w-full p-1.5 bg-gray-950 text-white text-xs rounded border border-gray-850"
@@ -604,7 +626,17 @@ export default function CatalogueManager() {
                 <PhotoCaptureField imageUrl={editForm.imageUrl} onChange={(url, alt) => setEditForm({ ...editForm, imageUrl: url, imageAlt: alt })} />
                 {renderSupplierSelect(editForm, setEditForm)}
                 {renderUnitField(editForm, setEditForm)}
-                {renderPriceFields(editForm, setEditForm)}
+                <div className="rounded-xl border border-gray-800 bg-black/20 p-3">
+                  <p className="mb-3 text-[11px] font-black uppercase tracking-wide text-orange-300">
+                    {currentLanguage === 'FR' ? 'Prix modifiables en tout temps' : 'Prices editable at any time'}
+                  </p>
+                  {renderPriceFields(editForm, setEditForm)}
+                  <p className="mt-3 text-[10px] leading-relaxed text-gray-500">
+                    {currentLanguage === 'FR'
+                      ? 'Les nouveaux prix seront proposés pour les prochains devis, contrats et factures. Les documents déjà enregistrés conservent leurs montants historiques.'
+                      : 'New prices will be used for future quotes, contracts, and invoices. Existing documents keep their historical amounts.'}
+                  </p>
+                </div>
                 <div className="flex justify-end gap-2 pt-2 border-t border-gray-850">
                   <button
                     onClick={() => setEditingId(null)}
@@ -616,7 +648,8 @@ export default function CatalogueManager() {
                     onClick={() => saveEdit(cat.id)}
                     className="p-1.5 px-3 bg-green-700 hover:bg-green-600 text-white rounded-lg font-bold cursor-pointer flex items-center gap-1"
                   >
-                    <Check className="w-3.5 h-3.5" /> {t.saveBtn}
+                    <Check className="w-3.5 h-3.5" />
+                    {currentLanguage === 'FR' ? 'Enregistrer les nouveaux prix' : 'Save new prices'}
                   </button>
                 </div>
               </div>
@@ -624,48 +657,48 @@ export default function CatalogueManager() {
           }
 
           return (
-            <div key={cat.id} className="p-3 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3 text-xs transition duration-200">
-              <MaterialImage mat={cat} className="w-full h-24 sm:w-20 sm:h-20 flex-shrink-0" />
+            <div key={cat.id} className="p-3 bg-gray-900 border border-gray-850 hover:border-gray-800 rounded-2xl grid grid-cols-[92px_minmax(0,1fr)] gap-3 text-xs transition duration-200 xl:grid-cols-[80px_minmax(220px,1fr)_minmax(240px,auto)] xl:items-center">
+              <MaterialImage mat={cat} className="h-[92px] w-[92px] flex-shrink-0 xl:h-20 xl:w-20" />
 
-              <div className="flex-1 min-w-0 text-left">
+              <div className="min-w-0 text-left">
                 <h5 className="font-extrabold text-white text-base flex items-center gap-1.5">
                   <span>{cat.emoji}</span>
                   <span className="truncate">{cat.name}</span>
                 </h5>
-                <p className="text-[10px] text-gray-500 font-mono mt-0.5">
+                <p className="mt-1 break-words text-xs leading-relaxed text-gray-400">
                   {supplierName(cat.supplierId) && <span>🚚 {supplierName(cat.supplierId)} • </span>}
                   <span className="uppercase">/{unitShort(cat.unit)}</span>
                   {cat.unitNote && <span> • {cat.unitNote}</span>}
                 </p>
               </div>
 
-              <div className="grid grid-cols-3 sm:flex gap-1.5 font-mono text-[10px] flex-shrink-0">
-                <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
-                  <div className="text-gray-500 uppercase whitespace-nowrap">{t.fournShort}</div>
+              <div className="col-span-2 grid min-w-0 grid-cols-3 gap-2 font-mono text-[10px] xl:col-span-1">
+                <div className="min-w-0 rounded-lg border border-gray-850 bg-gray-950 p-2 text-center">
+                  <div className="truncate text-[9px] uppercase text-gray-500">{t.fournShort}</div>
                   <div className="text-white font-bold whitespace-nowrap">{(cat.supplierPrice || 0).toFixed(2)}$</div>
                 </div>
-                <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
-                  <div className="text-gray-500 uppercase whitespace-nowrap">{t.sousTrShort}</div>
+                <div className="min-w-0 rounded-lg border border-gray-850 bg-gray-950 p-2 text-center">
+                  <div className="truncate text-[9px] uppercase text-gray-500">{t.sousTrShort}</div>
                   <div className="text-white font-bold whitespace-nowrap">{cat.pricePerSqFt.toFixed(2)}$</div>
                 </div>
-                <div className="bg-gray-950 rounded p-1.5 border border-gray-850 text-center sm:w-16">
-                  <div className="text-gray-500 uppercase whitespace-nowrap">{t.clientShort}</div>
+                <div className="min-w-0 rounded-lg border border-gray-850 bg-gray-950 p-2 text-center">
+                  <div className="truncate text-[9px] uppercase text-gray-500">{t.clientShort}</div>
                   <div className="text-white font-bold whitespace-nowrap">{(cat.clientPrice || 0).toFixed(2)}$</div>
                 </div>
               </div>
 
-              <p className={`text-[11px] font-black flex-shrink-0 sm:w-32 text-left sm:text-right ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              <p className={`col-span-2 text-sm font-black text-left xl:col-span-1 ${margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {t.marginColon} {margin >= 0 ? '+' : ''}{margin.toFixed(2)}$/{unitShort(cat.unit)}
               </p>
 
               {canManage && (
-                <div className="flex gap-1.5 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-850">
+                <div className="col-span-2 flex flex-wrap justify-end gap-2 border-t border-gray-850 pt-3 xl:col-span-2">
                   <button
                     onClick={() => startEdit(cat)}
                     className="p-1 px-3 bg-gray-800 hover:bg-gray-750 text-gray-300 rounded-lg font-bold text-xs cursor-pointer flex items-center gap-1 transition"
                   >
                     <Edit className="w-3.5 h-3.5" />
-                    <span>{t.editBtn}</span>
+                    <span>{currentLanguage === 'FR' ? 'Modifier les prix' : 'Edit prices'}</span>
                   </button>
                   <button
                     onClick={() => {

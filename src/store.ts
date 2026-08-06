@@ -1,7 +1,8 @@
 import { create } from 'zustand';
+import { scheduleConfiguredBackup } from './personalBackup';
 import {
   Employee, Project, PunchSession, Invoice, CatalogueMaterial,
-  InventoryItem, SupplierOrder, Supplier, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
+  InventoryItem, ToolAsset, ToolTheftReport, SupplierOrder, Supplier, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
   WeeklyGoal, MotivationTeam, MotivationGoal,
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine, GCPDocumentPaymentHistoryEntry,
   ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead, ShiftAssignment,
@@ -9,18 +10,20 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
-  authLogin, setAuthToken, getAuthToken, fetchLoginDirectory, isUuid, normalizeAppRole,
-  syncProjectInsert, syncProjectChildren, syncDeleteProjectChildren,
-  employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow,
+  authLogin, authLogout, fetchLoginDirectory, normalizeAppRole, setCloudSyncAllowed,
+  syncProjectInsert, syncProjectChildren,
+  employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow, toolAssetToRow, toolTheftReportToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
   hrAlertToRow, expenseToRow, payrollPaymentToRow, documentToRow, documentPaymentToRow,
   projectPhotoToRow, rowToProjectPhoto, changeOrderToRow, rowToChangeOrder,
   insuranceClaimToRow, rowToInsuranceClaim, leadToRow, rowToLead,
   shiftAssignmentToRow, rowToShiftAssignment, safetyRecordToRow, rowToSafetyRecord,
-  rowToEmployee, rowToProject, rowToPunch, rowToInvoice, rowToSupplier, rowToCatalogue, rowToInventory,
+  rowToEmployee, rowToProject, rowToPunch, rowToInvoice, rowToSupplier, rowToCatalogue, rowToInventory, rowToToolAsset, rowToToolTheftReport,
   rowToSupplierOrder, rowToClient, rowToCompanyInfo, rowToWeeklyGoal, rowToMotivationTeam, rowToMotivationGoal,
   rowToHRAlert, rowToExpense, rowToPayrollPayment, rowToDocument
 } from './apiClient';
+import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
+import { browserStorageValue } from './securityStorage';
 
 interface AppState {
   // Data State
@@ -31,6 +34,8 @@ interface AppState {
   catalogue: CatalogueMaterial[];
   suppliers: Supplier[];
   inventory: InventoryItem[];
+  toolAssets: ToolAsset[];
+  toolTheftReports: ToolTheftReport[];
   orders: SupplierOrder[];
   clients: Client[];
   companyInfo: CompanyInfo;
@@ -104,6 +109,14 @@ interface AppState {
   updateInventoryItem: (item: InventoryItem) => void;
   deleteInventoryItem: (id: string) => void;
 
+  // Tool asset registry and theft reports
+  addToolAsset: (tool: Omit<ToolAsset, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateToolAsset: (tool: ToolAsset) => void;
+  deleteToolAsset: (id: string) => void;
+  addToolTheftReport: (report: Omit<ToolTheftReport, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateToolTheftReport: (report: ToolTheftReport) => void;
+  deleteToolTheftReport: (id: string) => void;
+
   // Orders CRUD
   addSupplierOrder: (order: Omit<SupplierOrder, 'id'>) => void;
   updateSupplierOrder: (order: SupplierOrder) => void;
@@ -175,69 +188,9 @@ interface AppState {
   hydrateCloud: () => Promise<void>;
 }
 
-// Initial Mock Data to bootstrap the application beautifully
-const initialEmployees: Employee[] = [
-  {
-    id: 'emp-1',
-    name: 'Patrick Bisaillon',
-    nip: '0000',
-    role: 'admin',
-    hourlyRate: 45.0,
-    workerType: 'Compagnon',
-    asNumber: 'AS-88726-QC',
-    phone: '514-555-0199',
-    address: '1240 Rue de l\'Église, Montréal, QC',
-    hireDate: '2020-03-12',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 5,
-    xp: 2450
-  },
-  {
-    id: 'emp-2',
-    name: 'Mathieu Côté',
-    nip: '1234',
-    role: 'employee',
-    hourlyRate: 28.5,
-    workerType: 'Apprenti 2',
-    asNumber: 'AS-22910-QC',
-    phone: '450-555-0144',
-    address: '344 Rue Saint-Jude, Longueuil, QC',
-    hireDate: '2023-05-15',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 2,
-    xp: 680
-  },
-  {
-    id: 'emp-3',
-    name: 'Stéphane Roy',
-    nip: '5678',
-    role: 'employee',
-    hourlyRate: 38.0,
-    workerType: 'Compagnon Poseur',
-    asNumber: 'AS-66512-QC',
-    phone: '514-555-0211',
-    address: '789 Rue Sherbrooke Est, Montréal, QC',
-    hireDate: '2021-09-01',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 4,
-    xp: 1850
-  },
-  {
-    id: 'emp-4',
-    name: 'Jessica Tremblay',
-    nip: '1111',
-    role: 'secretary',
-    hourlyRate: 25.0,
-    workerType: 'Secrétaire comptable',
-    asNumber: 'AS-10294-QC',
-    phone: '514-555-0182',
-    address: '4521 Boul Rosemont, Montréal, QC',
-    hireDate: '2022-11-20',
-    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=150&h=150',
-    level: 3,
-    xp: 1200
-  }
-];
+// Profils de validation strictement locaux. Les quatre anciens profils de
+// démonstration ont été retirés et ne sont jamais envoyés à Supabase.
+const initialEmployees: Employee[] = LOCAL_TEST_MODE ? TEST_EMPLOYEES : [];
 
 const initialProjects: Project[] = [
   {
@@ -327,7 +280,7 @@ const initialPayrollPayments: PayrollPayment[] = [
   { id: 'pay-2', employeeId: 'emp-1', employeeName: 'Patrick Bisaillon', period: '2026-06', amount: 3600.00, status: 'approved', date: '2026-06-02' }
 ];
 
-const initialCompanyInfo: CompanyInfo = {
+const demoCompanyInfo: CompanyInfo = {
   name: 'Hailite Xteriors Inc.',
   address: '1200 Rue Saint-Denis, Montréal, QC, H2X 3J6',
   phone: '514-388-XTER',
@@ -349,7 +302,47 @@ const initialCompanyInfo: CompanyInfo = {
   legalMinimumWage: 15.75, // minimum québécois
   voiceReminderVolume: 80,
   voiceReminderSchedule: '08:00, 12:00, 17:00',
-  paymentTerms: 'Paiement net 30 jours'
+  paymentTerms: 'Paiement net 30 jours',
+  country: 'CA', region: 'AB', currency: 'CAD', unitSystem: 'imperial', dateLocale: 'fr-CA',
+  taxRate1: 0.05, taxRate2: 0, localTaxRate: 0, taxRate1Name: 'TPS (5%)', taxRate2Name: 'Taxe provinciale',
+  dataStorageMode: 'hybrid', cloudSyncConsent: true, cloudRegion: 'ca-central-1', retentionMonths: 84
+};
+
+// En production, aucune identité, coordonnée bancaire ou inscription fiscale
+// fictive ne doit être embarquée comme valeur par défaut. L'identité réelle est
+// chargée depuis le tenant après le démarrage sécurisé.
+const initialCompanyInfo: CompanyInfo = LOCAL_TEST_MODE ? demoCompanyInfo : {
+  name: 'Hailite Manager',
+  address: '',
+  phone: '',
+  email: '',
+  gstNumber: '',
+  qstNumber: '',
+  wcbNumber: '',
+  bnNumber: '',
+  logo: '',
+  interacEmail: '',
+  bankDetails: { bank: '', transit: '', institution: '', account: '' },
+  geofencingEnabled: false,
+  vacationRate: 0,
+  legalMinimumWage: 0,
+  voiceReminderVolume: 80,
+  voiceReminderSchedule: '08:00, 12:00, 17:00',
+  paymentTerms: '',
+  country: 'CA',
+  region: '',
+  currency: 'CAD',
+  unitSystem: 'imperial',
+  dateLocale: 'fr-CA',
+  taxRate1: 0,
+  taxRate2: 0,
+  localTaxRate: 0,
+  taxRate1Name: '',
+  taxRate2Name: '',
+  dataStorageMode: 'supabase',
+  cloudSyncConsent: false,
+  cloudRegion: 'ca-central-1',
+  retentionMonths: 84
 };
 
 const initialHRAlerts: HRAlert[] = [
@@ -711,7 +704,17 @@ const getNextDocNumber = (documents: GCPDocument[], type: GCPDocument['type'], p
 const getSavedState = <T>(key: string, defaultValue: T): T => {
   try {
     const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) : defaultValue;
+    if (!saved) return defaultValue;
+    const parsed = JSON.parse(saved);
+    const candidate = browserStorageValue(key, parsed, LOCAL_TEST_MODE);
+    if (!candidate.allowed) {
+      localStorage.removeItem(key);
+      return defaultValue;
+    }
+    if (key === 'gcp_companyInfo' && defaultValue && typeof defaultValue === 'object') {
+      return { ...(defaultValue as object), ...(candidate.value as object) } as T;
+    }
+    return candidate.value as T;
   } catch {
     return defaultValue;
   }
@@ -719,20 +722,19 @@ const getSavedState = <T>(key: string, defaultValue: T): T => {
 
 const saveState = (key: string, value: any) => {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const candidate = browserStorageValue(key, value, LOCAL_TEST_MODE);
+    if (!candidate.allowed) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(candidate.value));
+    // Les écritures restent immédiatement locales. Lorsque le propriétaire a
+    // autorisé un fichier personnel, une sauvegarde différée regroupe les
+    // changements sans ralentir chaque bouton de l’application.
+    scheduleConfiguredBackup();
   } catch (err) {
     console.error('Failed to save state to localStorage', err);
   }
-};
-
-// Fusionne l'état cloud (source de vérité) avec l'état local par clé, en conservant
-// les entrées locales absentes du cloud (créations pas encore synchronisées) au lieu
-// de les écraser. Nécessaire car l'hydratation peut se répéter périodiquement
-// (voir hydrateCloud) et une écrasement pur perdrait toute mutation locale en vol.
-const mergeByKey = <T>(local: T[], cloud: T[], keyOf: (item: T) => string): T[] => {
-  const cloudKeys = new Set(cloud.map(keyOf));
-  const localOnly = local.filter(item => !cloudKeys.has(keyOf(item)));
-  return [...cloud, ...localOnly];
 };
 
 export const getXPRequiredForLevel = (level: number): number => {
@@ -753,20 +755,23 @@ export const getLevelFromXP = (xp: number): number => {
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Initialize state from local storage or mock defaults
-  employees: getSavedState('gcp_employees', initialEmployees),
-  projects: getSavedState('gcp_projects', initialProjects),
-  punchSessions: getSavedState('gcp_punchSessions', initialPunchSessions),
-  invoices: getSavedState('gcp_invoices', initialInvoices),
-  catalogue: getSavedState('gcp_catalogue', initialCatalogue),
-  suppliers: getSavedState('gcp_suppliers', initialSuppliers),
-  inventory: getSavedState('gcp_inventory', initialInventory),
-  orders: getSavedState('gcp_orders', initialOrders),
-  clients: getSavedState('gcp_clients', initialClients),
+  // En production, les données métier partent vides et sont hydratées depuis le
+  // serveur après authentification. Les jeux fictifs n'existent qu'en mode dev.
+  employees: getSavedState('gcp_employees', LOCAL_TEST_MODE ? TEST_EMPLOYEES : initialEmployees),
+  projects: getSavedState('gcp_projects', LOCAL_TEST_MODE ? initialProjects : []),
+  punchSessions: getSavedState('gcp_punchSessions', LOCAL_TEST_MODE ? initialPunchSessions : []),
+  invoices: getSavedState('gcp_invoices', LOCAL_TEST_MODE ? initialInvoices : []),
+  catalogue: getSavedState('gcp_catalogue', LOCAL_TEST_MODE ? initialCatalogue : []),
+  suppliers: getSavedState('gcp_suppliers', LOCAL_TEST_MODE ? initialSuppliers : []),
+  inventory: getSavedState('gcp_inventory', LOCAL_TEST_MODE ? initialInventory : []),
+  toolAssets: getSavedState('gcp_toolAssets', []),
+  toolTheftReports: getSavedState('gcp_toolTheftReports', []),
+  orders: getSavedState('gcp_orders', LOCAL_TEST_MODE ? initialOrders : []),
+  clients: getSavedState('gcp_clients', LOCAL_TEST_MODE ? initialClients : []),
   companyInfo: getSavedState('gcp_companyInfo', initialCompanyInfo),
-  hrAlerts: getSavedState('gcp_hrAlerts', initialHRAlerts),
-  documents: getSavedState('gcp_documents', initialDocuments),
-  expenses: getSavedState('gcp_expenses', initialExpenses),
+  hrAlerts: getSavedState('gcp_hrAlerts', LOCAL_TEST_MODE ? initialHRAlerts : []),
+  documents: getSavedState('gcp_documents', LOCAL_TEST_MODE ? initialDocuments : []),
+  expenses: getSavedState('gcp_expenses', LOCAL_TEST_MODE ? initialExpenses : []),
   projectPhotos: getSavedState('gcp_projectPhotos', []),
   changeOrders: getSavedState('gcp_changeOrders', []),
   insuranceClaims: getSavedState('gcp_insuranceClaims', []),
@@ -774,12 +779,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   shiftAssignments: getSavedState('gcp_shiftAssignments', []),
   safetyRecords: getSavedState('gcp_safetyRecords', []),
   personalExpenses: getSavedState('gcp_personalExpenses', []),
-  payrollPayments: getSavedState('gcp_payrollPayments', initialPayrollPayments),
-  motivationTeams: getSavedState('gcp_motivationTeams', initialMotivationTeams),
-  motivationGoals: getSavedState('gcp_motivationGoals', initialMotivationGoals),
-  weeklyGoals: getSavedState('gcp_weeklyGoals', initialWeeklyGoals),
+  payrollPayments: getSavedState('gcp_payrollPayments', LOCAL_TEST_MODE ? initialPayrollPayments : []),
+  motivationTeams: getSavedState('gcp_motivationTeams', LOCAL_TEST_MODE ? initialMotivationTeams : []),
+  motivationGoals: getSavedState('gcp_motivationGoals', LOCAL_TEST_MODE ? initialMotivationGoals : []),
+  weeklyGoals: getSavedState('gcp_weeklyGoals', LOCAL_TEST_MODE ? initialWeeklyGoals : []),
   
-  activeEmployee: getSavedState('gcp_activeEmployee', null),
+  activeEmployee: null,
   currentLanguage: getSavedState('gcp_currentLanguage', 'FR') as 'FR' | 'EN',
   currentTheme: getSavedState('gcp_currentTheme', 'quantum') as VisualTheme,
   offlineSyncStatus: 'synced',
@@ -812,18 +817,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     }
 
-    // Vérification du NIP CÔTÉ SERVEUR (source de vérité dès que le cloud est
-    // configuré) : le serveur émet un jeton de session signé qui accompagnera
-    // ensuite toutes les requêtes de données.
+    // Le serveur est l'unique source d'authentification, y compris pour les
+    // profils de démonstration. Une panne réseau ne peut jamais ouvrir une session.
     const server = await authLogin(employeeId, nip);
-    if (server.status === 'ok') {
-      set({ activeEmployee: emp });
-      saveState('gcp_activeEmployee', emp);
+    if (server.status === 'ok' && server.user) {
+      const authenticatedEmployee: Employee = {
+        ...emp,
+        id: server.user.id,
+        name: server.user.name || emp.name,
+        role: normalizeAppRole(server.user.role),
+        nip: ''
+      };
+      set({
+        activeEmployee: authenticatedEmployee,
+        projects: [], punchSessions: [], invoices: [], catalogue: [], suppliers: [],
+        inventory: [], toolAssets: [], toolTheftReports: [], orders: [], clients: [],
+        hrAlerts: [], documents: [], expenses: [], projectPhotos: [], changeOrders: [],
+        insuranceClaims: [], leads: [], shiftAssignments: [], safetyRecords: [],
+        payrollPayments: [], motivationTeams: [], motivationGoals: [], weeklyGoals: []
+      });
       // Recharge les données maintenant que la session est établie
-      get().hydrateCloud();
+      void get().hydrateCloud();
       return {
         success: true,
-        message: currentLanguage === 'FR' ? `Bienvenue, ${emp.name} !` : `Welcome, ${emp.name}!`
+        message: currentLanguage === 'FR'
+          ? `Bienvenue, ${authenticatedEmployee.name} !`
+          : `Welcome, ${authenticatedEmployee.name}!`
       };
     }
     if (server.status === 'invalid') {
@@ -841,42 +860,47 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     }
 
-    // Serveur d'authentification injoignable (hébergement statique, hors-ligne,
-    // Supabase non configuré) : repli sur la vérification locale.
-    if (emp.nip && emp.nip === nip) {
-      set({ activeEmployee: emp });
-      saveState('gcp_activeEmployee', emp);
-      return {
-        success: true,
-        message: currentLanguage === 'FR' ? `Bienvenue, ${emp.name} !` : `Welcome, ${emp.name}!`
-      };
-    }
-
     return {
       success: false,
-      message: currentLanguage === 'FR' ? 'NIP incorrect.' : 'Incorrect PIN.'
+      message: currentLanguage === 'FR'
+        ? 'Connexion sécurisée indisponible. Réessayez lorsque le serveur est accessible.'
+        : 'Secure sign-in is unavailable. Try again when the server is reachable.'
     };
   },
 
   logout: () => {
-    setAuthToken(null); // invalide la session côté navigateur
-    set({ activeEmployee: null });
-    saveState('gcp_activeEmployee', null);
+    void authLogout();
+    set({
+      activeEmployee: null, employees: [], projects: [], punchSessions: [], invoices: [],
+      catalogue: [], suppliers: [], inventory: [], toolAssets: [], toolTheftReports: [],
+      orders: [], clients: [], hrAlerts: [], documents: [], expenses: [], projectPhotos: [],
+      changeOrders: [], insuranceClaims: [], leads: [], shiftAssignments: [], safetyRecords: [],
+      personalExpenses: [], payrollPayments: [], motivationTeams: [], motivationGoals: [], weeklyGoals: []
+    });
+    void fetchLoginDirectory().then(directory => {
+      if (get().activeEmployee || directory.length === 0) return;
+      set({ employees: directory.map(user => ({
+        id: user.id, name: user.name, nip: '', role: 'employee', hourlyRate: 0,
+        workerType: '', asNumber: '', phone: '', address: '', hireDate: '',
+        avatar: user.avatar || '', level: 1, xp: 0
+      })) });
+    });
   },
 
   // Employees CRUD
   addEmployee: (emp) => {
     const { employees } = get();
-    const newEmp: Employee = {
+    const employeeForServer: Employee = {
       ...emp,
       id: genId(),
       level: 1,
       xp: 0
     };
+    const newEmp: Employee = { ...employeeForServer, nip: '' };
     const updated = [...employees, newEmp];
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    syncInsert('app_users', employeeToRow(newEmp));
+    if (!LOCAL_TEST_MODE) syncInsert('app_users', employeeToRow(employeeForServer));
 
     // Auto trigger alert
     get().addHRAlert({
@@ -890,14 +914,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateEmployee: (emp) => {
     const { employees, activeEmployee } = get();
-    const updated = employees.map(e => e.id === emp.id ? emp : e);
+    const employeeForServer = emp;
+    const safeEmployee = { ...emp, nip: '' };
+    const updated = employees.map(e => e.id === emp.id ? safeEmployee : e);
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    syncUpdate('app_users', emp.id, employeeToRow(emp));
+    if (!LOCAL_TEST_MODE) syncUpdate('app_users', emp.id, employeeToRow(employeeForServer));
 
     if (activeEmployee && activeEmployee.id === emp.id) {
-      set({ activeEmployee: emp });
-      saveState('gcp_activeEmployee', emp);
+      set({ activeEmployee: safeEmployee });
     }
   },
 
@@ -906,7 +931,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = employees.filter(e => e.id !== id);
     set({ employees: updated });
     saveState('gcp_employees', updated);
-    syncDelete('app_users', id);
+    if (!LOCAL_TEST_MODE) syncDelete('app_users', id);
 
     // Nettoie les références à l'employé supprimé pour éviter des données fantômes
     const updatedProjects = projects.map(p => ({
@@ -939,8 +964,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Déconnecte la session active si l'employé supprimé était celui connecté
     if (activeEmployee && activeEmployee.id === id) {
+      void authLogout();
       set({ activeEmployee: null });
-      saveState('gcp_activeEmployee', null);
     }
   },
 
@@ -967,7 +992,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (activeEmployee && activeEmployee.id === employeeId) {
       const updatedActive = updated.find(e => e.id === employeeId) || null;
       set({ activeEmployee: updatedActive });
-      saveState('gcp_activeEmployee', updatedActive);
     }
 
     get().recomputeGoalsAndStreaks();
@@ -1233,7 +1257,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = projects.filter(p => p.id !== id);
     set({ projects: updated });
     saveState('gcp_projects', updated);
-    syncDeleteProjectChildren(id).then(() => syncDelete('projects', id));
+    // Les enfants sont supprimés par les clés étrangères ON DELETE CASCADE.
+    syncDelete('projects', id);
 
     // Retire toute référence au chantier supprimé dans les équipes de motivation
     const updatedTeams = motivationTeams.map(team => ({
@@ -1340,6 +1365,61 @@ export const useAppStore = create<AppState>((set, get) => ({
     syncDelete('inventory_items', id);
   },
 
+
+  addToolAsset: (tool) => {
+    const { toolAssets } = get();
+    const now = new Date().toISOString();
+    const newTool: ToolAsset = { ...tool, id: genId(), createdAt: now, updatedAt: now };
+    const updated = [newTool, ...toolAssets];
+    set({ toolAssets: updated });
+    saveState('gcp_toolAssets', updated);
+    syncInsert('tool_assets', toolAssetToRow(newTool));
+  },
+
+  updateToolAsset: (tool) => {
+    const { toolAssets } = get();
+    const normalized = { ...tool, updatedAt: tool.updatedAt || new Date().toISOString() };
+    const updated = toolAssets.map(item => item.id === normalized.id ? normalized : item);
+    set({ toolAssets: updated });
+    saveState('gcp_toolAssets', updated);
+    syncUpdate('tool_assets', normalized.id, toolAssetToRow(normalized));
+  },
+
+  deleteToolAsset: (id) => {
+    const { toolAssets } = get();
+    const updated = toolAssets.filter(tool => tool.id !== id);
+    set({ toolAssets: updated });
+    saveState('gcp_toolAssets', updated);
+    syncDelete('tool_assets', id);
+  },
+
+  addToolTheftReport: (report) => {
+    const { toolTheftReports } = get();
+    const now = new Date().toISOString();
+    const newReport: ToolTheftReport = { ...report, id: genId(), createdAt: now, updatedAt: now };
+    const updated = [newReport, ...toolTheftReports];
+    set({ toolTheftReports: updated });
+    saveState('gcp_toolTheftReports', updated);
+    syncInsert('tool_theft_reports', toolTheftReportToRow(newReport));
+  },
+
+  updateToolTheftReport: (report) => {
+    const { toolTheftReports } = get();
+    const normalized = { ...report, updatedAt: report.updatedAt || new Date().toISOString() };
+    const updated = toolTheftReports.map(item => item.id === normalized.id ? normalized : item);
+    set({ toolTheftReports: updated });
+    saveState('gcp_toolTheftReports', updated);
+    syncUpdate('tool_theft_reports', normalized.id, toolTheftReportToRow(normalized));
+  },
+
+  deleteToolTheftReport: (id) => {
+    const { toolTheftReports } = get();
+    const updated = toolTheftReports.filter(report => report.id !== id);
+    set({ toolTheftReports: updated });
+    saveState('gcp_toolTheftReports', updated);
+    syncDelete('tool_theft_reports', id);
+  },
+
   // Orders CRUD
   addSupplierOrder: (order) => {
     const { orders, inventory } = get();
@@ -1430,6 +1510,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = { ...companyInfo, ...info };
     set({ companyInfo: updated });
     saveState('gcp_companyInfo', updated);
+    setCloudSyncAllowed(updated.dataStorageMode !== 'local');
     const companyId = getCompanyId();
     if (companyId) syncUpdate('companies', companyId, companyInfoToRow(updated));
   },
@@ -1527,7 +1608,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (p.id === id && p.pausedAt) {
         const pauseStart = new Date(p.pausedAt).getTime();
         const pauseEnd = new Date().getTime();
-        const diffMinutes = Math.floor((pauseEnd - pauseStart) / 60000);
+        const diffMinutes = Math.max(0, (pauseEnd - pauseStart) / 60000);
         return {
           ...p,
           pausedAt: null,
@@ -1555,7 +1636,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         let totalPauseMinutes = p.totalPauseMinutes;
         if (p.pausedAt) {
           const pauseStart = new Date(p.pausedAt).getTime();
-          totalPauseMinutes += Math.floor((end - pauseStart) / 60000);
+          totalPauseMinutes += Math.max(0, (end - pauseStart) / 60000);
         }
 
         let totalWorkedHours = (end - start) / 3600000; // hours in decimal
@@ -1655,12 +1736,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const totalHours = unInvoicedPunches.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
     const amount = unInvoicedPunches.reduce((sum, p) => sum + p.revenue, 0);
     const comp = get().companyInfo;
-    const gstRate = comp.taxRate1 !== undefined ? comp.taxRate1 : 0.05;
-    const qstRate = comp.taxRate2 !== undefined ? comp.taxRate2 : 0.09975;
+    const gstRate = comp.taxRate1 !== undefined ? comp.taxRate1 : 0;
+    const qstRate = comp.taxRate2 !== undefined ? comp.taxRate2 : 0;
+    const localRate = comp.localTaxRate !== undefined ? comp.localTaxRate : 0;
     
     const gstAmount = Number((amount * gstRate).toFixed(2));
     const qstAmount = Number((amount * qstRate).toFixed(2));
-    const totalWithTaxes = Number((amount + gstAmount + qstAmount).toFixed(2));
+    const localTaxAmount = Number((amount * localRate).toFixed(2));
+    const totalWithTaxes = Number((amount + gstAmount + qstAmount + localTaxAmount).toFixed(2));
 
     const newInvoice: Invoice = {
       id: genId(),
@@ -1676,7 +1759,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       totalWithTaxes,
       status: 'draft',
       taxIncluded: false,
-      notes: `Facture brouillon auto-générée le ${new Date().toLocaleDateString('fr-CA')}.`
+      notes: `Facture brouillon auto-générée le ${new Date().toLocaleDateString('fr-CA')}.`,
+      currency: comp.currency || (comp.country === 'US' ? 'USD' : 'CAD'),
+      taxRate1: gstRate, taxRate2: qstRate, localTaxRate: localRate, localTaxAmount,
+      taxRate1Name: comp.taxRate1Name || 'Tax 1', taxRate2Name: comp.taxRate2Name || 'Tax 2',
+      issuerName: emp.businessName || emp.name, issuerAddress: emp.address,
+      issuerTaxNumber: emp.gstNumber || emp.asNumber, issuerLogo: emp.businessLogo || emp.avatar,
+      recipientName: comp.name
     };
 
     const updated = [newInvoice, ...invoices];
@@ -1731,6 +1820,27 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateGCPDocument: (doc) => {
     const { documents } = get();
+
+    // SIGNED_CONTRACT_CONTENT_LOCK — les données juridiques et financières
+    // d’un contrat signé restent un instantané immuable. Seule la progression
+    // opérationnelle vers « completed » est acceptée après la signature.
+    const existingDocument = documents.find(item => item.id === doc.id);
+    const existingIsSignedContract = Boolean(
+      existingDocument?.type === 'contract' &&
+      existingDocument.clientSignature &&
+      existingDocument.ownerSignature &&
+      existingDocument.signedAt
+    );
+    if (existingDocument && existingIsSignedContract) {
+      if (existingDocument.status === 'accepted' && doc.status === 'completed') {
+        const lifecycleDocument: GCPDocument = { ...existingDocument, status: 'completed' };
+        const lifecycleDocuments = documents.map(item => item.id === doc.id ? lifecycleDocument : item);
+        set({ documents: lifecycleDocuments });
+        saveState('gcp_documents', lifecycleDocuments);
+        syncUpdate('documents', doc.id, documentToRow(lifecycleDocument));
+      }
+      return;
+    }
     
     // Recompute on update to keep financials robust and fresh
     let subtotal = 0;
@@ -1771,6 +1881,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   deleteGCPDocument: (id) => {
     const { documents } = get();
+    const target = documents.find(item => item.id === id);
+    const targetIsSignedContract = Boolean(
+      target?.type === 'contract' && target.clientSignature && target.ownerSignature && target.signedAt
+    );
+    if (targetIsSignedContract) return;
     const updated = documents.filter(d => d.id !== id);
     set({ documents: updated });
     saveState('gcp_documents', updated);
@@ -2050,6 +2165,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   hydrateCloud: async () => {
+    if (LOCAL_TEST_MODE) {
+      set({ offlineSyncStatus: 'offline' });
+      return;
+    }
     // Garde anti-écrasement : si l'utilisateur vient tout juste de modifier des
     // données (écriture cloud récente ou en vol), on reporte l'hydratation au
     // prochain cycle — sinon l'instantané cloud, encore en retard, écraserait la
@@ -2060,55 +2179,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     const result = await hydrateFromCloud();
     if (!result.enabled) {
       set({ offlineSyncStatus: 'offline' });
-      // Pas encore de session : on ne récupère que l'annuaire minimal (id, nom,
-      // rôle, avatar — jamais de NIP) pour peupler l'écran de connexion.
       if (result.needsAuth) {
-        // Session zombie : un utilisateur cloud restauré du stockage local sans
-        // jeton valide (session d'avant la mise à jour de sécurité, ou jeton
-        // expiré). On force le retour à l'écran de connexion — sinon l'app
-        // paraît connectée mais l'IA et la synchronisation échouent en 401.
-        const { activeEmployee } = get();
-        if (getAuthToken()) setAuthToken(null);
-        if (activeEmployee && isUuid(activeEmployee.id)) {
-          set({ activeEmployee: null });
-          saveState('gcp_activeEmployee', null);
-        }
-      }
-      // Tente l'annuaire dès que le cloud est indisponible sans session — même si
-      // l'appel hydrate a échoué autrement qu'en 401 (erreur transitoire) : sans
-      // annuaire, les vrais profils cloud n'apparaissent pas à l'écran de connexion.
-      {
+        // Un cookie absent ou expiré détruit immédiatement toute donnée d'une
+        // session précédente avant d'afficher l'annuaire public minimal.
+        set({
+          activeEmployee: null, employees: [], projects: [], punchSessions: [], invoices: [],
+          catalogue: [], suppliers: [], inventory: [], toolAssets: [], toolTheftReports: [],
+          orders: [], clients: [], hrAlerts: [], documents: [], expenses: [], projectPhotos: [],
+          changeOrders: [], insuranceClaims: [], leads: [], shiftAssignments: [], safetyRecords: [],
+          personalExpenses: [], payrollPayments: [], motivationTeams: [], motivationGoals: [], weeklyGoals: []
+        });
         const dir = await fetchLoginDirectory();
         if (dir.length > 0) {
-          const { employees } = get();
-          // Dès que de vrais profils cloud existent, on retire les profils de
-          // démonstration (emp-1..emp-4) : ils créaient des doublons trompeurs
-          // (deux « Patrick Bisaillon ») dont un qui refusait toujours le NIP.
-          const DEMO_IDS = new Set(['emp-1', 'emp-2', 'emp-3', 'emp-4']);
-          const dirIds = new Set(dir.map(u => u.id));
-          const locals = employees.filter(e => !DEMO_IDS.has(e.id) && !dirIds.has(e.id));
-          const merged = [
-            ...dir.map(u => {
-              const existing = employees.find(e => e.id === u.id);
-              return existing
-                ? { ...existing, name: u.name || existing.name, avatar: u.avatar || existing.avatar, workerType: u.workerType || existing.workerType }
-                : ({
-                    id: u.id, name: u.name, nip: '', role: normalizeAppRole(u.role),
-                    hourlyRate: 0, workerType: u.workerType || '', asNumber: '', phone: '', address: '',
-                    hireDate: '', avatar: u.avatar || '', level: 1, xp: 0
-                  } as Employee)
-            }),
-            ...locals
-          ];
-          set({ employees: merged });
-          saveState('gcp_employees', merged);
-          // Déconnecte aussi une session de démonstration restaurée : ces profils
-          // n'existent plus à l'écran une fois les vrais profils chargés.
-          const { activeEmployee: ae } = get();
-          if (ae && DEMO_IDS.has(ae.id)) {
-            set({ activeEmployee: null });
-            saveState('gcp_activeEmployee', null);
-          }
+          set({ employees: dir.map(user => ({
+            id: user.id, name: user.name, nip: '', role: 'employee', hourlyRate: 0,
+            workerType: '', asNumber: '', phone: '', address: '', hireDate: '',
+            avatar: user.avatar || '', level: 1, xp: 0
+          })) });
         }
       }
       return;
@@ -2127,6 +2214,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const catalogue = (t.catalog_items || []).map(rowToCatalogue);
     const suppliers = (t.suppliers || []).map(rowToSupplier);
     const inventory = (t.inventory_items || []).map(rowToInventory);
+    const toolAssets = (t.tool_assets || []).map(rowToToolAsset);
+    const toolTheftReports = (t.tool_theft_reports || []).map(rowToToolTheftReport);
     const orderItems = t.supplier_order_items || [];
     const orders = (t.supplier_orders || []).map((r: any) => rowToSupplierOrder(r, orderItems));
     const clients = (t.clients || []).map(rowToClient);
@@ -2146,61 +2235,56 @@ export const useAppStore = create<AppState>((set, get) => ({
     const motivationGoals = (t.motivation_goals || []).map(rowToMotivationGoal);
     const weeklyGoals = (t.weekly_goals || []).map(rowToWeeklyGoal);
     const companyRow = (t.companies || [])[0];
+    const viewerEmployee = result.viewer
+      ? employees.find(employee => employee.id === result.viewer!.userId) || ({
+          id: result.viewer.userId,
+          name: result.viewer.name || '',
+          nip: '',
+          role: normalizeAppRole(result.viewer.role),
+          hourlyRate: 0,
+          workerType: '',
+          asNumber: '',
+          phone: '',
+          address: '',
+          hireDate: '',
+          avatar: '',
+          level: 1,
+          xp: 0
+        } as Employee)
+      : null;
 
     set(state => {
       const next: Partial<AppState> = {
         offlineSyncStatus: 'synced',
-        employees: mergeByKey(state.employees, employees, e => e.id),
-        projects: mergeByKey(state.projects, projects, p => p.id),
-        punchSessions: mergeByKey(state.punchSessions, punchSessions, p => p.id),
-        invoices: mergeByKey(state.invoices, invoices, i => i.id),
-        catalogue: mergeByKey(state.catalogue, catalogue, c => c.id),
-        suppliers: mergeByKey(state.suppliers, suppliers, s => s.id),
-        inventory: mergeByKey(state.inventory, inventory, i => i.id),
-        orders: mergeByKey(state.orders, orders, o => o.id),
-        clients: mergeByKey(state.clients, clients, c => c.id),
-        hrAlerts: mergeByKey(state.hrAlerts, hrAlerts, h => h.id),
-        documents: mergeByKey(state.documents, documents, d => d.id),
-        expenses: mergeByKey(state.expenses, expenses, e => e.id),
-        projectPhotos: mergeByKey(state.projectPhotos, projectPhotos, p => p.id),
-        changeOrders: mergeByKey(state.changeOrders, changeOrders, o => o.id),
-        insuranceClaims: mergeByKey(state.insuranceClaims, insuranceClaims, c => c.id),
-        leads: mergeByKey(state.leads, leads, l => l.id),
-        shiftAssignments: mergeByKey(state.shiftAssignments, shiftAssignments, a => a.id),
-        safetyRecords: mergeByKey(state.safetyRecords, safetyRecords, r => r.id),
-        payrollPayments: mergeByKey(state.payrollPayments, payrollPayments, p => p.id),
-        motivationTeams: mergeByKey(state.motivationTeams, motivationTeams, m => m.id),
-        motivationGoals: mergeByKey(state.motivationGoals, motivationGoals, g => g.id),
-        weeklyGoals: mergeByKey(state.weeklyGoals, weeklyGoals, w => w.employeeId)
+        activeEmployee: viewerEmployee,
+        employees,
+        projects,
+        punchSessions,
+        invoices,
+        catalogue,
+        suppliers,
+        inventory,
+        toolAssets,
+        toolTheftReports,
+        orders,
+        clients,
+        hrAlerts,
+        documents,
+        expenses,
+        projectPhotos,
+        changeOrders,
+        insuranceClaims,
+        leads,
+        shiftAssignments,
+        safetyRecords,
+        payrollPayments,
+        motivationTeams,
+        motivationGoals,
+        weeklyGoals
       };
       if (companyRow) next.companyInfo = { ...state.companyInfo, ...rowToCompanyInfo(companyRow) };
       return next as AppState;
     });
-
-    const s = get();
-    saveState('gcp_employees', s.employees);
-    saveState('gcp_projects', s.projects);
-    saveState('gcp_punchSessions', s.punchSessions);
-    saveState('gcp_invoices', s.invoices);
-    saveState('gcp_catalogue', s.catalogue);
-    saveState('gcp_suppliers', s.suppliers);
-    saveState('gcp_inventory', s.inventory);
-    saveState('gcp_orders', s.orders);
-    saveState('gcp_clients', s.clients);
-    saveState('gcp_hrAlerts', s.hrAlerts);
-    saveState('gcp_documents', s.documents);
-    saveState('gcp_expenses', s.expenses);
-    saveState('gcp_projectPhotos', s.projectPhotos);
-    saveState('gcp_changeOrders', s.changeOrders);
-    saveState('gcp_insuranceClaims', s.insuranceClaims);
-    saveState('gcp_leads', s.leads);
-    saveState('gcp_shiftAssignments', s.shiftAssignments);
-    saveState('gcp_safetyRecords', s.safetyRecords);
-    saveState('gcp_payrollPayments', s.payrollPayments);
-    saveState('gcp_motivationTeams', s.motivationTeams);
-    saveState('gcp_motivationGoals', s.motivationGoals);
-    saveState('gcp_weeklyGoals', s.weeklyGoals);
-    saveState('gcp_companyInfo', s.companyInfo);
   }
 }));
 export default useAppStore;

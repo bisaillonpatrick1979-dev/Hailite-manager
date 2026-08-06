@@ -277,15 +277,6 @@ function mapped(row: Record<string, unknown>, mapping: Record<string, string>, k
   return column ? row[column] : undefined;
 }
 
-function storageKey(type: MigrationDataType): string {
-  return {
-    clients: 'gcp_clients', projects: 'gcp_projects', employees: 'gcp_employees',
-    punches: 'gcp_punchSessions', documents: 'gcp_documents', expenses: 'gcp_expenses',
-    payroll: 'gcp_payrollPayments', suppliers: 'gcp_suppliers', catalogue: 'gcp_catalogue',
-    inventory: 'gcp_inventory', tools: 'gcp_toolAssets'
-  }[type];
-}
-
 function convert(type: MigrationDataType, row: Record<string, unknown>, mapping: Record<string, string>): any | null {
   const get = (key: string) => mapped(row, mapping, key);
   const today = new Date().toISOString().slice(0, 10);
@@ -301,7 +292,7 @@ function convert(type: MigrationDataType, row: Record<string, unknown>, mapping:
   }
   if (type === 'employees') {
     const name = text(get('name')); if (!name) return null;
-    return { id: id(), name, nip: String(Math.floor(1000 + Math.random() * 9000)), role: 'employee', hourlyRate: number(get('hourlyRate')), workerType: text(get('workerType')) || 'Employé importé', asNumber: '', phone: text(get('phone')), address: '', hireDate: date(get('hireDate')) || today, avatar: '', level: 1, xp: 0, email: text(get('email')), workMode: 'hour' } satisfies Employee;
+    return { id: id(), name, nip: '', role: 'employee', hourlyRate: number(get('hourlyRate')), workerType: text(get('workerType')) || 'Employé importé', asNumber: '', phone: text(get('phone')), address: '', hireDate: date(get('hireDate')) || today, avatar: '', level: 1, xp: 0, email: text(get('email')), workMode: 'hour' } satisfies Employee;
   }
   if (type === 'punches') {
     const employeeName = text(get('employeeName')); const startTime = iso(get('startTime')); if (!employeeName || !startTime) return null;
@@ -361,23 +352,16 @@ export function importMappedMigrationRows(params: {
   const missing = required.filter(field => !params.mapping[field.key]);
   if (missing.length) return { ok: false, imported: 0, skipped: params.rows.length, message: `Champs obligatoires non associés : ${missing.map(field => field.labelFR).join(', ')}` };
   const converted = params.rows.map(row => convert(params.type, row, params.mapping)).filter(Boolean);
-  const key = storageKey(params.type);
-  let existing: any[] = [];
-  try { existing = JSON.parse(localStorage.getItem(key) || '[]'); } catch { existing = []; }
-  const merged = [...existing, ...converted];
-  localStorage.setItem(key, JSON.stringify(merged));
-
-  const queueKey = 'gcp_pendingLegacyMigration';
-  let queue: Record<string, any[]> = {};
-  try { queue = JSON.parse(localStorage.getItem(queueKey) || '{}'); } catch { queue = {}; }
-  queue[params.type] = [...(queue[params.type] || []), ...converted];
-  localStorage.setItem(queueKey, JSON.stringify(queue));
-
+  // L'ancien mécanisme plaçait le fichier converti et une file de migration en
+  // clair dans localStorage. L'import doit être effectué par une future route
+  // serveur authentifiée et transactionnelle; aucune donnée sensible n'est mise
+  // en attente dans le navigateur.
   return {
-    ok: converted.length > 0,
-    imported: converted.length,
-    skipped: params.rows.length - converted.length,
-    storageKey: key,
-    message: `${converted.length} éléments importés; ${params.rows.length - converted.length} ignorés.`
+    ok: false,
+    imported: 0,
+    skipped: params.rows.length,
+    message: converted.length > 0
+      ? 'Import sécurisé indisponible avant une connexion administrateur.'
+      : 'Aucune ligne valide à importer.'
   };
 }

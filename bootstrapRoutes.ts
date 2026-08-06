@@ -11,6 +11,12 @@ interface PublicCompanyIdentity {
   tax_rate2?: number | string | null;
   tax_rate1_name?: string | null;
   tax_rate2_name?: string | null;
+  currency?: string | null;
+  unit_system?: string | null;
+  date_locale?: string | null;
+  data_storage_mode?: string | null;
+  cloud_region?: string | null;
+  compliance_version?: string | null;
 }
 
 /** Informations non sensibles nécessaires à l'écran de démarrage. */
@@ -24,7 +30,7 @@ export function registerBootstrapRoutes(app: express.Express): void {
       const companyId = await resolveCompanyId();
       const { data, error } = await supabase
         .from('companies')
-        .select('name,logo,country,region,is_onboarded,tax_rate1,tax_rate2,tax_rate1_name,tax_rate2_name')
+        .select('name,logo,country,region,is_onboarded,tax_rate1,tax_rate2,tax_rate1_name,tax_rate2_name,currency,unit_system,date_locale,data_storage_mode,cloud_region,compliance_version')
         .eq('id', companyId)
         .maybeSingle();
 
@@ -43,7 +49,13 @@ export function registerBootstrapRoutes(app: express.Express): void {
               taxRate1: Number(company.tax_rate1 || 0),
               taxRate2: Number(company.tax_rate2 || 0),
               taxRate1Name: company.tax_rate1_name || '',
-              taxRate2Name: company.tax_rate2_name || ''
+              taxRate2Name: company.tax_rate2_name || '',
+              currency: company.currency || 'CAD',
+              unitSystem: company.unit_system || 'imperial',
+              dateLocale: company.date_locale || 'fr-CA',
+              dataStorageMode: company.data_storage_mode || 'hybrid',
+              cloudRegion: company.cloud_region || 'ca-central-1',
+              complianceVersion: company.compliance_version || ''
             }
           : null
       });

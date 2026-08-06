@@ -1,6 +1,8 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { prepareCloudState } from './cloudBootstrap';
+import { purgeLegacySensitiveStorage } from './securityStorage';
+import { LOCAL_TEST_MODE } from './testProfiles';
 import './index.css';
 
 // ---------------------------------------------------------------------------
@@ -130,8 +132,9 @@ async function loadRouteComponent(): Promise<React.ComponentType> {
 }
 
 async function startApplication() {
-  // Nettoie les anciennes données de démonstration avant que le store Zustand
-  // charge son état initial depuis localStorage.
+  // Retire les anciennes sessions, NIP et données métier avant que Zustand ne
+  // puisse les relire. En production, seules les préférences non sensibles restent.
+  purgeLegacySensitiveStorage(LOCAL_TEST_MODE);
   await prepareCloudState();
 
   renderApplication(await loadRouteComponent());

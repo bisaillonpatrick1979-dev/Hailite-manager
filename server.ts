@@ -10,19 +10,25 @@ import { fileURLToPath } from 'url';
 import { registerApiRoutes } from './apiRoutes.js';
 import { registerBootstrapRoutes } from './bootstrapRoutes.js';
 import { legacyIdGuard } from './legacyIdGuard.js';
+import { apiErrorHandler, registerSecurityMiddleware } from './securityMiddleware.js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const clientDistDirectory = path.basename(__dirname) === 'dist'
+  ? __dirname
+  : path.join(__dirname, 'dist');
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '15mb' }));
+  registerSecurityMiddleware(app);
+  app.use(express.json({ limit: '8mb' }));
   app.use(legacyIdGuard);
 
   registerBootstrapRoutes(app);
   registerApiRoutes(app);
+  app.use(apiErrorHandler);
 
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -56,13 +62,14 @@ async function startServer() {
       }
     });
   } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
+    app.use(express.static(clientDistDirectory));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist/index.html'));
+      res.sendFile(path.join(clientDistDirectory, 'index.html'));
     });
   }
 
-  const port = 3000;
+  const configuredPort = Number.parseInt(String(process.env.PORT || '3000'), 10);
+  const port = Number.isFinite(configuredPort) && configuredPort > 0 ? configuredPort : 3000;
   app.listen(port, '0.0.0.0', () => {
     console.log(`Server running on port ${port}`);
   });
