@@ -511,3 +511,40 @@ export interface ChangeOrder {
   clientSignature?: string;  // data URL
   signedAt?: string;
 }
+
+
+// ---------------------------------------------------------------------------
+// Réclamations d'assurance — grêle, vent, dégât d'eau
+// ---------------------------------------------------------------------------
+// Les chiffres d'une réclamation ne doivent pas être mélangés :
+//   rcv  valeur à neuf (coût de remplacement aujourd'hui)
+//   acv  valeur au jour du sinistre (rcv moins la dépréciation)
+//   dépréciation récupérable = rcv − acv, versée après exécution des travaux
+//   premier chèque ≈ acv − franchise
+// L'application calcule ces écarts plutôt que de les faire saisir, pour qu'une
+// erreur d'arithmétique ne fasse pas oublier un montant à réclamer.
+export type InsuranceLossType = 'hail' | 'wind' | 'water' | 'fire' | 'other';
+export type InsuranceClaimStatus = 'open' | 'submitted' | 'approved' | 'partial' | 'denied' | 'closed';
+
+export interface InsuranceClaim {
+  id: string;
+  projectId: string;
+  insurer: string;
+  claimNumber: string;
+  policyNumber?: string;
+  lossType: InsuranceLossType;
+  lossDate?: string;
+  adjusterName?: string;      // expert en sinistre
+  adjusterPhone?: string;
+  adjusterEmail?: string;
+  deductible?: number;        // franchise
+  acv?: number;               // valeur au jour du sinistre
+  rcv?: number;               // valeur à neuf
+  supplementAmount?: number;  // suppléments demandés
+  approvedAmount?: number;
+  status: InsuranceClaimStatus;
+  notes?: string;
+  createdAt: string;
+  createdById?: string;       // imposé par le serveur
+  createdByName?: string;
+}
