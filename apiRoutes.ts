@@ -24,7 +24,7 @@ const KNOWN_TABLES = [
   'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders', 'supplier_order_items',
   'clients', 'documents', 'document_items', 'document_payments', 'payroll_entries', 'payroll_payments',
   'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
-  'project_photos', 'change_orders'
+  'project_photos', 'change_orders', 'insurance_claims'
 ];
 
 // ---------------------------------------------------------------------------
@@ -43,7 +43,8 @@ const TABLE_READ_ROLES: Record<string, AppRole[]> = {
   clients: OFFICE, documents: OFFICE, document_items: OFFICE, document_payments: OFFICE,
   payroll_entries: ALL_ROLES, payroll_payments: ALL_ROLES, production_entries: ALL_ROLES,
   weekly_goals: ALL_ROLES, motivation_teams: ALL_ROLES, motivation_goals: ALL_ROLES,
-  hr_alerts: MANAGERS, expenses: OFFICE, project_photos: ALL_ROLES, change_orders: ALL_ROLES
+  hr_alerts: MANAGERS, expenses: OFFICE, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
+  insurance_claims: ALL_ROLES
 };
 
 const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
@@ -58,7 +59,9 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
   // (INSERT seulement — voir allowExpenseMethod) ; gestion complète pour le bureau
   // project_photos : les employés photographient le chantier (INSERT seulement,
   // voir allowProjectPhotoMethod) ; correction et suppression réservées à la gestion
-  hr_alerts: ALL_ROLES, expenses: ALL_ROLES, project_photos: ALL_ROLES, change_orders: ALL_ROLES
+  // insurance_claims : consultable par tous, écrit par la gestion seulement
+  hr_alerts: ALL_ROLES, expenses: ALL_ROLES, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
+  insurance_claims: MANAGERS
 };
 
 // Colonne "propriétaire" pour les contraintes de ligne des rôles non gestionnaires
@@ -694,6 +697,12 @@ export function registerApiRoutes(app: express.Express): void {
     return method === 'POST' || isManager(auth.role);
   }
 
+  // insurance_claims : dossier financier et contractuel. Le terrain le consulte
+  // (il doit savoir ce qui est couvert), mais seule la gestion l'écrit.
+  function allowInsuranceClaimMethod(auth: AuthContext, method: string): boolean {
+    return isManager(auth.role);
+  }
+
   // Création d'une ligne
   app.post('/api/db/:table', requireAuth, async (req: AuthedRequest, res) => {
     if (!supabaseEnabled || !supabase) return res.status(503).json({ error: 'Base de données non configurée' });
@@ -707,6 +716,33 @@ export function registerApiRoutes(app: express.Express): void {
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
+      }
+      if (table === 'insurance_claims') {
+        payload.created_by = auth.userId;
+        payload.created_by_name = auth.name;
+        if (!String(payload.insurer || '').trim()) {
+          return res.status(400).json({ error: 'Assureur manquant' });
+        }
+        if (!['hail', 'wind', 'water', 'fire', 'other'].includes(String(payload.loss_type))) {
+          return res.status(400).json({ error: 'Type de sinistre invalide' });
+        }
+        if (!['open', 'submitted', 'approved', 'partial', 'denied', 'closed'].includes(String(payload.status))) {
+          return res.status(400).json({ error: 'Statut de réclamation invalide' });
+        }
+        for (const field of ['deductible', 'acv', 'rcv', 'supplement_amount', 'approved_amount']) {
+          const raw = payload[field];
+          if (raw === null || raw === undefined || raw === '') { payload[field] = null; continue; }
+          const value = Number(raw);
+          if (!Number.isFinite(value) || value < 0 || value > 10_000_000) {
+            return res.status(400).json({ error: `Montant invalide : ${field}` });
+          }
+          payload[field] = value;
+        }
+        const { data: proj } = await supabase
+          .from('projects').select('id, company_id').eq('id', payload.project_id).maybeSingle();
+        if (!proj || (proj.company_id && String(proj.company_id) !== auth.companyId)) {
+          return res.status(400).json({ error: 'Chantier inconnu pour cette compagnie' });
+        }
       }
       if (table === 'change_orders') {
         // L'auteur vient du jeton, jamais du client
@@ -809,6 +845,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const payload = { ...req.body };
       if (TABLES_WITH_COMPANY_ID.has(table)) {
@@ -838,6 +875,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
       // Rôles non gestionnaires : la ligne visée doit leur appartenir
@@ -875,6 +913,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'expenses' && !allowExpenseMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
       if (WRITE_OWN_ONLY.has(table) && !isManager(auth.role)) {

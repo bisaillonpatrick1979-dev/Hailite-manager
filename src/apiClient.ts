@@ -6,7 +6,7 @@
 import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
-  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder
+  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim
 } from './types';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -520,6 +520,44 @@ export function rowToHRAlert(r: any): HRAlert {
   return {
     id: r.id, type: r.type, title: r.title || '', message: r.message || '', date: r.date || '',
     employeeId: r.employee_id || undefined, employeeName: r.employee_name || undefined, resolved: r.resolved || false
+  };
+}
+
+export function insuranceClaimToRow(c: InsuranceClaim, companyId?: string) {
+  return {
+    id: c.id, company_id: companyId, project_id: c.projectId, insurer: c.insurer,
+    claim_number: c.claimNumber || '', policy_number: c.policyNumber || null,
+    loss_type: c.lossType, loss_date: c.lossDate || null,
+    adjuster_name: c.adjusterName || null, adjuster_phone: c.adjusterPhone || null,
+    adjuster_email: c.adjusterEmail || null,
+    deductible: c.deductible ?? null, acv: c.acv ?? null, rcv: c.rcv ?? null,
+    supplement_amount: c.supplementAmount ?? null, approved_amount: c.approvedAmount ?? null,
+    status: c.status, notes: c.notes || null, created_at: c.createdAt,
+    created_by: c.createdById || null, created_by_name: c.createdByName || null
+  };
+}
+export function rowToInsuranceClaim(r: any): InsuranceClaim {
+  const losses = ['hail', 'wind', 'water', 'fire', 'other'];
+  const statuses = ['open', 'submitted', 'approved', 'partial', 'denied', 'closed'];
+  const opt = (v: any) => (v === null || v === undefined ? undefined : Number(v));
+  return {
+    id: r.id,
+    projectId: r.project_id || '',
+    insurer: r.insurer || '',
+    claimNumber: r.claim_number || '',
+    policyNumber: r.policy_number || undefined,
+    lossType: (losses.includes(r.loss_type) ? r.loss_type : 'other') as InsuranceClaim['lossType'],
+    lossDate: r.loss_date || undefined,
+    adjusterName: r.adjuster_name || undefined,
+    adjusterPhone: r.adjuster_phone || undefined,
+    adjusterEmail: r.adjuster_email || undefined,
+    deductible: opt(r.deductible), acv: opt(r.acv), rcv: opt(r.rcv),
+    supplementAmount: opt(r.supplement_amount), approvedAmount: opt(r.approved_amount),
+    status: (statuses.includes(r.status) ? r.status : 'open') as InsuranceClaim['status'],
+    notes: r.notes || undefined,
+    createdAt: r.created_at || '',
+    createdById: r.created_by || undefined,
+    createdByName: r.created_by_name || undefined
   };
 }
 

@@ -4,7 +4,7 @@ import {
   InventoryItem, SupplierOrder, Supplier, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
   WeeklyGoal, MotivationTeam, MotivationGoal,
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine, GCPDocumentPaymentHistoryEntry,
-  ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder
+  ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
@@ -14,6 +14,7 @@ import {
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
   hrAlertToRow, expenseToRow, payrollPaymentToRow, documentToRow, documentPaymentToRow,
   projectPhotoToRow, rowToProjectPhoto, changeOrderToRow, rowToChangeOrder,
+  insuranceClaimToRow, rowToInsuranceClaim,
   rowToEmployee, rowToProject, rowToPunch, rowToInvoice, rowToSupplier, rowToCatalogue, rowToInventory,
   rowToSupplierOrder, rowToClient, rowToCompanyInfo, rowToWeeklyGoal, rowToMotivationTeam, rowToMotivationGoal,
   rowToHRAlert, rowToExpense, rowToPayrollPayment, rowToDocument
@@ -36,6 +37,7 @@ interface AppState {
   expenses: ExpenseRecord[];
   projectPhotos: ProjectPhoto[];
   changeOrders: ChangeOrder[];
+  insuranceClaims: InsuranceClaim[];
   // Dépenses personnelles de l'employé : locales à l'appareil, jamais synchronisées
   personalExpenses: ExpenseRecord[];
   payrollPayments: PayrollPayment[];
@@ -140,6 +142,9 @@ interface AppState {
   addPartialPayment: (id: string, amount: number, method: string, notes?: string) => void;
 
   // Accounting CRUD
+  addInsuranceClaim: (claim: Omit<InsuranceClaim, 'id'>) => void;
+  updateInsuranceClaim: (claim: InsuranceClaim) => void;
+  deleteInsuranceClaim: (id: string) => void;
   addChangeOrder: (order: Omit<ChangeOrder, 'id'>) => void;
   updateChangeOrder: (order: ChangeOrder) => void;
   deleteChangeOrder: (id: string) => void;
@@ -751,6 +756,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   expenses: getSavedState('gcp_expenses', initialExpenses),
   projectPhotos: getSavedState('gcp_projectPhotos', []),
   changeOrders: getSavedState('gcp_changeOrders', []),
+  insuranceClaims: getSavedState('gcp_insuranceClaims', []),
   personalExpenses: getSavedState('gcp_personalExpenses', []),
   payrollPayments: getSavedState('gcp_payrollPayments', initialPayrollPayments),
   motivationTeams: getSavedState('gcp_motivationTeams', initialMotivationTeams),
@@ -1825,6 +1831,32 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Photos de chantier : dossier avant / pendant / après, synchronisé au nuage
   // Ordres de changement : extras constatés et signés sur le chantier
+  // Réclamations d'assurance : suivi du dossier et des montants
+  addInsuranceClaim: (claim) => {
+    const { insuranceClaims } = get();
+    const newClaim: InsuranceClaim = { ...claim, id: genId() };
+    const updated = [newClaim, ...insuranceClaims];
+    set({ insuranceClaims: updated });
+    saveState('gcp_insuranceClaims', updated);
+    syncInsert('insurance_claims', insuranceClaimToRow(newClaim));
+  },
+
+  updateInsuranceClaim: (claim) => {
+    const { insuranceClaims } = get();
+    const updated = insuranceClaims.map(c => (c.id === claim.id ? claim : c));
+    set({ insuranceClaims: updated });
+    saveState('gcp_insuranceClaims', updated);
+    syncUpdate('insurance_claims', claim.id, insuranceClaimToRow(claim));
+  },
+
+  deleteInsuranceClaim: (id) => {
+    const { insuranceClaims } = get();
+    const updated = insuranceClaims.filter(c => c.id !== id);
+    set({ insuranceClaims: updated });
+    saveState('gcp_insuranceClaims', updated);
+    syncDelete('insurance_claims', id);
+  },
+
   addChangeOrder: (order) => {
     const { changeOrders } = get();
     const newOrder: ChangeOrder = { ...order, id: genId() };
@@ -2019,6 +2051,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const expenses = (t.expenses || []).map(rowToExpense);
     const projectPhotos = (t.project_photos || []).map(rowToProjectPhoto);
     const changeOrders = (t.change_orders || []).map(rowToChangeOrder);
+    const insuranceClaims = (t.insurance_claims || []).map(rowToInsuranceClaim);
     const payrollPayments = (t.payroll_payments || []).map(rowToPayrollPayment);
     const motivationTeams = (t.motivation_teams || []).map(rowToMotivationTeam);
     const motivationGoals = (t.motivation_goals || []).map(rowToMotivationGoal);
@@ -2042,6 +2075,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         expenses: mergeByKey(state.expenses, expenses, e => e.id),
         projectPhotos: mergeByKey(state.projectPhotos, projectPhotos, p => p.id),
         changeOrders: mergeByKey(state.changeOrders, changeOrders, o => o.id),
+        insuranceClaims: mergeByKey(state.insuranceClaims, insuranceClaims, c => c.id),
         payrollPayments: mergeByKey(state.payrollPayments, payrollPayments, p => p.id),
         motivationTeams: mergeByKey(state.motivationTeams, motivationTeams, m => m.id),
         motivationGoals: mergeByKey(state.motivationGoals, motivationGoals, g => g.id),
@@ -2066,6 +2100,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveState('gcp_expenses', s.expenses);
     saveState('gcp_projectPhotos', s.projectPhotos);
     saveState('gcp_changeOrders', s.changeOrders);
+    saveState('gcp_insuranceClaims', s.insuranceClaims);
     saveState('gcp_payrollPayments', s.payrollPayments);
     saveState('gcp_motivationTeams', s.motivationTeams);
     saveState('gcp_motivationGoals', s.motivationGoals);
