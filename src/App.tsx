@@ -26,6 +26,7 @@ const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
 const MotivationTab = lazy(() => import('./components/MotivationTab'));
 const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsManager'));
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
+const AccountingExport = lazy(() => import('./components/AccountingExport'));
 const CrewScheduleCalendar = lazy(() => import('./components/CrewScheduleCalendar'));
 const MyScheduleStrip = lazy(() => import('./components/MyScheduleStrip'));
 const LeadPipeline = lazy(() => import('./components/LeadPipeline'));
@@ -281,7 +282,7 @@ export default function App() {
   const { coords, gpsError, isChecking, checkLocation, evaluateProjectGeofence } = useGeofencing();
 
   // App Navigation state
-  const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation' | 'prospects' | 'schedule'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation' | 'prospects' | 'schedule' | 'accounting'>('home');
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
   const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
   // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
@@ -4459,6 +4460,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </Suspense>
             )}
 
+            {/* -------------------- VIEW CONTAINER : EXPORT COMPTABLE -------------------- */}
+            {activeTab === 'accounting' && (
+              <Suspense fallback={<LazySectionFallback />}>
+                <AccountingExport />
+              </Suspense>
+            )}
+
             {/* -------------------- VIEW CONTAINER : REGLAGES (12 ONGLETS) -------------------- */}
             {activeTab === 'settings' && (
               <div id="view-settings-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
@@ -7012,7 +7020,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 { tab: 'commandes' as const, icon: '🚚', label: t.navShortOrders },
                 { tab: 'motivation' as const, icon: '🎯', label: t.navShortGoals },
                 { tab: 'prospects' as const, icon: '📇', label: t.navShortLeads },
-                { tab: 'schedule' as const, icon: '🗓️', label: t.navShortSchedule }
+                { tab: 'schedule' as const, icon: '🗓️', label: t.navShortSchedule },
+                { tab: 'accounting' as const, icon: '📤', label: t.navShortAccounting }
               ].map(item => (
                 <button
                   key={item.tab}
@@ -7105,7 +7114,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 <button
                   onClick={() => setShowMoreMenu(value => !value)}
                   className={`relative flex flex-col items-center gap-1 cursor-pointer transition ${
-                    showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings', 'prospects', 'schedule'].includes(activeTab)
+                    showMoreMenu || ['invoice', 'inventory', 'commandes', 'motivation', 'settings', 'prospects', 'schedule', 'accounting'].includes(activeTab)
                       ? 'text-orange-500 font-bold scale-105'
                       : 'text-gray-400 hover:text-white'
                   }`}
