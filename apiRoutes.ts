@@ -24,7 +24,7 @@ const KNOWN_TABLES = [
   'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders', 'supplier_order_items',
   'clients', 'documents', 'document_items', 'document_payments', 'payroll_entries', 'payroll_payments',
   'production_entries', 'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
-  'project_photos', 'change_orders', 'insurance_claims', 'leads', 'shift_assignments'
+  'project_photos', 'change_orders', 'insurance_claims', 'leads', 'shift_assignments', 'safety_records'
 ];
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,8 @@ const TABLE_READ_ROLES: Record<string, AppRole[]> = {
   payroll_entries: ALL_ROLES, payroll_payments: ALL_ROLES, production_entries: ALL_ROLES,
   weekly_goals: ALL_ROLES, motivation_teams: ALL_ROLES, motivation_goals: ALL_ROLES,
   hr_alerts: MANAGERS, expenses: OFFICE, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
-  insurance_claims: ALL_ROLES, leads: OFFICE, shift_assignments: ALL_ROLES
+  insurance_claims: ALL_ROLES, leads: OFFICE, shift_assignments: ALL_ROLES,
+  safety_records: ALL_ROLES
 };
 
 const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
@@ -63,7 +64,9 @@ const TABLE_WRITE_ROLES: Record<string, AppRole[]> = {
   hr_alerts: ALL_ROLES, expenses: ALL_ROLES, project_photos: ALL_ROLES, change_orders: ALL_ROLES,
   // leads : la prospection appartient au bureau
   // shift_assignments : chacun consulte son horaire, la gestion le bâtit
-  insurance_claims: MANAGERS, leads: MANAGERS, shift_assignments: MANAGERS
+  // safety_records : le terrain crée la fiche et collecte les signatures
+  insurance_claims: MANAGERS, leads: MANAGERS, shift_assignments: MANAGERS,
+  safety_records: ALL_ROLES
 };
 
 // Colonne "propriétaire" pour les contraintes de ligne des rôles non gestionnaires
@@ -699,6 +702,13 @@ export function registerApiRoutes(app: express.Express): void {
     return method === 'POST' || isManager(auth.role);
   }
 
+  // safety_records : le contremaître crée la fiche et fait signer l'équipe sur
+  // place (POST et PATCH pour la collecte des signatures) ; seule la gestion
+  // peut supprimer — un registre de sécurité ne s'efface pas depuis le chantier.
+  function allowSafetyMethod(auth: AuthContext, method: string): boolean {
+    return method === 'POST' || method === 'PATCH' || isManager(auth.role);
+  }
+
   // insurance_claims : dossier financier et contractuel. Le terrain le consulte
   // (il doit savoir ce qui est couvert), mais seule la gestion l'écrit.
   function allowInsuranceClaimMethod(auth: AuthContext, method: string): boolean {
@@ -718,6 +728,27 @@ export function registerApiRoutes(app: express.Express): void {
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
+      }
+      if (table === 'safety_records') {
+        payload.created_by = auth.userId;
+        payload.created_by_name = auth.name;
+        if (!String(payload.topic || '').trim()) {
+          return res.status(400).json({ error: 'Sujet de la fiche de sécurité manquant' });
+        }
+        if (!['toolbox', 'hazard'].includes(String(payload.type))) {
+          return res.status(400).json({ error: 'Type de fiche de sécurité invalide' });
+        }
+        if (!Array.isArray(payload.attendees) || payload.attendees.length === 0) {
+          return res.status(400).json({ error: 'Aucun travailleur présent déclaré' });
+        }
+        if (payload.hazards !== null && payload.hazards !== undefined && !Array.isArray(payload.hazards)) {
+          return res.status(400).json({ error: 'Liste de dangers invalide' });
+        }
+        const { data: proj } = await supabase
+          .from('projects').select('id, company_id').eq('id', payload.project_id).maybeSingle();
+        if (!proj || (proj.company_id && String(proj.company_id) !== auth.companyId)) {
+          return res.status(400).json({ error: 'Chantier inconnu pour cette compagnie' });
+        }
       }
       if (table === 'shift_assignments') {
         payload.created_by = auth.userId;
@@ -887,6 +918,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'safety_records' && !allowSafetyMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'PUT')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const payload = { ...req.body };
@@ -917,6 +949,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'expenses' && !allowExpenseMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'safety_records' && !allowSafetyMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'PATCH')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';
@@ -955,6 +988,7 @@ export function registerApiRoutes(app: express.Express): void {
     if (table === 'expenses' && !allowExpenseMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'project_photos' && !allowProjectPhotoMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'change_orders' && !allowChangeOrderMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
+    if (table === 'safety_records' && !allowSafetyMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     if (table === 'insurance_claims' && !allowInsuranceClaimMethod(auth, 'DELETE')) return res.status(403).json({ error: 'Non autorisé' });
     try {
       const idColumn = TABLE_ID_COLUMN[table] || 'id';

@@ -18,7 +18,7 @@ export const TABLES_WITH_COMPANY_ID = new Set([
   'app_users', 'projects', 'punches', 'catalog_items', 'suppliers', 'inventory_items',
   'supplier_orders', 'clients', 'documents', 'payroll_entries', 'payroll_payments',
   'production_entries', 'motivation_teams', 'motivation_goals', 'hr_alerts', 'expenses',
-  'project_photos', 'change_orders', 'insurance_claims', 'leads', 'shift_assignments'
+  'project_photos', 'change_orders', 'insurance_claims', 'leads', 'shift_assignments', 'safety_records'
 ]);
 
 // Tables dont la clé primaire n'est pas "id"
