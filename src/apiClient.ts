@@ -6,7 +6,7 @@
 import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
-  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim
+  GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead
 } from './types';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -520,6 +520,40 @@ export function rowToHRAlert(r: any): HRAlert {
   return {
     id: r.id, type: r.type, title: r.title || '', message: r.message || '', date: r.date || '',
     employeeId: r.employee_id || undefined, employeeName: r.employee_name || undefined, resolved: r.resolved || false
+  };
+}
+
+export function leadToRow(l: Lead, companyId?: string) {
+  return {
+    id: l.id, company_id: companyId, name: l.name, phone: l.phone || null,
+    email: l.email || null, address: l.address || null, source: l.source, status: l.status,
+    estimated_value: l.estimatedValue ?? null, next_follow_up: l.nextFollowUp || null,
+    notes: l.notes || null, lost_reason: l.lostReason || null, created_at: l.createdAt,
+    created_by: l.createdById || null, created_by_name: l.createdByName || null,
+    converted_client_id: l.convertedClientId || null,
+    converted_project_id: l.convertedProjectId || null
+  };
+}
+export function rowToLead(r: any): Lead {
+  const statuses = ['new', 'contacted', 'inspection', 'quoted', 'won', 'lost'];
+  const sources = ['referral', 'phone', 'website', 'door', 'repeat', 'insurance', 'other'];
+  return {
+    id: r.id,
+    name: r.name || '',
+    phone: r.phone || undefined,
+    email: r.email || undefined,
+    address: r.address || undefined,
+    source: (sources.includes(r.source) ? r.source : 'other') as Lead['source'],
+    status: (statuses.includes(r.status) ? r.status : 'new') as Lead['status'],
+    estimatedValue: r.estimated_value === null || r.estimated_value === undefined ? undefined : Number(r.estimated_value),
+    nextFollowUp: r.next_follow_up || undefined,
+    notes: r.notes || undefined,
+    lostReason: r.lost_reason || undefined,
+    createdAt: r.created_at || '',
+    createdById: r.created_by || undefined,
+    createdByName: r.created_by_name || undefined,
+    convertedClientId: r.converted_client_id || undefined,
+    convertedProjectId: r.converted_project_id || undefined
   };
 }
 

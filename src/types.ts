@@ -548,3 +548,32 @@ export interface InsuranceClaim {
   createdById?: string;       // imposé par le serveur
   createdByName?: string;
 }
+
+
+// ---------------------------------------------------------------------------
+// Prospects — le parcours AVANT le devis
+// ---------------------------------------------------------------------------
+// Appel entrant → contacté → inspection → soumission → vendu ou perdu. Le motif
+// de perte est la seule donnée qui permet d'améliorer le taux de conversion :
+// on le demande donc systématiquement quand un dossier est marqué perdu.
+export type LeadStatus = 'new' | 'contacted' | 'inspection' | 'quoted' | 'won' | 'lost';
+export type LeadSource = 'referral' | 'phone' | 'website' | 'door' | 'repeat' | 'insurance' | 'other';
+
+export interface Lead {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  source: LeadSource;
+  status: LeadStatus;
+  estimatedValue?: number;
+  nextFollowUp?: string;   // date de relance (AAAA-MM-JJ)
+  notes?: string;
+  lostReason?: string;
+  createdAt: string;
+  createdById?: string;    // imposé par le serveur
+  createdByName?: string;
+  convertedClientId?: string;
+  convertedProjectId?: string;
+}
