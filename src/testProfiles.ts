@@ -2,7 +2,11 @@ import type { Employee } from './types';
 
 // Jamais activable dans un bundle de production. Le jeu local doit être demandé
 // explicitement avec VITE_LOCAL_TEST_MODE=true sur un serveur Vite de développement.
-export const LOCAL_TEST_MODE = import.meta.env.DEV && import.meta.env.VITE_LOCAL_TEST_MODE === 'true';
+// `import.meta.env` n'existe pas lorsque les validateurs Node importent ce module.
+const viteEnv = (import.meta as ImportMeta & {
+  env?: { DEV?: boolean; VITE_LOCAL_TEST_MODE?: string };
+}).env;
+export const LOCAL_TEST_MODE = Boolean(viteEnv?.DEV && viteEnv.VITE_LOCAL_TEST_MODE === 'true');
 export const LOCAL_TEST_DATA_VERSION = '2026.07-test-3';
 
 function avatar(emoji: string, background: string): string {

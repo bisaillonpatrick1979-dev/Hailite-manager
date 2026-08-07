@@ -45,6 +45,7 @@ const UserPrivacyNotice = lazy(() => import('./components/UserPrivacyNotice'));
 const BusinessLogoField = lazy(() => import('./components/BusinessLogoField'));
 const SubcontractorInvoicePreview = lazy(() => import('./components/SubcontractorInvoicePreview'));
 const CompanyComplianceSettings = lazy(() => import('./components/CompanyComplianceSettings'));
+const DemoSandboxPanel = lazy(() => import('./components/DemoSandboxPanel'));
 import EmployeeAvatar from './components/EmployeeAvatar';
 import LiveCompensationPanel from './components/LiveCompensationPanel';
 import CompanyLogo from './components/CompanyLogo';
@@ -117,7 +118,8 @@ export default function App() {
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
     personalExpenses, addPersonalExpense, deletePersonalExpense,
-    hydrateCloud, setIsOnboarded
+    hydrateCloud, setIsOnboarded,
+    demoSandboxActive, demoSandboxSummary, resetDemoSandbox, deactivateDemoSandbox
   } = useAppStore();
 
   // Hydratation depuis Supabase au démarrage, puis rafraîchissement périodique.
@@ -186,6 +188,12 @@ export default function App() {
     ? 2
     : activeSettingsTab;
   const [statsMonth, setStatsMonth] = useState<string>('2026-06');
+  useEffect(() => {
+    if (!demoSandboxActive || !demoSandboxSummary) return;
+    setStatsMonth(demoSandboxSummary.latestStatsMonth);
+    setSyncFailure(null);
+    setCloudSyncing(false);
+  }, [demoSandboxActive, demoSandboxSummary]);
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [teamCalendarEmployeeId, setTeamCalendarEmployeeId] = useState<string>('');
   const [statsSubTab, setStatsSubTab] = useState<'analytics' | 'payroll'>('analytics');
@@ -1267,7 +1275,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   return (
     <div 
       id="main-scaffold-container"
-      className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 pt-16 flex flex-col relative select-none"
+      className={`min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 flex flex-col relative select-none ${demoSandboxActive ? 'pt-36 sm:pt-28' : 'pt-16'}`}
     >
       {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.07' && (
         <Suspense fallback={<LazySectionFallback />}>
@@ -1278,12 +1286,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           />
         </Suspense>
       )}
-      {cloudSyncing && (
+      {!demoSandboxActive && cloudSyncing && (
         <div className="fixed top-1 right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
           {t.cloudSyncing}
         </div>
       )}
-      {syncFailure && (
+      {!demoSandboxActive && syncFailure && (
         <div className="fixed top-16 left-0 right-0 z-[90] flex items-center justify-between gap-3 border-b border-red-500/40 bg-red-950/95 px-4 py-2 text-xs text-red-100 shadow-lg">
           <span>
             {currentLanguage === 'FR' ? 'Sauvegarde nuage échouée' : 'Cloud save failed'}
@@ -1370,6 +1378,37 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           )}
         </div>
       </nav>
+
+      {demoSandboxActive && (
+        <div className="fixed left-0 right-0 top-16 z-[39] flex min-h-12 flex-col items-center justify-between gap-2 border-b border-amber-300/40 bg-amber-950/95 px-4 py-2 text-center shadow-xl sm:flex-row sm:text-left">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-wider text-amber-200">
+              🧪 {currentLanguage === 'FR' ? 'Mode Démo 5 ans — données fictives' : '5-year Demo Mode — fictional data'}
+            </p>
+            <p className="text-[9px] text-amber-100/70">
+              {currentLanguage === 'FR'
+                ? `${demoSandboxSummary?.counts.totalRows.toLocaleString('fr-CA') || 0} enregistrements en mémoire · aucune écriture Supabase`
+                : `${demoSandboxSummary?.counts.totalRows.toLocaleString('en-CA') || 0} in-memory records · no Supabase writes`}
+            </p>
+          </div>
+          <div className="flex flex-none items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { void resetDemoSandbox(); }}
+              className="rounded-lg border border-amber-300/25 bg-amber-900/70 px-3 py-1.5 text-[9px] font-black uppercase text-amber-100 hover:bg-amber-800"
+            >
+              {currentLanguage === 'FR' ? 'Réinitialiser' : 'Reset'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void deactivateDemoSandbox().then(() => setActiveTab('home')); }}
+              className="rounded-lg bg-white px-3 py-1.5 text-[9px] font-black uppercase text-gray-950 hover:bg-gray-200"
+            >
+              {currentLanguage === 'FR' ? 'Retour aux vraies données' : 'Restore real data'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ----------------- LOGIN CANVAS (IF NOT CONNECTED) ----------------- */}
       {!activeEmployee ? (
@@ -4260,7 +4299,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </Suspense>
             )}
 
-            {/* -------------------- VIEW CONTAINER : REGLAGES (12 ONGLETS) -------------------- */}
+            {/* -------------------- VIEW CONTAINER : REGLAGES (13 ONGLETS) -------------------- */}
             {activeTab === 'settings' && (
               <div id="view-settings-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
                 <div>
@@ -4288,7 +4327,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       { name: t.setTabComptabilite, idx: 9, adminOnly: true },
                       { name: t.setTabGeofencing, idx: 10, adminOnly: true },
                       { name: t.setTabRH, idx: 11, badge: totalOpenAlerts, adminOnly: true },
-                      { name: t.setTabAI, idx: 12, adminOnly: true }
+                      { name: t.setTabAI, idx: 12, adminOnly: true },
+                      { name: currentLanguage === 'FR' ? '🧪 Démo 5 ans' : '🧪 5-year demo', idx: 13, adminOnly: true }
                     ].filter(tab => activeEmployee.role === 'admin' || !tab.adminOnly).map(tab => (
                       <button
                         key={tab.idx}
@@ -6535,6 +6575,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           </p>
                         </div>
                       </div>
+                    )}
+
+                    {visibleSettingsTab === 13 && (
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <DemoSandboxPanel onNavigate={destination => setActiveTab(destination)} />
+                      </Suspense>
                     )}
 
                   </div>
