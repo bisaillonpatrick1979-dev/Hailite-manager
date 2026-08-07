@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 const source = (path: string) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+const hardeningMigration = async () => {
+  const files = await readdir(new URL('../supabase/migrations/', import.meta.url));
+  const matches = files.filter((file) => file.endsWith('_harden_auth_and_tenant_isolation.sql'));
+  assert.equal(matches.length, 1, 'la migration de durcissement doit être présente une seule fois');
+  return source(`supabase/migrations/${matches[0]}`);
+};
 
 test('aucun repli de connexion locale ni jeton localStorage ne réapparaît', async () => {
   const [store, apiClient, app, auth, routes] = await Promise.all([
@@ -23,7 +29,7 @@ test('toutes les tables enfants auditées portent company_id', async () => {
   const [db, routes, migration] = await Promise.all([
     source('db.ts'),
     source('apiRoutes.ts'),
-    source('supabase/migrations/20260806190000_harden_auth_and_tenant_isolation.sql')
+    hardeningMigration()
   ]);
   for (const table of [
     'project_tasks', 'project_tools', 'project_assignments', 'supplier_order_items',
@@ -39,14 +45,14 @@ test('toutes les tables enfants auditées portent company_id', async () => {
 });
 
 test('la migration hache les NIP et ferme la fonction SECURITY DEFINER publique', async () => {
-  const migration = await source('supabase/migrations/20260806190000_harden_auth_and_tenant_isolation.sql');
+  const migration = await hardeningMigration();
   assert.match(migration, /extensions\.crypt\(/);
   assert.match(migration, /where access_code_hash ~ '\^\[0-9\]\{4\}\$'/);
   assert.match(migration, /revoke all on function public\.rls_auto_enable\(\) from public, anon, authenticated/);
 });
 
 test('le remplacement des enfants est transactionnel et conserve les taux des assignations', async () => {
-  const migration = await source('supabase/migrations/20260806190000_harden_auth_and_tenant_isolation.sql');
+  const migration = await hardeningMigration();
   assert.match(migration, /create or replace function public\.replace_project_children/);
   assert.match(migration, /raise exception 'invalid_task_assignee'/);
   assert.match(migration, /where not exists \([\s\S]*public\.project_assignments existing/);
