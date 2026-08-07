@@ -18,6 +18,7 @@ import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
+import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
@@ -329,6 +330,7 @@ export default function App() {
   // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
   const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
   const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const aiMessageInputRef = useAutoResizeTextarea(aiMessage, 192);
   // Dictée vocale (Web Speech API) et lecture des réponses à voix haute
   const [isListening, setIsListening] = useState<boolean>(false);
   // La lecture vocale est ACTIVE par défaut : l'assistant répond à voix haute
@@ -6660,7 +6662,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   key={idx} 
                   className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className={`p-3 rounded-xl text-xs max-w-[85%] leading-relaxed ${
+                  <div className={`p-3 rounded-xl text-xs max-w-[85%] leading-relaxed whitespace-pre-wrap break-words ${
                     chat.role === 'user'
                       ? 'bg-orange-600 text-white rounded-br-none'
                       : 'bg-gray-850 text-gray-200 rounded-bl-none'
@@ -6731,7 +6733,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             )}
 
             {/* Input message form */}
-            <div className="p-3 border-t border-gray-800 bg-gray-900 flex items-center gap-2">
+            <div className="p-3 border-t border-gray-800 bg-gray-900 flex items-end gap-2">
               <input
                 ref={aiPhotoInputRef}
                 type="file"
@@ -6757,13 +6759,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               >
                 <Mic className="w-4 h-4" />
               </button>
-              <input
-                type="text"
+              <textarea
+                ref={aiMessageInputRef}
+                rows={1}
                 placeholder={isListening ? t.speakNow : t.aiPlaceholder}
                 value={aiMessage}
                 onChange={e => setAiMessage(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSendAiMessage()}
-                className="flex-1 p-2 bg-gray-950 rounded border border-gray-800 text-xs text-white text-sans text-left min-w-0"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void handleSendAiMessage();
+                  }
+                }}
+                aria-label={t.aiPlaceholder}
+                className="flex-1 min-w-0 min-h-10 max-h-48 resize-none overflow-y-hidden p-2 bg-gray-950 rounded border border-gray-800 text-xs leading-relaxed text-white text-sans text-left"
               />
               <button
                 onClick={handleSendAiMessage}

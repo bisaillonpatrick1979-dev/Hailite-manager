@@ -16,6 +16,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
+import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { Camera, Check, Download, LogOut, Mic, Send, Volume2, VolumeX, X } from 'lucide-react';
 
 interface ChatEntry {
@@ -66,6 +67,7 @@ export default function AssistantApp() {
   const [busy, setBusy] = useState(false);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useAutoResizeTextarea(message, 224);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const dictatedTextRef = useRef('');
@@ -615,7 +617,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           </div>
         )}
         {history.map((entry, i) => (
-          <div key={i} className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap ${entry.role === 'user' ? 'self-end bg-orange-600 text-white' : 'self-start bg-gray-900 border border-gray-800 text-gray-100'}`}>
+          <div key={i} className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words ${entry.role === 'user' ? 'self-end bg-orange-600 text-white' : 'self-start bg-gray-900 border border-gray-800 text-gray-100'}`}>
             {entry.imagePreviewUrl && <img src={entry.imagePreviewUrl} alt="" className="rounded-lg mb-2 max-h-44 object-contain" />}
             {entry.text}
             {entry.sourceLabel && <div className="text-[9px] text-gray-500 font-mono mt-1.5">{entry.sourceLabel}</div>}
@@ -683,13 +685,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         >
           <Mic className={`w-5 h-5 ${isListening ? 'animate-pulse' : ''}`} />
         </button>
-        <input
-          type="text"
+        <textarea
+          ref={messageInputRef}
+          rows={1}
           value={message}
           onChange={e => setMessage(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && sendMessage()}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void sendMessage();
+            }
+          }}
           placeholder={isListening ? (isFR ? 'Je vous écoute…' : 'Listening…') : (isFR ? 'Votre question…' : 'Your question…')}
-          className="flex-1 min-w-0 min-h-12 px-4 rounded-xl bg-gray-950 border border-gray-800 text-sm"
+          aria-label={isFR ? 'Message à envoyer à l’assistant' : 'Message to send to the assistant'}
+          className="flex-1 min-w-0 min-h-12 max-h-56 resize-none overflow-y-hidden px-4 py-3 rounded-xl bg-gray-950 border border-gray-800 text-sm leading-6"
         />
         <button
           type="button"
