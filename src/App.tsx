@@ -330,7 +330,7 @@ export default function App() {
   // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
   const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
   const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
-  const aiMessageInputRef = useAutoResizeTextarea(aiMessage, 192);
+  const aiMessageInputRef = useAutoResizeTextarea(aiMessage, 320);
   // Dictée vocale (Web Speech API) et lecture des réponses à voix haute
   const [isListening, setIsListening] = useState<boolean>(false);
   // La lecture vocale est ACTIVE par défaut : l'assistant répond à voix haute
@@ -6772,7 +6772,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   }
                 }}
                 aria-label={t.aiPlaceholder}
-                className="flex-1 min-w-0 min-h-10 max-h-48 resize-none overflow-y-hidden p-2 bg-gray-950 rounded border border-gray-800 text-xs leading-relaxed text-white text-sans text-left"
+                className="flex-1 min-w-0 min-h-10 max-h-80 resize-none overflow-y-hidden p-2 bg-gray-950 rounded border border-gray-800 text-xs leading-relaxed text-white text-sans text-left"
               />
               <button
                 onClick={handleSendAiMessage}
