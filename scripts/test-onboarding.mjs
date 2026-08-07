@@ -11,6 +11,12 @@ const result = {
   rootHasContent: false,
   bodyIsNotBlank: false,
   hookErrorDetected: false,
+  demoSettingsVisible: false,
+  demoActivated: false,
+  demoCountsValid: false,
+  demoStatsVisible: false,
+  demoRealStateRestored: false,
+  demoCloudRequests: [],
   consoleErrors: [],
   pageErrors: [],
   passed: false
@@ -107,6 +113,78 @@ try {
   result.loginVisibleWithoutReload = await page.$eval('#login-container-wrapper', element => Boolean(element.offsetWidth || element.offsetHeight));
   result.rootHasContent = await page.$eval('#root', element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
   result.bodyIsNotBlank = await page.$eval('body', element => (element.innerText || '').trim().length > 100);
+
+  // Le test importe le store uniquement depuis le serveur Vite de validation.
+  // Il établit une session admin fictive en mémoire sans ajouter le moindre
+  // contournement d'authentification au bundle de production.
+  const realStateBeforeDemo = await page.evaluate(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    const admin = state.employees.find(employee => employee.role === 'admin');
+    if (!admin) throw new Error('Administrateur local de validation introuvable');
+    useAppStore.setState({
+      activeEmployee: {
+        ...admin,
+        privacyNoticeVersion: '2026.07',
+        privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
+        locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
+      }
+    });
+    return { projectIds: state.projects.map(project => project.id), employeeIds: state.employees.map(employee => employee.id) };
+  });
+
+  await waitForText('OPTIONS');
+  await clickButton('OPTIONS');
+  await waitForText('Démo 5 ans');
+  await clickButton('Démo 5 ans');
+  await waitForText('Mode Démo — cinq ans de données');
+  result.demoSettingsVisible = true;
+
+  const demoRequests = [];
+  page.on('request', request => {
+    const url = request.url();
+    if (/\/api\/(db|hydrate|projects\/)/.test(url)) demoRequests.push(`${request.method()} ${url}`);
+  });
+  await checkLabel('Je comprends que toutes les modifications');
+  await clickButton('Activer le Mode Démo 5 ans');
+  await waitForText('Mode Démo 5 ans — données fictives');
+  result.demoActivated = true;
+
+  const demoState = await page.evaluate(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    return {
+      active: state.demoSandboxActive,
+      totalRows: state.demoSandboxSummary?.counts.totalRows || 0,
+      projects: state.projects.length,
+      punches: state.punchSessions.length,
+      documents: state.documents.length,
+      photos: state.projectPhotos.length,
+      safety: state.safetyRecords.length
+    };
+  });
+  result.demoCounts = demoState;
+  result.demoCountsValid = Boolean(
+    demoState.active && demoState.totalRows >= 6500 && demoState.projects >= 100 &&
+    demoState.punches >= 3000 && demoState.documents >= 280 && demoState.photos >= 280 && demoState.safety >= 180
+  );
+
+  await clickButton('Stats');
+  await page.waitForSelector('#view-stats-content', { visible: true, timeout: 30000 });
+  result.demoStatsVisible = await page.$eval('#view-stats-content', element => (element.innerText || '').trim().length > 500);
+
+  await clickButton('Retour aux vraies données');
+  await page.waitForFunction(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    return !useAppStore.getState().demoSandboxActive;
+  }, { timeout: 30000 });
+  const realStateAfterDemo = await page.evaluate(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    return { projectIds: state.projects.map(project => project.id), employeeIds: state.employees.map(employee => employee.id) };
+  });
+  result.demoRealStateRestored = JSON.stringify(realStateAfterDemo) === JSON.stringify(realStateBeforeDemo);
+  result.demoCloudRequests = demoRequests;
 } catch (error) {
   result.testError = String(error?.stack || error);
 } finally {
@@ -118,6 +196,8 @@ result.hookErrorDetected = [...result.consoleErrors, ...result.pageErrors]
 result.passed = Boolean(
   result.onboardingVisible && result.clickedFinish && result.mainVisibleWithoutReload &&
   result.loginVisibleWithoutReload && result.rootHasContent && result.bodyIsNotBlank &&
+  result.demoSettingsVisible && result.demoActivated && result.demoCountsValid &&
+  result.demoStatsVisible && result.demoRealStateRestored && result.demoCloudRequests.length === 0 &&
   !result.hookErrorDetected && !result.testError
 );
 
