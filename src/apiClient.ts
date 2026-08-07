@@ -9,7 +9,7 @@ import type {
   GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead,
   ShiftAssignment, SafetyRecord
 } from './types';
-import { LOCAL_TEST_MODE } from './testProfiles';
+import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
 // identifiants "prefix-Date.now()" ne sont pas des UUID valides et feraient échouer
@@ -114,7 +114,7 @@ let cloudSyncAllowed = (() => {
 })();
 export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed && !demoSandboxIsolation; }
 export function setCloudSyncAllowed(allowed: boolean) {
-  cloudSyncAllowed = localTestModeEnabled() ? false : allowed;
+  cloudSyncAllowed = localTestModeEnabled() && !LOCAL_CLOUD_SYNC_TEST_MODE ? false : allowed;
   if (!cloudSyncAllowed || demoSandboxIsolation) cloudEnabled = false;
 }
 export function isCloudSyncAllowed() { return cloudSyncAllowed && !demoSandboxIsolation; }
