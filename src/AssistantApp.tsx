@@ -67,7 +67,7 @@ export default function AssistantApp() {
   const [busy, setBusy] = useState(false);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const messageInputRef = useAutoResizeTextarea(message, 224);
+  const messageInputRef = useAutoResizeTextarea(message, 320);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const dictatedTextRef = useRef('');
@@ -698,7 +698,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           }}
           placeholder={isListening ? (isFR ? 'Je vous écoute…' : 'Listening…') : (isFR ? 'Votre question…' : 'Your question…')}
           aria-label={isFR ? 'Message à envoyer à l’assistant' : 'Message to send to the assistant'}
-          className="flex-1 min-w-0 min-h-12 max-h-56 resize-none overflow-y-hidden px-4 py-3 rounded-xl bg-gray-950 border border-gray-800 text-sm leading-6"
+          className="flex-1 min-w-0 min-h-12 max-h-80 resize-none overflow-y-hidden px-4 py-3 rounded-xl bg-gray-950 border border-gray-800 text-sm leading-6"
         />
         <button
           type="button"
