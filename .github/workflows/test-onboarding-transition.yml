@@ -47,7 +47,7 @@ jobs:
         run: node scripts/test-onboarding.mjs
       - name: Publier le rapport
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: onboarding-transition-result
           path: onboarding-transition-test-result.json
