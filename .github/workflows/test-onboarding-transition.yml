@@ -24,7 +24,7 @@ jobs:
       - run: npm ci
       - name: Installer Chrome stable
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: stable
       - name: Démarrer l’application de test
