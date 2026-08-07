@@ -21,7 +21,7 @@ jobs:
       AI_TEST_USER_NAME: ${{ secrets.AI_TEST_USER_NAME }}
       AI_TEST_PIN: ${{ secrets.AI_TEST_PIN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tester connexion, variables et fournisseurs
         run: |
           python3 - <<'PY'
