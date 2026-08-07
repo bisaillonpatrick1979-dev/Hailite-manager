@@ -133,8 +133,8 @@ try {
     return { projectIds: state.projects.map(project => project.id), employeeIds: state.employees.map(employee => employee.id) };
   });
 
-  await waitForText('OPTIONS');
-  await clickButton('OPTIONS');
+  await waitForText('Options');
+  await clickButton('Options');
   await waitForText('Démo 5 ans');
   await clickButton('Démo 5 ans');
   await waitForText('Mode Démo — cinq ans de données');
