@@ -41,7 +41,7 @@
     "eslint": "^9.33.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^16.3.0",
-    "puppeteer-core": "^24.15.0",
+    "puppeteer-core": "^25.4.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
