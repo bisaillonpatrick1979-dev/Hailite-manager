@@ -108,7 +108,7 @@ export default function App() {
     employees, projects, punchSessions, invoices, catalogue, inventory,
     orders, clients, companyInfo, hrAlerts, activeEmployee, currentLanguage,
     currentTheme, login, logout, setTheme, setLanguage, addEmployee, updateEmployee,
-    deleteEmployee, addProject, updateProject, deleteProject,
+    acknowledgePrivacyNotice, deleteEmployee, addProject, updateProject, deleteProject,
     addInventoryItem, updateInventoryItem,
     deleteInventoryItem, addSupplierOrder, updateSupplierOrder, addClient, updateClient,
     deleteClient, updateCompanyInfo, resolveHRAlert, startPunchSession, pausePunchSession,
@@ -148,6 +148,7 @@ export default function App() {
     const onSyncStatus = (event: Event) => {
       const detail = (event as CustomEvent<CloudSyncStatusDetail>).detail;
       if (detail?.status === 'error') setSyncFailure(detail);
+      if (detail?.status === 'synced') setSyncFailure(null);
     };
     window.addEventListener('gcp:sync-status', onSyncStatus);
     return () => window.removeEventListener('gcp:sync-status', onSyncStatus);
@@ -1269,10 +1270,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.07' && (
         <Suspense fallback={<LazySectionFallback />}>
           <UserPrivacyNotice
-            employee={activeEmployee}
             companyInfo={companyInfo}
             currentLanguage={currentLanguage}
-            onAccept={updateEmployee}
+            onAccept={acknowledgePrivacyNotice}
           />
         </Suspense>
       )}

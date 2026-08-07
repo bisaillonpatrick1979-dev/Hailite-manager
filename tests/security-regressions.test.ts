@@ -79,3 +79,28 @@ test('les workflows échouent réellement et ne publient aucun NIP de production
   assert.doesNotMatch(onboardingWorkflow, /\/tmp\/test-onboarding\.mjs/);
   assert.match(onboardingWorkflow, /node scripts\/test-onboarding\.mjs/);
 });
+
+test('la confirmation de confidentialité est limitée au compte de la session', async () => {
+  const [routes, apiClient, store, app, notice] = await Promise.all([
+    source('apiRoutes.ts'),
+    source('src/apiClient.ts'),
+    source('src/store.ts'),
+    source('src/App.tsx'),
+    source('src/components/UserPrivacyNotice.tsx')
+  ]);
+
+  assert.match(routes, /app\.post\('\/api\/auth\/privacy-notice', requireAuth/);
+  assert.match(routes, /\.eq\('id', auth\.userId\)/);
+  assert.match(routes, /\.eq\('company_id', auth\.companyId\)/);
+  assert.match(routes, /privacy_notice_version: USER_PRIVACY_NOTICE_VERSION/);
+  assert.match(routes, /privacy_notice_acknowledged_at: acknowledgedAt/);
+  assert.match(routes, /location_notice_acknowledged_at: acknowledgedAt/);
+  assert.doesNotMatch(routes, /privacy-notice'[\s\S]{0,1600}req\.body/);
+
+  assert.match(apiClient, /fetch\('\/api\/auth\/privacy-notice'/);
+  assert.match(store, /acknowledgePrivacyNotice: async \(\)/);
+  assert.match(app, /onAccept=\{acknowledgePrivacyNotice\}/);
+  assert.doesNotMatch(app, /onAccept=\{updateEmployee\}/);
+  assert.match(notice, /await onAccept\(\)/);
+  assert.match(notice, /elles ne seront pas considérées comme acceptées avant une sauvegarde réussie/);
+});

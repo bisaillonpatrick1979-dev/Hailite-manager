@@ -125,6 +125,7 @@ const canRead = (table: string, role: AppRole) => (TABLE_READ_ROLES[table] || AD
 const canWrite = (table: string, role: AppRole) => (TABLE_WRITE_ROLES[table] || ADMIN_ONLY).includes(role);
 const protectedRuntime = supabaseEnabled || process.env.NODE_ENV === 'production';
 const PROJECT_MEDIA_BUCKET = process.env.SUPABASE_PROJECT_MEDIA_BUCKET || 'project-media';
+const USER_PRIVACY_NOTICE_VERSION = '2026.07';
 
 const EMPLOYEE_PROJECT_TABLES = new Set([
   'project_tasks', 'project_tools', 'project_assignments', 'project_photos',
@@ -714,6 +715,46 @@ export function registerApiRoutes(app: express.Express): void {
   app.get('/api/auth/session', requireAuth, (req: AuthedRequest, res) => {
     const auth = req.auth as AuthContext;
     return res.json({ user: { id: auth.userId, name: auth.name, role: auth.role } });
+  });
+
+  // Un employé doit pouvoir confirmer l'avis qui lui est présenté sans pour
+  // autant recevoir le droit général de modifier app_users (rôle, salaire,
+  // NIP, coordonnées, etc.). L'identité, le tenant, la version et les heures
+  // proviennent exclusivement de la session et du serveur.
+  app.post('/api/auth/privacy-notice', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.status(503).json({ error: 'Base de données non configurée' });
+    }
+    const auth = req.auth as AuthContext;
+    const acknowledgedAt = new Date().toISOString();
+    try {
+      const { data, error } = await supabase
+        .from('app_users')
+        .update({
+          privacy_notice_version: USER_PRIVACY_NOTICE_VERSION,
+          privacy_notice_acknowledged_at: acknowledgedAt,
+          location_notice_acknowledged_at: acknowledgedAt
+        })
+        .eq('id', auth.userId)
+        .eq('company_id', auth.companyId)
+        .eq('is_active', true)
+        .select('privacy_notice_version, privacy_notice_acknowledged_at, location_notice_acknowledged_at')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return res.status(404).json({ error: 'Compte actif introuvable' });
+
+      logAudit(auth, 'privacy_notice_acknowledged', 'app_users', auth.userId, {
+        version: USER_PRIVACY_NOTICE_VERSION
+      });
+      return res.json({
+        privacyNoticeVersion: data.privacy_notice_version,
+        privacyNoticeAcknowledgedAt: data.privacy_notice_acknowledged_at,
+        locationNoticeAcknowledgedAt: data.location_notice_acknowledged_at
+      });
+    } catch (error: any) {
+      console.error('Error on /api/auth/privacy-notice:', error);
+      return res.status(500).json({ error: 'Les confirmations n’ont pas pu être enregistrées' });
+    }
   });
 
   // Annuaire minimal pour l'écran de connexion (avant authentification) :
