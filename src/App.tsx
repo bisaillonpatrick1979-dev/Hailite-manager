@@ -18,6 +18,7 @@ import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { useGeofencing } from './hooks/useGeofencing';
+import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
@@ -329,6 +330,7 @@ export default function App() {
   // Photo ou document PDF joint au prochain message IA (image redimensionnée côté client)
   const [aiImageAttachment, setAiImageAttachment] = useState<{ dataUrl: string; mimeType: string; name?: string } | null>(null);
   const aiPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const aiMessageInputRef = useAutoResizeTextarea(aiMessage, 192);
   // Dictée vocale (Web Speech API) et lecture des réponses à voix haute
   const [isListening, setIsListening] = useState<boolean>(false);
   // La lecture vocale est ACTIVE par défaut : l'assistant répond à voix haute
@@ -6660,7 +6662,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   key={idx} 
                   className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className={`p-3 rounded-xl text-xs max-w-[85%] leading-relaxed ${
+                  <div className={`p-3 rounded-xl text-xs max-w-[85%] leading-relaxed whitespace-pre-wrap break-words ${
                     chat.role === 'user'
                       ? 'bg-orange-600 text-white rounded-br-none'
                       : 'bg-gray-850 text-gray-200 rounded-bl-none'
@@ -6731,7 +6733,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             )}
 
             {/* Input message form */}
-            <div className="p-3 border-t border-gray-800 bg-gray-900 flex items-center gap-2">
+            <div className="p-3 border-t border-gray-800 bg-gray-900 flex items-end gap-2">
               <input
                 ref={aiPhotoInputRef}
                 type="file"
@@ -6757,13 +6759,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               >
                 <Mic className="w-4 h-4" />
               </button>
-              <input
-                type="text"
+              <textarea
+                ref={aiMessageInputRef}
+                rows={1}
                 placeholder={isListening ? t.speakNow : t.aiPlaceholder}
                 value={aiMessage}
                 onChange={e => setAiMessage(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSendAiMessage()}
-                className="flex-1 p-2 bg-gray-950 rounded border border-gray-800 text-xs text-white text-sans text-left min-w-0"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    void handleSendAiMessage();
+                  }
+                }}
+                aria-label={t.aiPlaceholder}
+                className="flex-1 min-w-0 min-h-10 max-h-48 resize-none overflow-y-hidden p-2 bg-gray-950 rounded border border-gray-800 text-xs leading-relaxed text-white text-sans text-left"
               />
               <button
                 onClick={handleSendAiMessage}
@@ -6989,502 +6998,3 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   className={`flex flex-col items-center gap-1 cursor-pointer transition ${
                     activeTab === 'stats' && statsSubTab === 'payroll' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
-                >
-                  <span className="text-2xl">💵</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navEmpPaye}</span>
-                </button>
-
-                <button
-                  onClick={() => { setActiveTab('settings'); setActiveSettingsTab(2); }} // switches directly to Themes/language presets
-                  className={`flex flex-col items-center gap-1 cursor-pointer transition ${
-                    activeTab === 'settings' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="text-2xl">⚙️</span>
-                  <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navEmpSettings}</span>
-                </button>
-              </>
-            )}
-          </div>
-        </nav>
-      )}
-
-
-      {/* -------------------- MODAL : DÉPENSE DE CHANTIER (PHOTO DE REÇU) -------------------- */}
-      {showExpenseModal && activeEmployee && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4 my-8">
-            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
-              <h4 className="text-sm font-black text-white uppercase tracking-wider">
-                {t.expModalTitle}
-              </h4>
-              <button
-                onClick={() => { setShowExpenseModal(false); setExpensePhoto(null); }}
-                className="text-gray-500 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Photo du reçu / de l'article */}
-            <div className="space-y-2">
-              <label className="text-[10px] text-gray-500 font-mono uppercase">{t.expPhotoLabel}</label>
-              <input
-                ref={expensePhotoInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={handleExpensePhotoSelected}
-              />
-              {expensePhoto ? (
-                <div className="space-y-2">
-                  <img src={expensePhoto} alt={t.expReceiptAlt} className="w-full max-h-48 object-contain rounded-xl border border-gray-800 bg-gray-950" />
-                  <button
-                    onClick={() => expensePhotoInputRef.current?.click()}
-                    className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg transition cursor-pointer"
-                  >
-                    {t.expRetakePhoto}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => expensePhotoInputRef.current?.click()}
-                  className="w-full py-6 bg-gray-950 hover:bg-gray-900 border-2 border-dashed border-gray-700 hover:border-orange-500/50 text-gray-300 text-sm font-bold rounded-xl transition cursor-pointer"
-                >
-                  {t.expTakePhoto}
-                </button>
-              )}
-            </div>
-
-            {/* Description + montant + catégorie */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="sm:col-span-2">
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.descriptionLabel}</label>
-                <input
-                  type="text"
-                  placeholder={t.expDescPh}
-                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs text-white"
-                  value={expenseDesc}
-                  onChange={(e) => setExpenseDesc(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.expAmountLabel}</label>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs font-mono font-bold text-white"
-                  value={expenseAmount}
-                  onChange={(e) => setExpenseAmount(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.categoryLabel}</label>
-                <select
-                  className="w-full mt-1.5 p-2.5 bg-gray-900 rounded border border-gray-850 text-xs text-white cursor-pointer"
-                  value={expenseCategory}
-                  onChange={(e) => setExpenseCategory(e.target.value as any)}
-                >
-                  <option value="tools">{t.catTools}</option>
-                  <option value="materials">{t.catMaterials}</option>
-                  <option value="fuel">{t.catFuel}</option>
-                  <option value="other">{t.catOther}</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Choix de destination : compagnie (remboursable) ou personnel */}
-            <div className="space-y-2 pt-2 border-t border-gray-850">
-              <span className="text-[10px] text-orange-500 font-mono uppercase font-bold block">{t.expDestQuestion}</span>
-              <button
-                onClick={() => submitFieldExpense('company')}
-                className="w-full p-3.5 bg-orange-600 hover:bg-orange-500 rounded-xl text-left transition cursor-pointer"
-              >
-                <span className="text-sm font-black text-white block">{t.expDestCompany}</span>
-                <span className="text-[10px] text-orange-100/80 block mt-0.5">{t.expDestCompanyHint}</span>
-              </button>
-              <button
-                onClick={() => submitFieldExpense('personal')}
-                className="w-full p-3.5 bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-xl text-left transition cursor-pointer"
-              >
-                <span className="text-sm font-black text-gray-200 block">{t.expDestPersonal}</span>
-                <span className="text-[10px] text-gray-500 block mt-0.5">{t.expDestPersonalHint}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* -------------------- MODAL : PUNCH IN START -------------------- */}
-      {showPunchInModal && activeEmployee && (
-        <div id="punchin-modal-container" className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
-              <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
-                🔨 {t.modalPunchInTitle}
-              </h4>
-              <button 
-                onClick={() => setShowPunchInModal(false)}
-                className="text-gray-500 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {/* Proximity / Geofencing Warning */}
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded text-xs leading-relaxed flex items-start gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                <p>
-                  {t.geofenceWarning}
-                </p>
-              </div>
-
-              {/* Select Project */}
-              <div>
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.modalSelectProject}</label>
-                <select
-                  value={homePunchProject}
-                  onChange={e => setHomePunchProject(e.target.value)}
-                  className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs text-white"
-                >
-                  <option value="">{t.selectSiteOption}</option>
-                  {(activeEmployee.role === 'admin' ? projects : projects.filter(p => p.assignedEmployees.includes(activeEmployee.id))).map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Select Tarification Mode */}
-              <div>
-                <label className="text-[10px] text-gray-500 font-mono uppercase">{t.modalPayMode}</label>
-                <div className="grid grid-cols-3 gap-2 mt-1.5 text-[10px] uppercase font-bold text-center">
-                  {[
-                    { mode: 'horaire', label: t.payModeHourly },
-                    { mode: 'surface', label: t.payModeSurface },
-                    { mode: 'forfait', label: t.payModeFixed }
-                  ].map(option => (
-                    <button
-                      key={option.mode}
-                      type="button"
-                      onClick={() => setHomePayMode(option.mode as any)}
-                      className={`p-2 py-2.5 rounded border cursor-pointer transition ${
-                        homePayMode === option.mode 
-                          ? 'bg-orange-600 border-orange-500 text-white font-black' 
-                          : 'bg-gray-850 border-gray-800 text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Le montant demandé dépend du mode de rémunération. */}
-              {homePayMode !== 'surface' ? (
-                <div className="rounded-xl border border-gray-800 bg-gray-950/55 p-3">
-                  <label className="text-[10px] text-gray-400 font-mono uppercase font-black">
-                    {homePayMode === 'horaire'
-                      ? (currentLanguage === 'FR' ? 'Taux horaire confirmé ($/h)' : 'Confirmed hourly rate ($/h)')
-                      : (currentLanguage === 'FR' ? 'Montant total du forfait ($)' : 'Total fixed job amount ($)')}
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={homeRateCustom || ''}
-                    onChange={e => setHomeRateCustom(Number(e.target.value))}
-                    className="w-full mt-2 p-3 bg-gray-900 rounded-xl border border-gray-700 text-lg font-mono font-black text-amber-300 text-center"
-                  />
-                  <p className="mt-2 text-[10px] leading-relaxed text-gray-500">
-                    {homePayMode === 'horaire'
-                      ? (currentLanguage === 'FR' ? 'Le compteur d’argent augmentera à chaque seconde selon ce taux.' : 'The money counter will increase every second using this rate.')
-                      : (currentLanguage === 'FR' ? 'Le rendement horaire restera à 0 pendant la première heure, puis le forfait sera divisé par le temps réellement travaillé.' : 'Hourly yield stays at 0 during the first hour, then the fixed amount is divided by actual worked time.')}
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-[11px] leading-relaxed text-blue-200">
-                  {currentLanguage === 'FR'
-                    ? 'Aucun faux montant ne sera affiché pendant la journée. Au Punch Out, vous pourrez déclarer plusieurs produits, leurs quantités et leurs prix; le total et le rendement horaire seront calculés automatiquement.'
-                    : 'No estimated amount is shown during the day. At Punch Out, declare multiple products, quantities and prices; total and hourly yield are calculated automatically.'}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-3 border-t border-gray-850">
-              <button 
-                onClick={() => setShowPunchInModal(false)}
-                className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
-              >
-                {t.modalCancelBtn}
-              </button>
-              <button 
-                onClick={handlePunchInStart}
-                disabled={!homePunchProject || (homePayMode !== 'surface' && homeRateCustom <= 0)}
-                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-40"
-              >
-                {t.modalConfirmBtn}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-      {/* -------------------- MODAL : PUNCH OUT CONFIRMATION (WITH MATERIALS INPUT FOR PIECE/SURFACE) -------------------- */}
-      {showPunchOutModal && activeEmployee && activePunchSession && (
-        <div id="punchout-modal-container" className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
-              <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
-                ⏹️ {t.modalPunchOutTitle}
-              </h4>
-              <button 
-                onClick={() => setShowPunchOutModal(false)}
-                className="text-gray-500 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-xs text-gray-300 leading-normal">
-                {t.modalPunchOutCongrats} {t.verifyTotalsAt} <strong>{activePunchSession.projectName}</strong>.
-              </p>
-
-              <div className="p-3 bg-gray-900 rounded-lg space-y-1 text-xs border border-gray-850">
-                <div className="flex justify-between text-gray-400">
-                  <span>{t.activeSiteLabel}</span>
-                  <span className="font-bold text-white">{activePunchSession.projectName}</span>
-                </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>{t.startTimeLabel}</span>
-                  <span className="font-mono">{new Date(activePunchSession.startTime).toLocaleTimeString(dateLocale)}</span>
-                </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>{t.cumulatedDuration}</span>
-                  <span className="font-bold text-orange-500 font-mono">{timerDisplay}</span>
-                </div>
-              </div>
-
-              {/* Mode Surface SPECIFIC materials reports input */}
-              {activePunchSession.payMode === 'surface' && (
-                <div className="space-y-3 border-t border-gray-850 pt-3">
-                  <label className="text-[10px] text-orange-500 font-mono uppercase tracking-wide font-bold">
-                    {t.modalWorkSurfaceMaterials}
-                  </label>
-
-                  <div className="space-y-2">
-                    {/* Catalog Material choices quick click */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
-                      {catalogue.map(catItem => {
-                        const unitLabel = unitLabels[catItem.unit || 'pi2'];
-                        return (
-                          <button
-                            key={catItem.id}
-                            type="button"
-                            onClick={() => handleAddMaterialToReport(catItem.name, 10, catItem.pricePerSqFt, catItem.emoji, unitLabel)}
-                            className="p-1 px-2.5 bg-gray-800 hover:bg-gray-750 text-white rounded text-[10px] text-left transition truncate cursor-pointer flex items-center gap-1.5"
-                          >
-                            <span className="text-sm">{catItem.emoji}</span>
-                            <span>+10 {unitLabel} {catItem.name} ({catItem.pricePerSqFt}$/{unitLabel})</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                      {/* Reported list items */}
-                      <div className="bg-gray-950 p-2.5 rounded-lg text-xs space-y-1 border border-gray-850">
-                        {reportedMaterials.length === 0 ? (
-                          <p className="text-gray-500 text-center py-2 italic font-sans animate-none">{t.noMaterialsDeclared}</p>
-                        ) : (
-                          reportedMaterials.map((m, idx) => (
-                            <div key={`${m.name}-${idx}`} className="rounded-xl border border-gray-800 bg-gray-900 p-3 space-y-2">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="font-sans text-xs font-black text-white">{m.emoji} {m.name}</p>
-                                  <p className="text-[9px] text-gray-500">{m.unit || unitLabels['pi2']}</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setReportedMaterials(current => current.filter((_, itemIndex) => itemIndex !== idx))}
-                                  className="rounded-lg border border-red-500/20 bg-red-500/10 p-1.5 text-red-400 hover:bg-red-500/20"
-                                  aria-label={currentLanguage === 'FR' ? 'Retirer ce produit' : 'Remove this product'}
-                                >
-                                  <Trash className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-2 gap-2">
-                                <label className="text-[9px] font-black uppercase text-gray-500">
-                                  {currentLanguage === 'FR' ? 'Quantité' : 'Quantity'}
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={m.quantity || ''}
-                                    onChange={event => setReportedMaterials(current => current.map((item, itemIndex) => itemIndex === idx ? { ...item, quantity: Math.max(0, Number(event.target.value)) } : item))}
-                                    className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 p-2 text-right font-mono text-xs font-black text-white"
-                                  />
-                                </label>
-                                <label className="text-[9px] font-black uppercase text-gray-500">
-                                  {currentLanguage === 'FR' ? 'Prix unitaire' : 'Unit price'}
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={m.unitPrice || ''}
-                                    onChange={event => setReportedMaterials(current => current.map((item, itemIndex) => itemIndex === idx ? { ...item, unitPrice: Math.max(0, Number(event.target.value)) } : item))}
-                                    className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 p-2 text-right font-mono text-xs font-black text-amber-300"
-                                  />
-                                </label>
-                              </div>
-                              <div className="flex items-center justify-between border-t border-gray-800 pt-2 text-[10px]">
-                                <span className="font-bold text-gray-500">{currentLanguage === 'FR' ? 'Sous-total' : 'Subtotal'}</span>
-                                <span className="font-mono text-sm font-black text-amber-300">{(m.quantity * m.unitPrice).toFixed(2)} $</span>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Résumé financier : total réel et rendement horaire selon le mode. */}
-              {(() => {
-                const declaredSurfaceTotal = reportedMaterials.reduce((sum, material) => sum + (material.quantity * material.unitPrice), 0);
-                return (
-                  <div className="mt-3 space-y-3">
-                    <LiveCompensationPanel
-                      session={activePunchSession}
-                      elapsedSeconds={elapsedWorkSeconds}
-                      grossAmount={activePunchSession.payMode === 'surface' ? declaredSurfaceTotal : earningsSimulation}
-                      surfaceTotal={declaredSurfaceTotal}
-                      currentLanguage={currentLanguage}
-                      currency={companyInfo.currency || 'CAD'}
-                      compact
-                    />
-                    {activePunchSession.payMode === 'surface' && reportedMaterials.length > 0 && (
-                      <div className="grid grid-cols-2 gap-2 text-center">
-                        <div className="rounded-xl border border-gray-800 bg-gray-900 p-3">
-                          <p className="text-[9px] font-black uppercase text-gray-500">{currentLanguage === 'FR' ? 'Produits déclarés' : 'Declared products'}</p>
-                          <p className="mt-1 text-xl font-black text-white">{reportedMaterials.length}</p>
-                        </div>
-                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3">
-                          <p className="text-[9px] font-black uppercase text-amber-200/70">{currentLanguage === 'FR' ? 'Total de la journée' : 'Day total'}</p>
-                          <p className="mt-1 font-mono text-xl font-black text-amber-300">{declaredSurfaceTotal.toFixed(2)} $</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
-              <button 
-                onClick={() => setShowPunchOutModal(false)}
-                className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
-              >
-                {t.modalCancelBtn}
-              </button>
-              <button 
-                onClick={handlePunchOutConfirm}
-                className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-red-950/25"
-              >
-                {t.modalPunchOutBtn}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* -------------------- MODAL: SIGNATURE TACTILE AVANT ENVOI DE FACTURE -------------------- */}
-      {invoiceToSign && activeEmployee && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#16191F] border border-gray-800 rounded-2xl p-6 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b border-gray-850 pb-3">
-              <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-1">
-                {t.signSendTitle.replace('✍️ ', '✍️ ')}
-              </h4>
-              <button
-                onClick={() => { setInvoiceToSign(null); setInvoiceSignatureData(null); }}
-                className="text-gray-500 hover:text-white transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-xs text-gray-300 leading-normal">
-                {fmt(t.signSendBody, { num: invoiceToSign.invoiceNumber, amt: invoiceToSign.totalWithTaxes.toFixed(2), company: companyInfo.name || 'Hailite Xteriors Inc.' })}
-              </p>
-
-              <SignaturePad
-                label={fmt(t.signatureOf, { name: activeEmployee.name })}
-                value={invoiceSignatureData}
-                onChange={setInvoiceSignatureData}
-                required
-                accentClass="text-orange-500"
-              />
-            </div>
-
-            <div className="flex gap-3 pt-3 border-t border-gray-850 font-sans">
-              <button
-                onClick={() => { setInvoiceToSign(null); setInvoiceSignatureData(null); }}
-                className="flex-1 py-2 bg-gray-800 hover:bg-gray-750 text-white border border-gray-750 text-xs font-black rounded-lg transition cursor-pointer"
-              >
-                {t.modalCancelBtn}
-              </button>
-              <button
-                onClick={() => {
-                  if (!invoiceSignatureData) {
-                    alert(t.signBeforeSend);
-                    return;
-                  }
-                  updateInvoice({
-                    ...invoiceToSign,
-                    status: 'pending',
-                    employeeSignature: invoiceSignatureData,
-                    employeeSignedAt: new Date().toISOString()
-                  });
-                  setInvoiceToSign(null);
-                  setInvoiceSignatureData(null);
-                }}
-                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-orange-950/25"
-              >
-                {t.signAndSendBtn}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* -------------------- CENTRE D’AIDE ET DE FORMATION -------------------- */}
-      {helpCenterOpen && (
-        <Suspense fallback={<LazySectionFallback />}>
-          <UserHelpCenter
-            open={helpCenterOpen}
-            onClose={() => setHelpCenterOpen(false)}
-            language={currentLanguage}
-            role={activeEmployee?.role || 'employee'}
-            employeeId={activeEmployee?.id || 'guest'}
-            employeeName={activeEmployee?.name || (currentLanguage === 'FR' ? 'nouvel utilisateur' : 'new user')}
-            activeTab={activeTab}
-            onNavigate={(tab, settingsTab) => {
-              setActiveTab(tab);
-              if (typeof settingsTab === 'number') setActiveSettingsTab(settingsTab);
-              setShowMoreMenu(false);
-              setHelpCenterOpen(false);
-            }}
-          />
-        </Suspense>
-      )}
-
-    </div>
-  );
-}
