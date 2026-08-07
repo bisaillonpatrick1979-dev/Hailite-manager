@@ -81,7 +81,7 @@ export async function authLogout(): Promise<void> {
 // Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
 export interface DirectoryUser { id: string; name: string; avatar: string }
 export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
-  if (!cloudSyncAllowed) return [];
+  if (!cloudSyncAllowed || demoSandboxIsolation) return [];
   try {
     const res = await fetch('/api/auth/directory', { credentials: 'same-origin' });
     if (!res.ok) return [];
@@ -94,6 +94,17 @@ export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
 
 let cloudEnabled = false;
 const localTestModeEnabled = () => LOCAL_TEST_MODE;
+// Le bac à sable de cinq ans vit exclusivement dans la mémoire du navigateur.
+// Cette garde est vérifiée au plus bas niveau (juste avant chaque fetch) afin
+// qu'une action déclenchée par un écran ou par l'assistant ne puisse jamais
+// écrire les données fictives dans Supabase.
+let demoSandboxIsolation = false;
+export function setDemoSandboxIsolation(active: boolean): void {
+  demoSandboxIsolation = active;
+  if (active) cloudEnabled = false;
+}
+export function isDemoSandboxIsolationActive(): boolean { return demoSandboxIsolation; }
+
 let cloudSyncAllowed = (() => {
   if (localTestModeEnabled()) return false;
   try {
@@ -101,17 +112,18 @@ let cloudSyncAllowed = (() => {
     return ['supabase', 'hybrid', 'cloud'].includes(company?.dataStorageMode);
   } catch { return true; }
 })();
-export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed; }
+export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed && !demoSandboxIsolation; }
 export function setCloudSyncAllowed(allowed: boolean) {
   cloudSyncAllowed = localTestModeEnabled() ? false : allowed;
-  if (!cloudSyncAllowed) cloudEnabled = false;
+  if (!cloudSyncAllowed || demoSandboxIsolation) cloudEnabled = false;
 }
-export function isCloudSyncAllowed() { return cloudSyncAllowed; }
+export function isCloudSyncAllowed() { return cloudSyncAllowed && !demoSandboxIsolation; }
 
 let cachedCompanyId: string | null = null;
 export function getCompanyId() { return cachedCompanyId; }
 
 async function dbList(table: string): Promise<any[]> {
+  if (demoSandboxIsolation) return [];
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}?limit=500`, { headers: authHeaders(), credentials: 'same-origin' });
   if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
@@ -119,6 +131,7 @@ async function dbList(table: string): Promise<any[]> {
 }
 
 async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
+  if (demoSandboxIsolation) return { demo: true };
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, {
     method: 'POST',
@@ -131,6 +144,7 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
 }
 
 async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
+  if (demoSandboxIsolation) return { demo: true };
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}`, {
     method: 'PUT',
@@ -143,6 +157,7 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
 }
 
 async function dbUpdate(table: string, id: string, row: Record<string, any>): Promise<any> {
+  if (demoSandboxIsolation) return { demo: true };
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}/${id}`, {
     method: 'PATCH',
@@ -155,6 +170,7 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
 }
 
 async function dbDelete(table: string, id: string): Promise<void> {
+  if (demoSandboxIsolation) return;
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders(), credentials: 'same-origin' });
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
@@ -183,6 +199,7 @@ function notifySync(detail: CloudSyncStatusDetail): void {
 // Les actions locales restent instantanées, mais un échec distant est désormais
 // visible dans l'interface au lieu d'être caché uniquement dans la console.
 function bestEffort(promise: Promise<any>, label: string): Promise<void> {
+  if (demoSandboxIsolation) return promise.then(() => undefined, () => undefined);
   noteMutation();
   notifySync({ status: 'pending', label });
   return promise
@@ -207,6 +224,7 @@ export interface PrivacyNoticeAcknowledgement {
 // déterminent la ligne et les valeurs à écrire.
 export async function savePrivacyNoticeAcknowledgement(): Promise<PrivacyNoticeAcknowledgement> {
   const label = 'consentement de confidentialité';
+  if (demoSandboxIsolation) throw new Error('Confirmation indisponible dans le bac à sable de démonstration');
   if (!cloudSyncAllowed) throw new Error('La sauvegarde infonuagique est désactivée');
   noteMutation();
   notifySync({ status: 'pending', label });
@@ -343,6 +361,7 @@ export function projectAssignmentsToRows(p: Project) {
 }
 
 async function replaceProjectChildren(project: Project): Promise<void> {
+  if (demoSandboxIsolation) return;
   const res = await fetch(`/api/projects/${encodeURIComponent(project.id)}/children`, {
     method: 'PUT',
     credentials: 'same-origin',
@@ -359,12 +378,14 @@ async function replaceProjectChildren(project: Project): Promise<void> {
 // Une seule requête appelle une fonction Postgres transactionnelle : aucune
 // fenêtre ne subsiste entre la suppression et la réinsertion des enfants.
 export function syncProjectChildren(project: Project): Promise<void> {
+  if (demoSandboxIsolation) return Promise.resolve();
   return bestEffort(replaceProjectChildren(project), `chantier ${project.id}`);
 }
 
 // Insère d'abord le chantier (contrainte de clé étrangère des tables enfants),
 // puis synchronise tâches/outils/assignations — ne doivent pas partir en parallèle.
 export function syncProjectInsert(project: Project): Promise<void> {
+  if (demoSandboxIsolation) return Promise.resolve();
   return bestEffort(
     dbInsert('projects', projectToRow(project)).then(() => replaceProjectChildren(project)),
     `création chantier ${project.id}`
@@ -535,6 +556,7 @@ async function replaceOrderItems(order: SupplierOrder): Promise<void> {
 }
 
 export function syncOrderItems(order: SupplierOrder): Promise<void> {
+  if (demoSandboxIsolation) return Promise.resolve();
   return bestEffort(replaceOrderItems(order), `articles commande ${order.id}`);
 }
 
@@ -995,14 +1017,15 @@ export function documentPaymentToRow(p: any, documentId: string) {
 // Fonctions de synchronisation "best effort" utilisées par store.ts
 // ---------------------------------------------------------------------------
 
-export function syncInsert(table: string, row: Record<string, any>) { bestEffort(dbInsert(table, row), `insert ${table}`); }
-export function syncUpsert(table: string, row: Record<string, any>) { bestEffort(dbUpsert(table, row), `upsert ${table}`); }
-export function syncUpdate(table: string, id: string, row: Record<string, any>) { bestEffort(dbUpdate(table, id, row), `update ${table}/${id}`); }
-export function syncDelete(table: string, id: string) { bestEffort(dbDelete(table, id), `delete ${table}/${id}`); }
+export function syncInsert(table: string, row: Record<string, any>) { if (!demoSandboxIsolation) bestEffort(dbInsert(table, row), `insert ${table}`); }
+export function syncUpsert(table: string, row: Record<string, any>) { if (!demoSandboxIsolation) bestEffort(dbUpsert(table, row), `upsert ${table}`); }
+export function syncUpdate(table: string, id: string, row: Record<string, any>) { if (!demoSandboxIsolation) bestEffort(dbUpdate(table, id, row), `update ${table}/${id}`); }
+export function syncDelete(table: string, id: string) { if (!demoSandboxIsolation) bestEffort(dbDelete(table, id), `delete ${table}/${id}`); }
 
 // Insère d'abord la ligne "documents" (contrainte de clé étrangère de document_items),
 // puis synchronise ses lignes — les deux appels best-effort ne doivent pas partir en parallèle.
 export async function syncDocumentInsert(doc: GCPDocument) {
+  if (demoSandboxIsolation) return;
   return bestEffort(
     dbInsert('documents', documentToRow(doc)).then(() => replaceDocumentLines(doc)),
     `document ${doc.id}`
@@ -1019,6 +1042,7 @@ async function replaceDocumentLines(doc: GCPDocument): Promise<void> {
 }
 
 export function syncDocumentLines(doc: GCPDocument): Promise<void> {
+  if (demoSandboxIsolation) return Promise.resolve();
   return bestEffort(replaceDocumentLines(doc), `lignes document ${doc.id}`);
 }
 
@@ -1031,6 +1055,7 @@ export interface CloudHydrateResult {
 }
 
 export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
+  if (demoSandboxIsolation) return { enabled: false, tables: {} };
   if (!cloudSyncAllowed) return { enabled: false, tables: {} };
   try {
     const res = await fetch('/api/hydrate', { headers: authHeaders(), credentials: 'same-origin' });

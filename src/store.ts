@@ -11,6 +11,7 @@ import {
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
   authLogin, authLogout, fetchLoginDirectory, normalizeAppRole, setCloudSyncAllowed, savePrivacyNoticeAcknowledgement,
+  isDemoSandboxIsolationActive, setDemoSandboxIsolation,
   syncProjectInsert, syncProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow, toolAssetToRow, toolTheftReportToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
@@ -24,6 +25,7 @@ import {
 } from './apiClient';
 import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
 import { browserStorageValue } from './securityStorage';
+import type { DemoSandboxSummary } from './demoSandbox';
 
 interface AppState {
   // Data State
@@ -63,6 +65,8 @@ interface AppState {
   currentTheme: VisualTheme;
   offlineSyncStatus: 'synced' | 'offline' | 'pending';
   isOnboarded: boolean;
+  demoSandboxActive: boolean;
+  demoSandboxSummary: DemoSandboxSummary | null;
   
   // Operations / Actions
   setLanguage: (lang: 'FR' | 'EN') => void;
@@ -70,6 +74,9 @@ interface AppState {
   login: (nip: string, employeeId: string) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
   setIsOnboarded: (val: boolean) => void;
+  activateDemoSandbox: () => Promise<boolean>;
+  resetDemoSandbox: () => Promise<boolean>;
+  deactivateDemoSandbox: () => Promise<void>;
   
   // Employee CRUD
   addEmployee: (emp: Omit<Employee, 'id' | 'level' | 'xp'>) => void;
@@ -187,6 +194,54 @@ interface AppState {
 
   // Synchronisation cloud (Supabase) : hydrate le store depuis la base de données si configurée
   hydrateCloud: () => Promise<void>;
+}
+
+type DemoSnapshot = Pick<AppState,
+  | 'employees' | 'projects' | 'punchSessions' | 'invoices' | 'catalogue' | 'suppliers' | 'inventory'
+  | 'toolAssets' | 'toolTheftReports' | 'orders' | 'clients' | 'companyInfo' | 'hrAlerts' | 'documents'
+  | 'expenses' | 'projectPhotos' | 'changeOrders' | 'insuranceClaims' | 'leads' | 'shiftAssignments'
+  | 'safetyRecords' | 'personalExpenses' | 'payrollPayments' | 'motivationTeams' | 'motivationGoals'
+  | 'weeklyGoals' | 'activeEmployee' | 'offlineSyncStatus'
+>;
+
+let demoSnapshot: DemoSnapshot | null = null;
+
+function cloneDemoValue<T>(value: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function captureDemoSnapshot(state: AppState): DemoSnapshot {
+  return cloneDemoValue({
+    employees: state.employees,
+    projects: state.projects,
+    punchSessions: state.punchSessions,
+    invoices: state.invoices,
+    catalogue: state.catalogue,
+    suppliers: state.suppliers,
+    inventory: state.inventory,
+    toolAssets: state.toolAssets,
+    toolTheftReports: state.toolTheftReports,
+    orders: state.orders,
+    clients: state.clients,
+    companyInfo: state.companyInfo,
+    hrAlerts: state.hrAlerts,
+    documents: state.documents,
+    expenses: state.expenses,
+    projectPhotos: state.projectPhotos,
+    changeOrders: state.changeOrders,
+    insuranceClaims: state.insuranceClaims,
+    leads: state.leads,
+    shiftAssignments: state.shiftAssignments,
+    safetyRecords: state.safetyRecords,
+    personalExpenses: state.personalExpenses,
+    payrollPayments: state.payrollPayments,
+    motivationTeams: state.motivationTeams,
+    motivationGoals: state.motivationGoals,
+    weeklyGoals: state.weeklyGoals,
+    activeEmployee: state.activeEmployee,
+    offlineSyncStatus: state.offlineSyncStatus
+  });
 }
 
 // Profils de validation strictement locaux. Les quatre anciens profils de
@@ -722,6 +777,9 @@ const getSavedState = <T>(key: string, defaultValue: T): T => {
 };
 
 const saveState = (key: string, value: any) => {
+  // Le mode démo est volontairement volatil : ni localStorage ni sauvegarde
+  // personnelle ne doivent conserver une copie de ses données fictives.
+  if (isDemoSandboxIsolationActive()) return;
   try {
     const candidate = browserStorageValue(key, value, LOCAL_TEST_MODE);
     if (!candidate.allowed) {
@@ -790,11 +848,65 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentTheme: getSavedState('gcp_currentTheme', 'quantum') as VisualTheme,
   offlineSyncStatus: 'synced',
   isOnboarded: getSavedState('gcp_isOnboarded', false),
+  demoSandboxActive: false,
+  demoSandboxSummary: null,
 
   // Actions
   setIsOnboarded: (val) => {
     set({ isOnboarded: val });
     saveState('gcp_isOnboarded', val);
+  },
+
+  activateDemoSandbox: async () => {
+    const state = get();
+    if (!state.activeEmployee || state.activeEmployee.role !== 'admin') return false;
+    if (!demoSnapshot) demoSnapshot = captureDemoSnapshot(state);
+    const { createFiveYearDemoDataset } = await import('./demoSandbox');
+    const demo = createFiveYearDemoDataset(demoSnapshot.activeEmployee || state.activeEmployee);
+    const { summary, activeEmployee, ...data } = demo;
+    setDemoSandboxIsolation(true);
+    set({
+      ...data,
+      activeEmployee,
+      demoSandboxActive: true,
+      demoSandboxSummary: summary,
+      offlineSyncStatus: 'offline'
+    });
+    return true;
+  },
+
+  resetDemoSandbox: async () => {
+    const state = get();
+    const realAdministrator = demoSnapshot?.activeEmployee;
+    if (!state.demoSandboxActive || !realAdministrator || realAdministrator.role !== 'admin') return false;
+    const { createFiveYearDemoDataset } = await import('./demoSandbox');
+    const demo = createFiveYearDemoDataset(realAdministrator);
+    const { summary, activeEmployee, ...data } = demo;
+    setDemoSandboxIsolation(true);
+    set({
+      ...data,
+      activeEmployee,
+      demoSandboxSummary: summary,
+      offlineSyncStatus: 'offline'
+    });
+    return true;
+  },
+
+  deactivateDemoSandbox: async () => {
+    const snapshot = demoSnapshot;
+    demoSnapshot = null;
+    setDemoSandboxIsolation(false);
+    if (!snapshot) {
+      set({ demoSandboxActive: false, demoSandboxSummary: null });
+      return;
+    }
+    set({
+      ...snapshot,
+      demoSandboxActive: false,
+      demoSandboxSummary: null
+    });
+    setCloudSyncAllowed(snapshot.companyInfo.dataStorageMode !== 'local');
+    await get().hydrateCloud();
   },
 
   setLanguage: (currentLanguage) => {
@@ -870,13 +982,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   logout: () => {
+    demoSnapshot = null;
+    setDemoSandboxIsolation(false);
     void authLogout();
     set({
       activeEmployee: null, employees: [], projects: [], punchSessions: [], invoices: [],
       catalogue: [], suppliers: [], inventory: [], toolAssets: [], toolTheftReports: [],
       orders: [], clients: [], hrAlerts: [], documents: [], expenses: [], projectPhotos: [],
       changeOrders: [], insuranceClaims: [], leads: [], shiftAssignments: [], safetyRecords: [],
-      personalExpenses: [], payrollPayments: [], motivationTeams: [], motivationGoals: [], weeklyGoals: []
+      personalExpenses: [], payrollPayments: [], motivationTeams: [], motivationGoals: [], weeklyGoals: [],
+      demoSandboxActive: false, demoSandboxSummary: null
     });
     void fetchLoginDirectory().then(directory => {
       if (get().activeEmployee || directory.length === 0) return;
@@ -2192,6 +2307,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   hydrateCloud: async () => {
+    if (get().demoSandboxActive || isDemoSandboxIsolationActive()) {
+      set({ offlineSyncStatus: 'offline' });
+      return;
+    }
     if (LOCAL_TEST_MODE) {
       set({ offlineSyncStatus: 'offline' });
       return;
