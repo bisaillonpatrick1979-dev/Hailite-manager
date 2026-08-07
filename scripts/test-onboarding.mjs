@@ -11,6 +11,15 @@ const result = {
   rootHasContent: false,
   bodyIsNotBlank: false,
   hookErrorDetected: false,
+  cloudProbeValid: false,
+  cloudProbeRequests: [],
+  demoSettingsVisible: false,
+  demoActivated: false,
+  demoCountsValid: false,
+  demoMutationApplied: false,
+  demoStatsVisible: false,
+  demoRealStateRestored: false,
+  demoCloudRequests: [],
   consoleErrors: [],
   pageErrors: [],
   passed: false
@@ -107,6 +116,158 @@ try {
   result.loginVisibleWithoutReload = await page.$eval('#login-container-wrapper', element => Boolean(element.offsetWidth || element.offsetHeight));
   result.rootHasContent = await page.$eval('#root', element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
   result.bodyIsNotBlank = await page.$eval('body', element => (element.innerText || '').trim().length > 100);
+
+  // Le test importe le store uniquement depuis le serveur Vite de validation.
+  // Il établit une session admin fictive en mémoire sans ajouter le moindre
+  // contournement d'authentification au bundle de production.
+  await page.evaluate(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    const admin = state.employees.find(employee => employee.role === 'admin');
+    if (!admin) throw new Error('Administrateur local de validation introuvable');
+    useAppStore.setState({
+      activeEmployee: {
+        ...admin,
+        privacyNoticeVersion: '2026.07',
+        privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
+        locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
+      }
+    });
+  });
+
+  // Branche un faux serveur authentifié, puis prouve que les chemins lecture et
+  // écriture atteignent réellement ce serveur AVANT d'activer l'isolation.
+  const cloudProbe = await page.evaluate(async () => {
+    const apiClient = await import('/src/apiClient.ts');
+    const originalFetch = window.fetch.bind(window);
+    const calls = [];
+    window.__hailiteCloudTestRequests = calls;
+    window.fetch = async (input, init = {}) => {
+      const request = input instanceof Request ? input : null;
+      const rawUrl = typeof input === 'string' || input instanceof URL ? String(input) : request?.url || String(input);
+      const url = new URL(rawUrl, window.location.href);
+      const method = String(init.method || request?.method || 'GET').toUpperCase();
+      if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
+        calls.push(`${method} ${url.pathname}`);
+        const payload = url.pathname === '/api/hydrate'
+          ? { enabled: false, tables: {} }
+          : { id: 'cloud-probe', ok: true };
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return originalFetch(input, init);
+    };
+
+    apiClient.setAuthenticatedSession(true);
+    apiClient.setCloudSyncAllowed(true);
+    await apiClient.hydrateFromCloud();
+    apiClient.syncInsert('clients', { id: 'cloud-probe', name: 'Sonde CI' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const requests = [...calls];
+    calls.length = 0;
+    return { cloudAllowed: apiClient.isCloudSyncAllowed(), requests };
+  });
+  result.cloudProbeRequests = cloudProbe.requests;
+  result.cloudProbeValid = Boolean(
+    cloudProbe.cloudAllowed && cloudProbe.requests.includes('GET /api/hydrate') &&
+    cloudProbe.requests.includes('POST /api/db/clients')
+  );
+
+  // La liste exportée par le store est la même source de vérité que celle qui
+  // capture le véritable instantané. Le statut réseau est opérationnel et peut
+  // légitimement être recalculé à la sortie; toutes les données sont comparées.
+  const realStateBeforeDemo = await page.evaluate(async () => {
+    const { DEMO_SANDBOX_SNAPSHOT_KEYS, useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    const keys = DEMO_SANDBOX_SNAPSHOT_KEYS.filter(key => key !== 'offlineSyncStatus');
+    return {
+      keys,
+      serialized: JSON.stringify(Object.fromEntries(keys.map(key => [key, state[key]])))
+    };
+  });
+  result.demoComparedCollections = realStateBeforeDemo.keys;
+
+  await waitForText('Plus');
+  await clickButton('Plus');
+  await waitForText('Réglages');
+  await clickButton('Réglages');
+  await waitForText('Démo 5 ans');
+  await clickButton('Démo 5 ans');
+  await waitForText('Mode Démo — cinq ans de données');
+  result.demoSettingsVisible = true;
+
+  await checkLabel('Je comprends que toutes les modifications');
+  await clickButton('Activer le Mode Démo 5 ans');
+  await waitForText('Mode Démo 5 ans — données fictives');
+  result.demoActivated = true;
+
+  const demoState = await page.evaluate(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    return {
+      active: state.demoSandboxActive,
+      totalRows: state.demoSandboxSummary?.counts.totalRows || 0,
+      projects: state.projects.length,
+      punches: state.punchSessions.length,
+      documents: state.documents.length,
+      photos: state.projectPhotos.length,
+      safety: state.safetyRecords.length
+    };
+  });
+  result.demoCounts = demoState;
+  result.demoCountsValid = Boolean(
+    demoState.active && demoState.totalRows >= 6500 && demoState.projects >= 100 &&
+    demoState.punches >= 3000 && demoState.documents >= 280 && demoState.photos >= 280 && demoState.safety >= 180
+  );
+
+  // Tente une hydratation et une vraie mutation de store pendant la démo. Sans
+  // les gardes du bac à sable, ces deux opérations atteindraient le faux nuage
+  // validé ci-dessus; avec l'isolation, elles restent entièrement en mémoire.
+  const isolationProof = await page.evaluate(async () => {
+    const apiClient = await import('/src/apiClient.ts');
+    const { useAppStore } = await import('/src/store.ts');
+    await apiClient.hydrateFromCloud();
+    const clientName = 'Client ajouté uniquement dans la démo';
+    useAppStore.getState().addClient({
+      name: clientName,
+      company: 'Bac à sable',
+      email: 'demo-only@hailite.example',
+      phone: '403-555-0199',
+      address: 'Adresse fictive'
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return {
+      mutationApplied: useAppStore.getState().clients.some(client => client.name === clientName),
+      requests: [...window.__hailiteCloudTestRequests]
+    };
+  });
+  result.demoMutationApplied = isolationProof.mutationApplied;
+  result.demoCloudRequests = isolationProof.requests;
+
+  await clickButton('Stats');
+  await page.waitForSelector('#view-stats-content', { visible: true, timeout: 30000 });
+  result.demoStatsVisible = await page.$eval('#view-stats-content', element => (element.innerText || '').trim().length > 500);
+
+  await clickButton('Retour aux vraies données');
+  await page.waitForFunction(async () => {
+    const { useAppStore } = await import('/src/store.ts');
+    return !useAppStore.getState().demoSandboxActive;
+  }, { timeout: 30000 });
+  const realStateAfterDemo = await page.evaluate(async () => {
+    const { DEMO_SANDBOX_SNAPSHOT_KEYS, useAppStore } = await import('/src/store.ts');
+    const state = useAppStore.getState();
+    const keys = DEMO_SANDBOX_SNAPSHOT_KEYS.filter(key => key !== 'offlineSyncStatus');
+    return {
+      keys,
+      serialized: JSON.stringify(Object.fromEntries(keys.map(key => [key, state[key]])))
+    };
+  });
+  result.demoRealStateRestored = (
+    JSON.stringify(realStateAfterDemo.keys) === JSON.stringify(realStateBeforeDemo.keys) &&
+    realStateAfterDemo.serialized === realStateBeforeDemo.serialized
+  );
 } catch (error) {
   result.testError = String(error?.stack || error);
 } finally {
@@ -118,6 +279,8 @@ result.hookErrorDetected = [...result.consoleErrors, ...result.pageErrors]
 result.passed = Boolean(
   result.onboardingVisible && result.clickedFinish && result.mainVisibleWithoutReload &&
   result.loginVisibleWithoutReload && result.rootHasContent && result.bodyIsNotBlank &&
+  result.cloudProbeValid && result.demoSettingsVisible && result.demoActivated && result.demoCountsValid && result.demoMutationApplied &&
+  result.demoStatsVisible && result.demoRealStateRestored && result.demoCloudRequests.length === 0 &&
   !result.hookErrorDetected && !result.testError
 );
 

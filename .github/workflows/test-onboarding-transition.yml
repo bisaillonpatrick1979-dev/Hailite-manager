@@ -30,6 +30,7 @@ jobs:
       - name: Démarrer l’application de test
         env:
           VITE_LOCAL_TEST_MODE: 'true'
+          VITE_CLOUD_SYNC_TEST_MODE: 'true'
         run: |
           npm run dev:client -- --port 4173 > /tmp/hailite-vite.log 2>&1 &
           for attempt in {1..60}; do

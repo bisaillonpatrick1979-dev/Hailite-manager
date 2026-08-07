@@ -4,9 +4,15 @@ import type { Employee } from './types';
 // explicitement avec VITE_LOCAL_TEST_MODE=true sur un serveur Vite de développement.
 // `import.meta.env` n'existe pas lorsque les validateurs Node importent ce module.
 const viteEnv = (import.meta as ImportMeta & {
-  env?: { DEV?: boolean; VITE_LOCAL_TEST_MODE?: string };
+  env?: { DEV?: boolean; VITE_LOCAL_TEST_MODE?: string; VITE_CLOUD_SYNC_TEST_MODE?: string };
 }).env;
 export const LOCAL_TEST_MODE = Boolean(viteEnv?.DEV && viteEnv.VITE_LOCAL_TEST_MODE === 'true');
+// Autorise le test Chrome à brancher un faux serveur authentifié. La double
+// garde DEV + LOCAL_TEST_MODE rend ce chemin inactivable dans le bundle de
+// production, même si une variable Vercel était configurée par erreur.
+export const LOCAL_CLOUD_SYNC_TEST_MODE = Boolean(
+  LOCAL_TEST_MODE && viteEnv?.DEV && viteEnv.VITE_CLOUD_SYNC_TEST_MODE === 'true'
+);
 export const LOCAL_TEST_DATA_VERSION = '2026.07-test-3';
 
 function avatar(emoji: string, background: string): string {

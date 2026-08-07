@@ -196,13 +196,15 @@ interface AppState {
   hydrateCloud: () => Promise<void>;
 }
 
-type DemoSnapshot = Pick<AppState,
-  | 'employees' | 'projects' | 'punchSessions' | 'invoices' | 'catalogue' | 'suppliers' | 'inventory'
-  | 'toolAssets' | 'toolTheftReports' | 'orders' | 'clients' | 'companyInfo' | 'hrAlerts' | 'documents'
-  | 'expenses' | 'projectPhotos' | 'changeOrders' | 'insuranceClaims' | 'leads' | 'shiftAssignments'
-  | 'safetyRecords' | 'personalExpenses' | 'payrollPayments' | 'motivationTeams' | 'motivationGoals'
-  | 'weeklyGoals' | 'activeEmployee' | 'offlineSyncStatus'
->;
+export const DEMO_SANDBOX_SNAPSHOT_KEYS = [
+  'employees', 'projects', 'punchSessions', 'invoices', 'catalogue', 'suppliers', 'inventory',
+  'toolAssets', 'toolTheftReports', 'orders', 'clients', 'companyInfo', 'hrAlerts', 'documents',
+  'expenses', 'projectPhotos', 'changeOrders', 'insuranceClaims', 'leads', 'shiftAssignments',
+  'safetyRecords', 'personalExpenses', 'payrollPayments', 'motivationTeams', 'motivationGoals',
+  'weeklyGoals', 'activeEmployee', 'offlineSyncStatus'
+] as const satisfies readonly (keyof AppState)[];
+
+type DemoSnapshot = Pick<AppState, (typeof DEMO_SANDBOX_SNAPSHOT_KEYS)[number]>;
 
 let demoSnapshot: DemoSnapshot | null = null;
 
@@ -212,36 +214,9 @@ function cloneDemoValue<T>(value: T): T {
 }
 
 function captureDemoSnapshot(state: AppState): DemoSnapshot {
-  return cloneDemoValue({
-    employees: state.employees,
-    projects: state.projects,
-    punchSessions: state.punchSessions,
-    invoices: state.invoices,
-    catalogue: state.catalogue,
-    suppliers: state.suppliers,
-    inventory: state.inventory,
-    toolAssets: state.toolAssets,
-    toolTheftReports: state.toolTheftReports,
-    orders: state.orders,
-    clients: state.clients,
-    companyInfo: state.companyInfo,
-    hrAlerts: state.hrAlerts,
-    documents: state.documents,
-    expenses: state.expenses,
-    projectPhotos: state.projectPhotos,
-    changeOrders: state.changeOrders,
-    insuranceClaims: state.insuranceClaims,
-    leads: state.leads,
-    shiftAssignments: state.shiftAssignments,
-    safetyRecords: state.safetyRecords,
-    personalExpenses: state.personalExpenses,
-    payrollPayments: state.payrollPayments,
-    motivationTeams: state.motivationTeams,
-    motivationGoals: state.motivationGoals,
-    weeklyGoals: state.weeklyGoals,
-    activeEmployee: state.activeEmployee,
-    offlineSyncStatus: state.offlineSyncStatus
-  });
+  return cloneDemoValue(Object.fromEntries(
+    DEMO_SANDBOX_SNAPSHOT_KEYS.map(key => [key, state[key]])
+  ) as DemoSnapshot);
 }
 
 // Profils de validation strictement locaux. Les quatre anciens profils de
