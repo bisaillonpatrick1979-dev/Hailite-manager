@@ -195,6 +195,49 @@ function bestEffort(promise: Promise<any>, label: string): Promise<void> {
     .finally(noteMutation);
 }
 
+export interface PrivacyNoticeAcknowledgement {
+  privacyNoticeVersion: string;
+  privacyNoticeAcknowledgedAt: string;
+  locationNoticeAcknowledgedAt: string;
+}
+
+// Contrairement aux écritures métier "best effort", l'avis ne disparaît pas
+// tant que le serveur n'a pas confirmé sa sauvegarde. Aucun identifiant ni
+// horodatage fourni par le navigateur n'est envoyé : la session et le serveur
+// déterminent la ligne et les valeurs à écrire.
+export async function savePrivacyNoticeAcknowledgement(): Promise<PrivacyNoticeAcknowledgement> {
+  const label = 'consentement de confidentialité';
+  if (!cloudSyncAllowed) throw new Error('La sauvegarde infonuagique est désactivée');
+  noteMutation();
+  notifySync({ status: 'pending', label });
+  try {
+    const res = await fetch('/api/auth/privacy-notice', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`);
+    }
+    if (
+      typeof payload.privacyNoticeVersion !== 'string' ||
+      typeof payload.privacyNoticeAcknowledgedAt !== 'string' ||
+      typeof payload.locationNoticeAcknowledgedAt !== 'string'
+    ) {
+      throw new Error('Réponse de confirmation invalide');
+    }
+    notifySync({ status: 'synced', label });
+    return payload as PrivacyNoticeAcknowledgement;
+  } catch (error: any) {
+    const message = String(error?.message || 'Erreur de synchronisation');
+    notifySync({ status: 'error', label, message });
+    throw error;
+  } finally {
+    noteMutation();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Mappers camelCase (app) <-> snake_case (base de données)
 // ---------------------------------------------------------------------------

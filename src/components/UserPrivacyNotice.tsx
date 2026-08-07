@@ -1,34 +1,40 @@
 import React, { useState } from 'react';
 import { Check, MapPin, ShieldCheck } from 'lucide-react';
-import type { CompanyInfo, Employee } from '../types';
+import type { CompanyInfo } from '../types';
 
 export const USER_PRIVACY_NOTICE_VERSION = '2026.07';
 
 type Props = {
-  employee: Employee;
   companyInfo: CompanyInfo;
   currentLanguage: 'FR' | 'EN';
-  onAccept: (updated: Employee) => void;
+  onAccept: () => Promise<void>;
 };
 
-export default function UserPrivacyNotice({ employee, companyInfo, currentLanguage, onAccept }: Props) {
+export default function UserPrivacyNotice({ companyInfo, currentLanguage, onAccept }: Props) {
   const [readNotice, setReadNotice] = useState(false);
   const [locationNotice, setLocationNotice] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const t = (fr: string, en: string) => currentLanguage === 'FR' ? fr : en;
   const localOnly = companyInfo.dataStorageMode === 'local';
   const storageText = localOnly
     ? t('sur cet appareil seulement', 'on this device only')
     : t(`sur l’appareil et dans le service infonuagique situé au Canada (${companyInfo.cloudRegion || 'ca-central-1'})`, `on the device and in cloud services located in Canada (${companyInfo.cloudRegion || 'ca-central-1'})`);
 
-  const accept = () => {
-    if (!readNotice || !locationNotice) return;
-    const now = new Date().toISOString();
-    onAccept({
-      ...employee,
-      privacyNoticeVersion: USER_PRIVACY_NOTICE_VERSION,
-      privacyNoticeAcknowledgedAt: now,
-      locationNoticeAcknowledgedAt: now
-    });
+  const accept = async () => {
+    if (!readNotice || !locationNotice || isSaving) return;
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      await onAccept();
+      // La sauvegarde réussie met à jour l'employé actif et démonte cet écran.
+    } catch {
+      setSaveError(t(
+        'Impossible d’enregistrer les confirmations. Réessayez; elles ne seront pas considérées comme acceptées avant une sauvegarde réussie.',
+        'The confirmations could not be saved. Try again; they will not be considered accepted until saving succeeds.'
+      ));
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -93,8 +99,9 @@ export default function UserPrivacyNotice({ employee, companyInfo, currentLangua
               {t('confirmation(s) à cocher ci-dessus', 'confirmation(s) left to check above')}
             </p>
           )}
-          <button type="button" disabled={!readNotice || !locationNotice} onClick={accept} className="w-full min-h-14 rounded-2xl bg-emerald-500 text-slate-950 font-black text-lg disabled:opacity-40 inline-flex items-center justify-center gap-2">
-            <Check className="w-5 h-5" /> {t('Confirmer et continuer', 'Confirm and continue')}
+          {saveError && <p role="alert" className="mb-3 rounded-xl border border-red-500/40 bg-red-950/70 p-3 text-sm font-bold text-red-100">{saveError}</p>}
+          <button type="button" aria-busy={isSaving} disabled={!readNotice || !locationNotice || isSaving} onClick={accept} className="w-full min-h-14 rounded-2xl bg-emerald-500 text-slate-950 font-black text-lg disabled:opacity-40 inline-flex items-center justify-center gap-2">
+            <Check className="w-5 h-5" /> {isSaving ? t('Enregistrement…', 'Saving…') : t('Confirmer et continuer', 'Confirm and continue')}
           </button>
         </footer>
       </section>

@@ -10,7 +10,7 @@ import {
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
-  authLogin, authLogout, fetchLoginDirectory, normalizeAppRole, setCloudSyncAllowed,
+  authLogin, authLogout, fetchLoginDirectory, normalizeAppRole, setCloudSyncAllowed, savePrivacyNoticeAcknowledgement,
   syncProjectInsert, syncProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow, toolAssetToRow, toolTheftReportToRow,
   supplierOrderToRow, clientToRow, companyInfoToRow, weeklyGoalToRow, motivationTeamToRow, motivationGoalToRow,
@@ -74,6 +74,7 @@ interface AppState {
   // Employee CRUD
   addEmployee: (emp: Omit<Employee, 'id' | 'level' | 'xp'>) => void;
   updateEmployee: (emp: Employee) => void;
+  acknowledgePrivacyNotice: () => Promise<void>;
   deleteEmployee: (id: string) => void;
   addXP: (employeeId: string, amount: number) => void;
   
@@ -924,6 +925,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (activeEmployee && activeEmployee.id === emp.id) {
       set({ activeEmployee: safeEmployee });
     }
+  },
+
+  acknowledgePrivacyNotice: async () => {
+    const employee = get().activeEmployee;
+    if (!employee) throw new Error('Aucun employé connecté');
+
+    const acknowledgement = LOCAL_TEST_MODE
+      ? (() => {
+          const now = new Date().toISOString();
+          return {
+            privacyNoticeVersion: '2026.07',
+            privacyNoticeAcknowledgedAt: now,
+            locationNoticeAcknowledgedAt: now
+          };
+        })()
+      : await savePrivacyNoticeAcknowledgement();
+
+    // La session peut avoir été fermée pendant la requête. Dans ce cas, ne
+    // réactive jamais localement l'ancien utilisateur après sa déconnexion.
+    const current = get().activeEmployee;
+    if (!current || current.id !== employee.id) return;
+    const updated = { ...current, ...acknowledgement };
+    set(state => ({
+      activeEmployee: updated,
+      employees: state.employees.map(item => item.id === updated.id ? updated : item)
+    }));
   },
 
   deleteEmployee: (id) => {
