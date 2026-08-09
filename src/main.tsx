@@ -41,15 +41,56 @@ window.addEventListener('vite:preloadError', (event) => {
 // Filet de sécurité : plus jamais d'écran noir silencieux. Si un chunk périmé
 // fait planter le rendu, on recharge une fois ; pour toute autre erreur, on
 // affiche un écran de secours avec un bouton de rechargement.
-interface BoundaryState { error: unknown }
+// Langue choisie par l'utilisateur, lue directement du stockage : cet écran
+// s'affiche justement quand l'application n'a pas pu se monter, donc sans store.
+function recoveryLanguage(): 'FR' | 'EN' {
+  try {
+    return JSON.parse(localStorage.getItem('gcp_currentLanguage') || '"FR"') === 'EN' ? 'EN' : 'FR';
+  } catch {
+    return 'FR';
+  }
+}
+
+// Le message doit dire ce qui s'est réellement passé. Annoncer « une mise à
+// jour est disponible » après un plantage de rendu envoie l'utilisateur
+// recharger indéfiniment sans jamais comprendre pourquoi.
+function recoveryText(staleChunk: boolean): { title: string; body: string; button: string } {
+  const fr = recoveryLanguage() === 'FR';
+  if (staleChunk) {
+    return fr
+      ? {
+          title: 'Une mise à jour de l’application est disponible',
+          body: 'Rechargez la page pour continuer avec la nouvelle version.',
+          button: 'Recharger'
+        }
+      : {
+          title: 'An application update is available',
+          body: 'Reload the page to continue with the new version.',
+          button: 'Reload'
+        };
+  }
+  return fr
+    ? {
+        title: 'Cet écran n’a pas pu s’afficher',
+        body: 'Rechargez la page. Si le problème revient au même endroit, notez ce que vous faisiez et signalez-le : vos données enregistrées ne sont pas touchées.',
+        button: 'Recharger'
+      }
+    : {
+        title: 'This screen could not be displayed',
+        body: 'Reload the page. If it happens again at the same place, note what you were doing and report it: your saved data is not affected.',
+        button: 'Reload'
+      };
+}
+
+interface BoundaryState { error: unknown; staleChunk: boolean }
 class RootErrorBoundary extends React.Component<{ children?: unknown }, BoundaryState> {
   // Les types React ne sont pas installés (module non typé) : on déclare
   // explicitement les membres hérités utilisés.
   declare props: { children?: unknown };
-  state: BoundaryState = { error: null };
+  state: BoundaryState = { error: null, staleChunk: false };
 
   static getDerivedStateFromError(error: unknown): BoundaryState {
-    return { error };
+    return { error, staleChunk: isChunkLoadError(error) };
   }
 
   componentDidCatch(error: unknown) {
@@ -65,10 +106,10 @@ class RootErrorBoundary extends React.Component<{ children?: unknown }, Boundary
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         gap: '16px', padding: '24px', textAlign: 'center', fontFamily: 'system-ui, sans-serif'
       }}>
-        <span style={{ fontSize: '40px' }}>🔄</span>
-        <h1 style={{ fontSize: '20px', fontWeight: 900 }}>Une mise à jour de l’application est disponible</h1>
+        <span style={{ fontSize: '40px' }}>{this.state.staleChunk ? '🔄' : '⚠️'}</span>
+        <h1 style={{ fontSize: '20px', fontWeight: 900 }}>{recoveryText(this.state.staleChunk).title}</h1>
         <p style={{ fontSize: '14px', color: '#9CA3AF', maxWidth: '420px' }}>
-          An application update is available. Reload the page to continue.
+          {recoveryText(this.state.staleChunk).body}
         </p>
         <button
           type="button"
@@ -78,7 +119,7 @@ class RootErrorBoundary extends React.Component<{ children?: unknown }, Boundary
             background: '#EA580C', color: '#fff', fontSize: '16px', fontWeight: 900, cursor: 'pointer'
           }}
         >
-          Recharger / Reload
+          {recoveryText(this.state.staleChunk).button}
         </button>
       </main>
     );

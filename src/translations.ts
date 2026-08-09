@@ -901,7 +901,7 @@ export const translations = {
     keyBadgeHint: "💡 Chaque réponse de l'assistant affiche le fournisseur et la clé réellement utilisés (badge ⚡ sous la réponse).",
 
     // Panneau latéral droit
-    geofencingStatus: "Géofencing Status",
+    geofencingStatus: "État du géorepérage",
     restrictedBySite: "Restreint par chantier",
     noGlobalRestriction: "Aucune restriction globale",
     railGpsNote: "Les coordonnées GPS de l'appareil sont requises pour puncher in sur tout chantier dans un rayon moyen de 100m.",
@@ -2284,7 +2284,7 @@ export const translations = {
     keyBadgeHint: "💡 Each assistant reply shows the provider and key actually used (⚡ badge under the reply).",
 
     // Right rail
-    geofencingStatus: "Geofencing Status",
+    geofencingStatus: "Geofencing status",
     restrictedBySite: "Restricted per site",
     noGlobalRestriction: "No global restriction",
     railGpsNote: "The device's GPS coordinates are required to punch in on any job site within an average radius of 100m.",

@@ -2808,10 +2808,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               <div id="view-inventory-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
                 
                 {/* Segmented Sub-Tabs */}
-                <div className="flex border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-2xl">
+                {/* Sur un téléphone de 390 px, trois libellés côte à côte se
+                    coupaient sur deux lignes et devenaient illisibles. Ils
+                    défilent horizontalement en dessous de 640 px et ne se
+                    partagent la largeur qu'à partir de là. */}
+                <div className="flex gap-1 overflow-x-auto border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-2xl sm:overflow-visible">
                   <button
                     onClick={() => setInventorySubTab('stock')}
-                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                    className={`shrink-0 whitespace-nowrap px-3 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer sm:flex-1 sm:shrink ${
                       inventorySubTab === 'stock'
                         ? 'bg-orange-600 text-white shadow-lg'
                         : 'text-gray-400 hover:text-white hover:bg-gray-900'
@@ -2821,7 +2825,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </button>
                   <button
                     onClick={() => setInventorySubTab('catalogue')}
-                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                    className={`shrink-0 whitespace-nowrap px-3 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer sm:flex-1 sm:shrink ${
                       inventorySubTab === 'catalogue'
                         ? 'bg-orange-600 text-white shadow-lg'
                         : 'text-gray-400 hover:text-white hover:bg-gray-900'
@@ -2831,7 +2835,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </button>
                   <button
                     onClick={() => setInventorySubTab('tools')}
-                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                    className={`shrink-0 whitespace-nowrap px-3 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer sm:flex-1 sm:shrink ${
                       inventorySubTab === 'tools'
                         ? 'bg-orange-600 text-white shadow-lg'
                         : 'text-gray-400 hover:text-white hover:bg-gray-900'
