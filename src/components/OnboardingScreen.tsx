@@ -10,8 +10,8 @@ import LegalLinks from './LegalLinks';
 import { savePersonalBackupConfig, type AppStorageMode, type BackupConnectionMethod, type PersonalCloudProvider } from '../personalBackup';
 import { LOCAL_TEST_MODE } from '../testProfiles';
 import {
-  Building2, Camera, Check, ChevronLeft, ChevronRight, Database,
-  Globe2, MapPin, Palette, ReceiptText, ShieldCheck, Trash
+  Building2, Check, ChevronLeft, ChevronRight, Database,
+  Globe2, MapPin, Palette, ReceiptText, ShieldCheck, Trash, Upload
 } from 'lucide-react';
 import { COMPLIANCE_VERSION, PRIVACY_POLICY_VERSION } from '../../privacyVersions';
 
@@ -234,8 +234,17 @@ export default function OnboardingScreen() {
             <div className="grid sm:grid-cols-[160px_1fr] gap-5 items-start">
               <div className="rounded-2xl border border-gray-800 bg-[#0F1115] p-4 space-y-3 text-center">
                 <CompanyLogo logo={logo} companyName={companyName} className="w-28 h-28 mx-auto rounded-2xl border border-gray-700 bg-white p-2" imageClassName="w-full h-full object-contain rounded-xl" fallbackClassName="rounded-2xl bg-orange-600 text-white text-3xl" />
-                <input id="company-logo-upload" type="file" accept="image/*" capture="environment" className="hidden" onChange={event => handleLogo(event.target.files?.[0])} />
-                <label htmlFor="company-logo-upload" className="cursor-pointer min-h-11 rounded-xl bg-orange-500/15 border border-orange-400/30 text-orange-300 font-black text-xs px-3 inline-flex items-center justify-center gap-2"><Camera className="w-4 h-4" />{isFR ? 'Ajouter le logo' : 'Add logo'}</label>
+                <input
+                  id="company-logo-upload"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={event => {
+                    const input = event.currentTarget;
+                    void handleLogo(input.files?.[0]).finally(() => { input.value = ''; });
+                  }}
+                />
+                <label htmlFor="company-logo-upload" className="cursor-pointer min-h-11 rounded-xl bg-orange-500/15 border border-orange-400/30 text-orange-300 font-black text-xs px-3 inline-flex items-center justify-center gap-2"><Upload className="w-4 h-4" />{isFR ? 'Choisir dans Photos ou Fichiers' : 'Choose from Photos or Files'}</label>
                 {logo && <button type="button" onClick={() => setLogo('')} className="w-full text-xs font-bold text-red-400 inline-flex items-center justify-center gap-1"><Trash className="w-3.5 h-3.5" />{isFR ? 'Retirer' : 'Remove'}</button>}
                 {logoError && <p className="text-[10px] text-red-400">{logoError}</p>}
               </div>

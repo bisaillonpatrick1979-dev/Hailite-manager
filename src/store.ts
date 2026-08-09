@@ -27,6 +27,7 @@ import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
 import { browserStorageValue } from './securityStorage';
 import type { DemoSandboxSummary } from './demoSandbox';
 import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
+import { resolveOnboardingState } from './onboardingState';
 
 interface AppState {
   // Data State
@@ -2357,6 +2358,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const motivationGoals = (t.motivation_goals || []).map(rowToMotivationGoal);
     const weeklyGoals = (t.weekly_goals || []).map(rowToWeeklyGoal);
     const companyRow = (t.companies || [])[0];
+    const currentOnboardingState = get();
+    const onboardingResolution = companyRow
+      ? resolveOnboardingState(
+          currentOnboardingState.companyInfo,
+          currentOnboardingState.isOnboarded,
+          rowToCompanyInfo(companyRow)
+        )
+      : null;
     const viewerEmployee = result.viewer
       ? employees.find(employee => employee.id === result.viewer!.userId) || ({
           id: result.viewer.userId,
@@ -2375,7 +2384,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         } as Employee)
       : null;
 
-    set(state => {
+    set(() => {
       const next: Partial<AppState> = {
         offlineSyncStatus: 'synced',
         activeEmployee: viewerEmployee,
@@ -2404,9 +2413,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         motivationGoals,
         weeklyGoals
       };
-      if (companyRow) next.companyInfo = { ...state.companyInfo, ...rowToCompanyInfo(companyRow) };
+      if (onboardingResolution) {
+        next.companyInfo = onboardingResolution.companyInfo as CompanyInfo;
+        next.isOnboarded = onboardingResolution.isOnboarded;
+      }
       return next as AppState;
     });
+
+    if (onboardingResolution) {
+      saveState('gcp_companyInfo', onboardingResolution.companyInfo);
+      saveState('gcp_isOnboarded', onboardingResolution.isOnboarded);
+
+      // Au premier login, l'onboarding vient d'être terminé avant que la session
+      // sécurisée existe. On le pousse maintenant, puis les appareils suivants
+      // liront directement la configuration terminée depuis le cloud.
+      if (onboardingResolution.shouldSyncLocalCompletion && result.companyId) {
+        syncUpdate(
+          'companies',
+          result.companyId,
+          companyInfoToRow(onboardingResolution.companyInfo as CompanyInfo)
+        );
+      }
+    }
   }
 }));
 export default useAppStore;

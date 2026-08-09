@@ -2,6 +2,7 @@ import { LOCAL_TEST_DATA_VERSION, LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET, TEST_DATASET_SUMMARY } from './testDataset';
 import { browserStorageValue } from './securityStorage';
 import { apiFetch } from './runtimeConfig';
+import { resolveOnboardingState } from './onboardingState';
 
 const TEST_VERSION_KEY = 'gcp_localTestDataVersion';
 const TEST_MODE_KEY = 'gcp_localTestMode';
@@ -25,6 +26,14 @@ function write(key: string, value: unknown): void {
     localStorage.setItem(key, JSON.stringify(candidate.value));
   } catch {
     // Le stockage local peut être indisponible en navigation privée.
+  }
+}
+
+function readBoolean(key: string): boolean {
+  try {
+    return JSON.parse(localStorage.getItem(key) || 'false') === true;
+  } catch {
+    return false;
   }
 }
 
@@ -106,8 +115,7 @@ function applyCompanyIdentity(company: any): void {
   if (!company || typeof company !== 'object') return;
 
   const current = readObject('gcp_companyInfo');
-  const next = {
-    ...current,
+  const remote = {
     name: company.name || current.name || 'Hailite Manager',
     logo: company.logo || current.logo || '',
     country: company.country || current.country || 'CA',
@@ -121,12 +129,29 @@ function applyCompanyIdentity(company: any): void {
     dateLocale: company.dateLocale || current.dateLocale || 'fr-CA',
     dataStorageMode: company.dataStorageMode || current.dataStorageMode || 'supabase',
     cloudRegion: company.cloudRegion || current.cloudRegion || 'ca-central-1',
-    complianceVersion: company.complianceVersion || current.complianceVersion || '',
-    isOnboarded: company.isOnboarded ?? current.isOnboarded ?? false
+    complianceVersion: company.complianceVersion || '',
+    isOnboarded: company.isOnboarded ?? false
+  };
+  const resolution = resolveOnboardingState(
+    current,
+    readBoolean('gcp_isOnboarded'),
+    remote
+  );
+  const next = {
+    name: 'Hailite Manager',
+    logo: '',
+    country: 'CA',
+    region: '',
+    currency: 'CAD',
+    unitSystem: 'imperial',
+    dateLocale: 'fr-CA',
+    dataStorageMode: 'supabase',
+    cloudRegion: 'ca-central-1',
+    ...resolution.companyInfo
   };
 
   write('gcp_companyInfo', next);
-  write('gcp_isOnboarded', Boolean(next.isOnboarded));
+  write('gcp_isOnboarded', resolution.isOnboarded);
   document.title = `${next.name} — Hailite Manager`;
 }
 

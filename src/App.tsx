@@ -26,6 +26,7 @@ import {
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
+import { canEmployeePunchProject, projectsAvailableForPunch } from './projectAccess';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -299,7 +300,11 @@ export default function App() {
     annualSalary: 0,
     credentials: []
   });
-  const [newProjectForm, setNewProjectForm] = useState({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active', tasksText: '', toolsText: '' });
+  const [newProjectForm, setNewProjectForm] = useState({
+    name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540,
+    radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [] as string[]
+  });
+  const projectAssignableEmployees = employees.filter(employee => employee.role !== 'admin');
   // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
   const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
   const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
@@ -530,11 +535,6 @@ export default function App() {
       setSelectedEmpId(null);
       setPinBuffer('');
       setLoginError(null);
-      // Pre-select some visual options
-      const preSelProj = projects.find(p => p.assignedEmployees.includes(selectedEmpId)) || projects[0];
-      if (preSelProj) {
-        setHomePunchProject(preSelProj.id);
-      }
     } else {
       setLoginError(res.message);
       setPinBuffer('');
@@ -588,11 +588,7 @@ export default function App() {
   useEffect(() => {
     if (!activeEmployee || activePunchSession) return;
 
-    const availableProjects = activeEmployee.role === 'admin'
-      ? projects.filter(project => project.status === 'active')
-      : projects.filter(project =>
-          project.status === 'active' && project.assignedEmployees.includes(activeEmployee.id)
-        );
+    const availableProjects = projectsAvailableForPunch(projects, activeEmployee);
 
     if (availableProjects.length === 0) {
       if (homePunchProject) setHomePunchProject('');
@@ -675,8 +671,7 @@ export default function App() {
     // Garde-fou appareil partagé : le chantier présélectionné doit être actif
     // et assigné à l'utilisateur courant (les admins voient tous les chantiers).
     const punchTarget = projects.find(project => project.id === homePunchProject);
-    if (!punchTarget || punchTarget.status !== 'active' ||
-        (activeEmployee.role !== 'admin' && !punchTarget.assignedEmployees.includes(activeEmployee.id))) {
+    if (!canEmployeePunchProject(punchTarget, activeEmployee)) {
       setHomePunchProject('');
       return;
     }
@@ -2510,13 +2505,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         latitude: Number(newProjectForm.latitude),
                         longitude: Number(newProjectForm.longitude),
                         radius: Number(newProjectForm.radius),
-                        assignedEmployees: [],
+                        assignedEmployees: [...newProjectForm.assignedEmployees],
                         status: 'active',
                         tasks,
                         tools
                       });
                       alert(t.projectAddedAlert);
-                      setNewProjectForm({ name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540, radius: 100, status: 'active', tasksText: '', toolsText: '' });
+                      setNewProjectForm({
+                        name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540,
+                        radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: []
+                      });
                     }}
                     className="p-4 bg-gray-950 border border-gray-850 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4"
                   >
@@ -2608,6 +2606,67 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         placeholder={t.projToolsPh}
                       />
                     </div>
+
+                    <fieldset className="md:col-span-2 rounded-xl border border-orange-500/25 bg-orange-500/5 p-3">
+                      <legend className="px-2 text-[10px] font-black uppercase tracking-wider text-orange-300">
+                        {t.projectAssigneesLabel}
+                      </legend>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-[10px] text-gray-400">{t.projectAssigneesHint}</p>
+                        {projectAssignableEmployees.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const everyWorkerSelected = projectAssignableEmployees.every(employee =>
+                                newProjectForm.assignedEmployees.includes(employee.id)
+                              );
+                              setNewProjectForm(previous => ({
+                                ...previous,
+                                assignedEmployees: everyWorkerSelected
+                                  ? []
+                                  : projectAssignableEmployees.map(employee => employee.id)
+                              }));
+                            }}
+                            className="min-h-10 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 text-[10px] font-black text-orange-200"
+                          >
+                            {projectAssignableEmployees.every(employee => newProjectForm.assignedEmployees.includes(employee.id))
+                              ? t.clearAssignments
+                              : t.assignAllWorkers}
+                          </button>
+                        )}
+                      </div>
+
+                      {projectAssignableEmployees.length > 0 ? (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {projectAssignableEmployees.map(employee => {
+                            const checked = newProjectForm.assignedEmployees.includes(employee.id);
+                            return (
+                              <label
+                                key={employee.id}
+                                className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border p-3 ${checked ? 'border-orange-500/40 bg-orange-500/10 text-orange-100' : 'border-gray-800 bg-gray-900 text-gray-400'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => setNewProjectForm(previous => ({
+                                    ...previous,
+                                    assignedEmployees: checked
+                                      ? previous.assignedEmployees.filter(id => id !== employee.id)
+                                      : [...previous.assignedEmployees, employee.id]
+                                  }))}
+                                  className="h-5 w-5 accent-orange-500"
+                                />
+                                <span className="text-sm font-bold">{employee.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="mt-3 rounded-lg border border-gray-800 bg-gray-900 p-3 text-xs text-gray-500">
+                          {t.projectAssigneesNone}
+                        </p>
+                      )}
+                    </fieldset>
 
                     {/* Position Fast-Filing Helpers */}
                     <div className="md:col-span-2 bg-gray-950 p-3 rounded-xl border border-gray-850 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs leading-none">
@@ -7272,7 +7331,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs text-white"
                 >
                   <option value="">{t.selectSiteOption}</option>
-                  {(activeEmployee.role === 'admin' ? projects : projects.filter(p => p.assignedEmployees.includes(activeEmployee.id))).map(p => (
+                  {projectsAvailableForPunch(projects, activeEmployee).map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
