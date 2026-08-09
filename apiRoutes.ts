@@ -3,7 +3,7 @@
 // Vercel (api/index.ts). Isolé dans son propre module pour être monté sur
 // n'importe quelle instance Express sans dupliquer la logique.
 //
-// SÉCURITÉ : la clé SUPABASE_SERVICE_ROLE_KEY reste côté serveur ; chaque route
+// SÉCURITÉ : la clé Supabase secrète reste côté serveur ; chaque route
 // de données exige un jeton de session (voir auth.ts) et applique une matrice
 // de permissions par table + rôle, un scoping strict par company_id, la
 // redaction des colonnes sensibles (NIP, NAS/SIN, banque, clés API) et un

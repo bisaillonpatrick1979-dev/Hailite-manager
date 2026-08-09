@@ -17,7 +17,7 @@ import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
 import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
-import { useGeofencing } from './hooks/useGeofencing';
+import { canUseGeofenceBypass, useGeofencing } from './hooks/useGeofencing';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
@@ -372,6 +372,12 @@ export default function App() {
 
   // Geofencing override simulation tools (helps test geofencing easily without actual hardware gps coordinates matching exactly)
   const [geofencingBypass, setGeofencingBypass] = useState<boolean>(false);
+  const geofencingBypassAllowed = canUseGeofenceBypass(LOCAL_TEST_MODE, activeEmployee?.role);
+  const geofencingBypassActive = geofencingBypassAllowed && geofencingBypass;
+
+  useEffect(() => {
+    if (!geofencingBypassAllowed && geofencingBypass) setGeofencingBypass(false);
+  }, [geofencingBypassAllowed, geofencingBypass]);
 
 
   useEffect(() => {
@@ -670,7 +676,7 @@ export default function App() {
     const validation = evaluateProjectGeofence(homePunchProject);
     
     // Attempted infraction log if geofencing is on and unauthorized
-    if (!validation.canPunch && !geofencingBypass) {
+    if (!validation.canPunch && !geofencingBypassActive) {
       // Create a simulated punch attempt that gets logged in HR alerts to warn administrators!
       startPunchSession({
         employeeId: activeEmployee.id,
@@ -686,12 +692,15 @@ export default function App() {
     }
 
     // Success punch-in
+    const gpsFailSafeUsed = 'isFailSafe' in validation && validation.isFailSafe === true;
     startPunchSession({
       employeeId: activeEmployee.id,
       projectId: homePunchProject,
       payMode: homePayMode,
       rate: homeRateCustom,
-      withinGeofence: true
+      // Le travail demeure possible lorsque le téléphone ne fournit pas de
+      // position, mais la fiche ne prétend plus que le GPS a été validé.
+      withinGeofence: geofencingBypassActive || !gpsFailSafeUsed
     });
 
     playSoundCue('in');
@@ -1563,25 +1572,42 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             {activeEmployee && companyInfo.geofencingEnabled && (
               <div className="bg-[#121620] border-2 border-orange-500/30 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+                  <span className={`w-2.5 h-2.5 rounded-full ${
+                    geofencingBypassActive
+                      ? 'bg-orange-500'
+                      : isChecking
+                        ? 'bg-amber-400 animate-pulse'
+                        : gpsError || !coords
+                          ? 'bg-red-500'
+                          : 'bg-green-500'
+                  }`}></span>
                   <span className="text-xs text-orange-400 font-bold uppercase tracking-wide">
-                    {t.geoProximityLabel} {geofencingBypass ? t.simulatedOnSite : t.realGPS}
+                    {t.geoProximityLabel}{' '}
+                    {geofencingBypassActive
+                      ? t.simulatedOnSite
+                      : isChecking
+                        ? t.checkingGPS
+                        : gpsError || !coords
+                          ? t.gpsError
+                          : t.realGPS}
                   </span>
                 </div>
                 
                 <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => setGeofencingBypass(!geofencingBypass)}
-                    className={`text-[10px] uppercase font-mono px-2 py-1 rounded border cursor-pointer transition ${
-                      geofencingBypass ? 'bg-orange-600 text-white border-orange-500' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border-gray-700'
-                    }`}
-                  >
-                    {geofencingBypass ? t.bypassActive : t.bypassEnable}
-                  </button>
+                  {geofencingBypassAllowed && (
+                    <button
+                      onClick={() => setGeofencingBypass(!geofencingBypass)}
+                      className={`text-[10px] uppercase font-mono px-2 py-1 rounded border cursor-pointer transition ${
+                        geofencingBypassActive ? 'bg-orange-600 text-white border-orange-500' : 'bg-gray-800 hover:bg-gray-700 text-gray-400 border-gray-700'
+                      }`}
+                    >
+                      {geofencingBypassActive ? t.bypassActive : t.bypassEnable}
+                    </button>
+                  )}
                   <button 
                     onClick={checkLocation}
                     disabled={isChecking}
-                    className="p-1 px-2.5 bg-gray-800 text-[10px] font-bold hover:bg-gray-700 text-white rounded border border-gray-700 flex items-center gap-1 cursor-pointer"
+                    className="p-1 px-2.5 bg-gray-800 text-[10px] font-bold hover:bg-gray-700 text-white rounded border border-gray-700 flex items-center gap-1 cursor-pointer disabled:cursor-wait disabled:opacity-50"
                   >
                     <RotateCw className="w-3 h-3" />
                     <span>{t.refreshPosition}</span>
@@ -1957,7 +1983,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="bg-gray-800/40 border border-gray-800 rounded-xl p-3 text-center flex flex-col justify-center">
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.gpsValidation}</p>
                         <span className="text-xs text-orange-400 font-mono font-bold mt-1.5">
-                          {geofencingBypass ? t.distanceFromSiteDemo : t.gpsActive}
+                          {geofencingBypassActive
+                            ? t.distanceFromSiteDemo
+                            : isChecking
+                              ? t.checkingGPS
+                              : gpsError || !coords
+                                ? t.gpsError
+                                : t.gpsActive}
                         </span>
                       </div>
                     </div>

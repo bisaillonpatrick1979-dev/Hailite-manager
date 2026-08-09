@@ -5,7 +5,8 @@ l'agent IA à l'application, et ce qui reste recommandé pour la suite.
 
 ## 1. API de données protégées (Supabase)
 
-La clé `SUPABASE_SERVICE_ROLE_KEY` reste **exclusivement côté serveur**
+La clé `SUPABASE_SECRET_KEY` (ou l’ancienne `SUPABASE_SERVICE_ROLE_KEY` pendant
+la migration) reste **exclusivement côté serveur**
 (`db.ts`). Depuis cette version, aucune route de données n'est servie sans
 identité vérifiée :
 
@@ -86,7 +87,7 @@ fournisseurs (tools Anthropic, tools OpenAI, functionDeclarations Gemini) :
 
 | Variable | Rôle |
 | --- | --- |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Accès base (serveur seulement) |
+| `SUPABASE_URL` / `SUPABASE_SECRET_KEY` | Accès base (serveur seulement); `SUPABASE_SERVICE_ROLE_KEY` demeure un repli temporaire |
 | `SESSION_SECRET` | Signature des jetons de session (≥ 32 caractères aléatoires) |
 | `DEFAULT_COMPANY_ID` | Tenant des routes publiques; obligatoire dès qu'il existe plusieurs compagnies |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | Fournisseur(s) IA (serveur seulement) |

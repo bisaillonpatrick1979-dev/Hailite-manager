@@ -24,6 +24,7 @@ Il ne fournit aucun contournement d’authentification.
 npm run typecheck
 npm run lint
 npm test
+npm run validate:features
 npm run audit
 npm run build:vercel
 ```

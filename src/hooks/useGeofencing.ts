@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import useAppStore from '../store';
 
+// Le contournement du géorepérage sert uniquement aux essais visuels locaux.
+// Il ne doit jamais devenir un raccourci de pointage pour un utilisateur réel.
+export function canUseGeofenceBypass(localTestMode: boolean, role?: string | null): boolean {
+  return localTestMode && role === 'admin';
+}
+
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3; // earth radius in meters
   const phi1 = (lat1 * Math.PI) / 180;
@@ -20,7 +26,8 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
 }
 
 export function useGeofencing() {
-  const { companyInfo, projects } = useAppStore();
+  const companyInfo = useAppStore(state => state.companyInfo);
+  const projects = useAppStore(state => state.projects);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(false);
@@ -44,7 +51,9 @@ export function useGeofencing() {
         setIsChecking(false);
       },
       (error) => {
-        console.error('GPS Geolocation error', error);
+        // Un refus de permission ou un signal indisponible est un état prévu sur
+        // mobile, pas une erreur d'application. L'interface affiche le résultat.
+        console.warn('GPS indisponible', { code: error.code, message: error.message });
         let msg = 'Unknown GPS Error';
         if (error.code === error.PERMISSION_DENIED) {
           msg = 'Permission denied by user';
@@ -53,6 +62,9 @@ export function useGeofencing() {
         } else if (error.code === error.TIMEOUT) {
           msg = 'GPS query timed out';
         }
+        // Une ancienne position ne doit jamais être réutilisée après l'échec
+        // d'un rafraîchissement : elle pourrait provenir d'un autre chantier.
+        setCoords(null);
         setGpsError(msg);
         setIsChecking(false);
       },

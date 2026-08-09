@@ -1,6 +1,6 @@
 // Couche d'authentification et d'autorisation du serveur.
 //
-// Objectif : la clé SUPABASE_SERVICE_ROLE_KEY ne doit JAMAIS être exploitable
+// Objectif : la clé serveur Supabase (secret ou service_role historique) ne doit JAMAIS être exploitable
 // depuis le navigateur. Toutes les routes de données exigent désormais un jeton
 // de session (JWT HS256 signé côté serveur) qui transporte l'identité vérifiée
 // de l'utilisateur : user_id, company_id et role. Le NIP n'est plus validé dans
