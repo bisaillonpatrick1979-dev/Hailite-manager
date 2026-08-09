@@ -9,6 +9,7 @@ import type {
   GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead,
   ShiftAssignment, SafetyRecord
 } from './types';
+import { normalizeToolAssetStatus } from './types';
 import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
 import { apiFetch, isNativeRuntime } from './runtimeConfig';
 
@@ -514,7 +515,9 @@ export function rowToToolAsset(r: any): ToolAsset {
     warrantyExpiry: r.warranty_expiry || '', currentLocation: r.current_location || '',
     assignedEmployeeId: r.assigned_employee_id || undefined,
     assignedEmployeeName: r.assigned_employee_name || undefined,
-    status: r.status || 'in_service', notes: r.notes || '', toolPhoto: r.tool_photo || undefined,
+    // Un statut inconnu venu de la base faisait tomber tout l'onglet Outils :
+    // la recherche du libellé retournait undefined puis plantait au rendu.
+    status: normalizeToolAssetStatus(r.status), notes: r.notes || '', toolPhoto: r.tool_photo || undefined,
     serialPhoto: r.serial_photo || undefined, receiptPhoto: r.receipt_photo || undefined,
     receiptFileName: r.receipt_file_name || undefined,
     createdAt: r.created_at || new Date().toISOString(), updatedAt: r.updated_at || r.created_at || new Date().toISOString()

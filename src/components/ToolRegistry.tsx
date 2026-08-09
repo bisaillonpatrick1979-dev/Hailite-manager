@@ -57,7 +57,10 @@ function statusLabel(status: ToolAssetStatus, isFR: boolean) {
     stolen: ['Volé', 'Stolen'],
     retired: ['Retiré', 'Retired']
   };
-  return labels[status][isFR ? 0 : 1];
+  // Dernier filet : un statut hors liste ne doit jamais faire tomber la page.
+  const pair = labels[status];
+  if (!pair) return String(status || '—');
+  return pair[isFR ? 0 : 1];
 }
 
 function statusClass(status: ToolAssetStatus) {

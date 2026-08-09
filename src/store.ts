@@ -2426,7 +2426,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Au premier login, l'onboarding vient d'être terminé avant que la session
       // sécurisée existe. On le pousse maintenant, puis les appareils suivants
       // liront directement la configuration terminée depuis le cloud.
-      if (onboardingResolution.shouldSyncLocalCompletion && result.companyId) {
+      //
+      // Réservé à l'administrateur : seul son rôle peut écrire la fiche de
+      // compagnie. Sans ce garde, la session d'un employé rejouait la même
+      // écriture à chaque hydratation — refusée chaque fois, toutes les
+      // quarante-cinq secondes, sans le moindre espoir d'aboutir.
+      if (onboardingResolution.shouldSyncLocalCompletion && result.companyId && viewerEmployee?.role === 'admin') {
         syncUpdate(
           'companies',
           result.companyId,
