@@ -54,8 +54,19 @@ for (const category of [
   "'team'", "'storage'", "'security'", "'troubleshooting'"
 ]) assert.ok(help.includes(category), `Catégorie d’aide absente: ${category}`);
 
-assert.ok(help.includes("sessionStorage.setItem(progressKey"), 'La progression du démarrage n’est pas conservée pour la session.');
-assert.ok(!help.includes("localStorage.setItem(progressKey"), 'La progression liée à un employé ne doit pas rester sur un appareil partagé.');
+// La progression de formation doit survivre à une reconnexion : en
+// sessionStorage, toutes les étapes réapparaissaient comme non faites à chaque
+// retour, et l'application semblait exiger de tout refaire.
+assert.ok(help.includes("localStorage.setItem(progressKey"), 'La progression de formation doit survivre à une reconnexion.');
+assert.ok(!help.includes("sessionStorage.setItem(progressKey"), 'La progression ne doit plus être limitée à la session.');
+// L'intention d'origine reste : sur une tablette partagée, la progression d'un
+// employé ne doit pas devenir celle d'un autre. La clé porte donc son
+// identifiant, et le préfixe est déclaré dans la politique de stockage pour
+// échapper au nettoyage du démarrage sans ouvrir la porte aux données métier.
+assert.ok(help.includes('`gcp_help_progress_${employeeId}`'), 'La progression doit être propre à chaque employé.');
+const storagePolicy = read('src/securityStorage.ts');
+assert.ok(storagePolicy.includes("'gcp_help_progress_'"), 'Le préfixe de progression doit être autorisé explicitement.');
+assert.ok(storagePolicy.includes('SAFE_KEY_PREFIXES'), 'La politique de stockage doit encadrer les préfixes autorisés.');
 assert.ok(help.includes("article.roles.includes(role)"), 'Le contenu n’est pas filtré selon le rôle.');
 assert.ok(help.includes("searchable.includes(query)"), 'La recherche plein texte du guide est absente.');
 assert.ok(help.includes("onNavigate(selectedArticle.tab!"), 'Les instructions ne permettent pas d’ouvrir le module concerné.');
