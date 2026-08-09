@@ -1492,7 +1492,17 @@ export function registerApiRoutes(app: express.Express): void {
       existingQuery = applyTenantWriteScope(existingQuery, table, auth);
       const { data: existing, error: readErr } = await existingQuery.maybeSingle();
       if (readErr) throw readErr;
-      if (!existing) return res.status(404).json({ error: 'Enregistrement introuvable' });
+      if (!existing) {
+        // Supprimer ce qui n'est déjà plus là n'est pas un échec : l'état voulu
+        // est atteint. Le 404 renvoyé auparavant s'affichait à l'écran comme
+        // « Sauvegarde nuage échouée — vérifiez la connexion » alors que le
+        // réseau allait très bien, typiquement pour un objectif hebdomadaire
+        // jamais monté dans le nuage. Au passage, ne plus distinguer l'absence
+        // supprime aussi un moyen de deviner l'existence d'une ligne
+        // appartenant à une autre compagnie.
+        logAudit(auth, 'delete_noop', table, id);
+        return res.json({ success: true, alreadyAbsent: true });
+      }
       if (WRITE_OWN_ONLY.has(table) && !isManager(auth.role)) {
         const ownerCol = OWNER_COLUMN[table];
         if (String((existing as any)[ownerCol] || '') !== auth.userId) {
