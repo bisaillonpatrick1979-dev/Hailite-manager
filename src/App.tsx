@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders, setCloudSyncAllowed, type CloudSyncStatusDetail } from './apiClient';
@@ -26,7 +26,7 @@ import {
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
-import { canEmployeePunchProject, projectsAvailableForPunch } from './projectAccess';
+import { canEmployeePunchProject, effectiveProjectAssignees, projectsAvailableForPunch } from './projectAccess';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -303,9 +303,25 @@ export default function App() {
   });
   const [newProjectForm, setNewProjectForm] = useState({
     name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540,
-    radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [] as string[]
+    radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [] as string[],
+    assigneesTouched: false
   });
   const projectAssignableEmployees = employees.filter(employee => employee.role !== 'admin');
+  // Chantiers réellement pointables par la personne connectée. Calculé une fois
+  // ici plutôt que recalculé dans chaque rendu du formulaire de pointage.
+  const punchableProjects = useMemo(
+    () => projectsAvailableForPunch(projects, activeEmployee),
+    [projects, activeEmployee]
+  );
+  // Sélection effective des employés d'un nouveau chantier : tant que personne
+  // n'a touché aux cases, toute l'équipe est retenue. Créer un chantier sans
+  // assigner personne le rendait invisible à tout le monde sauf l'administrateur
+  // — le piège le plus facile à tomber dedans, et le plus silencieux.
+  const newProjectAssignees = effectiveProjectAssignees(
+    projectAssignableEmployees,
+    newProjectForm.assignedEmployees,
+    newProjectForm.assigneesTouched
+  );
   // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
   const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
   const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
@@ -589,7 +605,7 @@ export default function App() {
   useEffect(() => {
     if (!activeEmployee || activePunchSession) return;
 
-    const availableProjects = projectsAvailableForPunch(projects, activeEmployee);
+    const availableProjects = punchableProjects;
 
     if (availableProjects.length === 0) {
       if (homePunchProject) setHomePunchProject('');
@@ -602,7 +618,7 @@ export default function App() {
       : availableProjects[0].id;
 
     if (nextProject !== homePunchProject) setHomePunchProject(nextProject);
-  }, [activeEmployee, activePunchSession, homePunchProject, projects]);
+  }, [activeEmployee, activePunchSession, homePunchProject, punchableProjects]);
 
   // Photo de reçu/outil : réduite côté client (max 1280px, JPEG) comme les photos IA
   const handleExpensePhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2532,7 +2548,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         latitude: Number(newProjectForm.latitude),
                         longitude: Number(newProjectForm.longitude),
                         radius: Number(newProjectForm.radius),
-                        assignedEmployees: [...newProjectForm.assignedEmployees],
+                        assignedEmployees: [...newProjectAssignees],
                         status: 'active',
                         tasks,
                         tools
@@ -2540,7 +2556,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       alert(t.projectAddedAlert);
                       setNewProjectForm({
                         name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540,
-                        radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: []
+                        radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [],
+                        assigneesTouched: false
                       });
                     }}
                     className="p-4 bg-gray-950 border border-gray-850 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4"
@@ -2645,10 +2662,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             type="button"
                             onClick={() => {
                               const everyWorkerSelected = projectAssignableEmployees.every(employee =>
-                                newProjectForm.assignedEmployees.includes(employee.id)
+                                newProjectAssignees.includes(employee.id)
                               );
                               setNewProjectForm(previous => ({
                                 ...previous,
+                                assigneesTouched: true,
                                 assignedEmployees: everyWorkerSelected
                                   ? []
                                   : projectAssignableEmployees.map(employee => employee.id)
@@ -2656,7 +2674,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             }}
                             className="min-h-10 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 text-[10px] font-black text-orange-200"
                           >
-                            {projectAssignableEmployees.every(employee => newProjectForm.assignedEmployees.includes(employee.id))
+                            {projectAssignableEmployees.every(employee => newProjectAssignees.includes(employee.id))
                               ? t.clearAssignments
                               : t.assignAllWorkers}
                           </button>
@@ -2666,7 +2684,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       {projectAssignableEmployees.length > 0 ? (
                         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {projectAssignableEmployees.map(employee => {
-                            const checked = newProjectForm.assignedEmployees.includes(employee.id);
+                            const checked = newProjectAssignees.includes(employee.id);
                             return (
                               <label
                                 key={employee.id}
@@ -2677,9 +2695,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   checked={checked}
                                   onChange={() => setNewProjectForm(previous => ({
                                     ...previous,
+                                    assigneesTouched: true,
                                     assignedEmployees: checked
-                                      ? previous.assignedEmployees.filter(id => id !== employee.id)
-                                      : [...previous.assignedEmployees, employee.id]
+                                      ? newProjectAssignees.filter(id => id !== employee.id)
+                                      : [...newProjectAssignees, employee.id]
                                   }))}
                                   className="h-5 w-5 accent-orange-500"
                                 />
@@ -2691,6 +2710,15 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       ) : (
                         <p className="mt-3 rounded-lg border border-gray-800 bg-gray-900 p-3 text-xs text-gray-500">
                           {t.projectAssigneesNone}
+                        </p>
+                      )}
+
+                      {/* Un chantier sans personne assignée n'apparaît chez
+                          aucun employé au moment de pointer. C'est permis, mais
+                          ça ne doit jamais arriver par inadvertance. */}
+                      {projectAssignableEmployees.length > 0 && newProjectAssignees.length === 0 && (
+                        <p role="alert" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-200">
+                          {t.projectAssigneesEmptyWarning}
                         </p>
                       )}
                     </fieldset>
@@ -7358,10 +7386,19 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs text-white"
                 >
                   <option value="">{t.selectSiteOption}</option>
-                  {projectsAvailableForPunch(projects, activeEmployee).map(p => (
+                  {punchableProjects.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+                {/* Une liste vide sans explication laisse l'employé bloqué
+                    devant un menu qui ne s'ouvre sur rien. On dit pourquoi, et
+                    la phrase diffère selon qu'il faut créer un chantier ou
+                    demander une assignation. */}
+                {punchableProjects.length === 0 && (
+                  <p role="status" className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] font-bold leading-relaxed text-amber-200">
+                    {activeEmployee.role === 'admin' ? t.punchNoProjectForAdmin : t.punchNoProjectForWorker}
+                  </p>
+                )}
               </div>
 
               {/* Select Tarification Mode */}
