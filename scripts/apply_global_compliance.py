@@ -350,7 +350,7 @@ if old_effect in text:
 
 text = text.replace("  const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';", "  const dateLocale = companyInfo.dateLocale || (currentLanguage === 'FR' ? 'fr-CA' : 'en-CA');\n  const currency = companyInfo.currency || (companyInfo.country === 'US' ? 'USD' : companyInfo.country === 'EU' ? 'EUR' : 'CAD');\n  const money = (value: number) => new Intl.NumberFormat(dateLocale, { style: 'currency', currency }).format(Number(value || 0));")
 
-text = text.replace("  if (!isOnboarded) {", "  if (!isOnboarded || companyInfo.complianceVersion !== '2026.07') {")
+text = text.replace("  if (!isOnboarded) {", "  if (!isOnboarded || companyInfo.complianceVersion !== '2026.08') {")
 text = text.replace("companyCountry === 'US' ? 0 :", "companyCountry !== 'CA' ? 0 :")
 text = text.replace("if (companyCountry === 'US') {\n      return 0;", "if (companyCountry !== 'CA') {\n      return 0;")
 text = text.replace("`${regionName} (${companyCountry === 'US' ? (currentLanguage === 'FR' ? 'États-Unis' : 'United States') : 'Canada'})`", "`${regionName} (${marketLabel(companyCountry, currentLanguage)})`")
@@ -379,8 +379,8 @@ if "businessLogo: '',\n                                gstNumber" not in text:
 
 # Privacy notice overlay.
 root_anchor = "      {cloudSyncing && (\n"
-if 'privacyNoticeVersion !== \'2026.07\'' not in text:
-    privacy = """      {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.07' && (
+if 'privacyNoticeVersion !== \'2026.08\'' not in text:
+    privacy = """      {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.08' && (
         <Suspense fallback={<LazySectionFallback />}>
           <UserPrivacyNotice
             employee={activeEmployee}

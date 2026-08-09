@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Check, MapPin, ShieldCheck } from 'lucide-react';
 import type { CompanyInfo } from '../types';
+import LegalLinks from './LegalLinks';
+import { USER_PRIVACY_NOTICE_VERSION } from '../../privacyVersions';
 
-export const USER_PRIVACY_NOTICE_VERSION = '2026.07';
+export { USER_PRIVACY_NOTICE_VERSION };
 
 type Props = {
   companyInfo: CompanyInfo;
@@ -77,6 +79,7 @@ export default function UserPrivacyNotice({ companyInfo, currentLanguage, onAcce
             <p>{t('Pour demander l’accès, la correction ou la suppression de renseignements, ou poser une question sur leur utilisation, communiquez avec :', 'To request access, correction, or deletion of information, or ask how it is used, contact:')}</p>
             <p className="font-black text-cyan-300 break-all">{companyInfo.privacyContactEmail || companyInfo.email || t('Responsable de la compagnie', 'Company contact')}</p>
             {companyInfo.privacyOfficerName && <p className="text-slate-400">{companyInfo.privacyOfficerName}</p>}
+            <LegalLinks language={currentLanguage} className="justify-start pt-2" />
           </div>
 
           <p className="text-[11px] text-slate-400">{t('Cet écran confirme que l’avis a été présenté. Il ne remplace pas l’analyse par la compagnie de la base juridique applicable dans chaque pays ou relation de travail.', 'This screen records that notice was presented. It does not replace the company’s assessment of the lawful basis applicable in each country or employment relationship.')}</p>

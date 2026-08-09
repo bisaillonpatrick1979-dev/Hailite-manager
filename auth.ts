@@ -287,6 +287,10 @@ export interface AuthedRequest extends express.Request {
 }
 
 export function extractAuth(req: express.Request): AuthContext | null {
+  const authorization = String(req.headers.authorization || '').trim();
+  const bearer = authorization.match(/^Bearer\s+([^\s]+)$/i);
+  if (bearer) return verifySession(bearer[1]);
+
   const cookieHeader = req.headers.cookie || '';
   const cookie = cookieHeader
     .split(';')

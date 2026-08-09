@@ -3,6 +3,10 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 
 const isProduction = process.env.NODE_ENV === 'production';
+const NATIVE_APP_ORIGINS = new Set([
+  'capacitor://localhost',
+  'https://localhost'
+]);
 
 export function registerSecurityMiddleware(app: express.Express): void {
   app.disable('x-powered-by');
@@ -26,6 +30,21 @@ export function registerSecurityMiddleware(app: express.Express): void {
       : false,
     crossOriginEmbedderPolicy: false
   }));
+
+  // Capacitor sert les fichiers intégrés depuis localhost. Les appels API
+  // utilisent un jeton Bearer court plutôt que le cookie web SameSite. Cette
+  // liste fermée autorise uniquement les origines natives connues.
+  app.use((req, res, next) => {
+    const origin = String(req.get('origin') || '');
+    if (!NATIVE_APP_ORIGINS.has(origin)) return next();
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.vary('Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Hailite-Client');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Max-Age', '600');
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    next();
+  });
 
   app.use(rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -53,7 +72,9 @@ export function registerSecurityMiddleware(app: express.Express): void {
       const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
       const requestHost = forwardedHost || req.get('host') || '';
       const configuredOrigin = process.env.APP_URL ? new URL(process.env.APP_URL).origin : '';
+      const nativeClient = ['android', 'ios'].includes(String(req.get('x-hailite-client') || '').toLowerCase());
       if (new URL(origin).host === requestHost || origin === configuredOrigin) return next();
+      if (nativeClient && NATIVE_APP_ORIGINS.has(origin)) return next();
     } catch {
       // Toute origine mal formée est refusée.
     }

@@ -22,6 +22,7 @@ const result = {
   demoCloudRequests: [],
   consoleErrors: [],
   pageErrors: [],
+  testStage: 'launch',
   passed: false
 };
 
@@ -117,18 +118,45 @@ try {
   result.rootHasContent = await page.$eval('#root', element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
   result.bodyIsNotBlank = await page.$eval('body', element => (element.innerText || '').trim().length > 100);
 
-  // Le test importe le store uniquement depuis le serveur Vite de validation.
-  // Il établit une session admin fictive en mémoire sans ajouter le moindre
+  // Charge les modules du serveur Vite en arrière-plan et conserve leurs
+  // références dans la page. Ne pas retourner la promesse import() à Puppeteer:
+  // certains Chromium la libèrent prématurément (« Promise was collected »).
+  // Ce pont n'existe que dans cette page de test et n'ajoute rien à l'app.
+  result.testStage = 'test-bridge';
+  await page.evaluate(() => {
+    window.__hailiteTestBridge = null;
+    window.__hailiteTestBridgeError = '';
+    Promise.all([import('/src/store.ts'), import('/src/apiClient.ts')])
+      .then(([storeModule, apiClient]) => {
+        window.__hailiteTestBridge = {
+          store: storeModule.useAppStore,
+          snapshotKeys: storeModule.DEMO_SANDBOX_SNAPSHOT_KEYS,
+          apiClient,
+          cloudProbeDone: false,
+          cloudProbeError: ''
+        };
+      })
+      .catch(error => { window.__hailiteTestBridgeError = String(error?.message || error); });
+  });
+  await page.waitForFunction(
+    () => Boolean(window.__hailiteTestBridge || window.__hailiteTestBridgeError),
+    { timeout: 30000 }
+  );
+  const bridgeError = await page.evaluate(() => window.__hailiteTestBridgeError);
+  if (bridgeError) throw new Error(`Pont de test impossible à charger: ${bridgeError}`);
+
+  // Établit une session admin fictive en mémoire sans ajouter le moindre
   // contournement d'authentification au bundle de production.
-  await page.evaluate(async () => {
-    const { useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
+  result.testStage = 'session';
+  await page.evaluate(() => {
+    const { store } = window.__hailiteTestBridge;
+    const state = store.getState();
     const admin = state.employees.find(employee => employee.role === 'admin');
     if (!admin) throw new Error('Administrateur local de validation introuvable');
-    useAppStore.setState({
+    store.setState({
       activeEmployee: {
         ...admin,
-        privacyNoticeVersion: '2026.07',
+        privacyNoticeVersion: '2026.08',
         privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
         locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
       }
@@ -137,8 +165,10 @@ try {
 
   // Branche un faux serveur authentifié, puis prouve que les chemins lecture et
   // écriture atteignent réellement ce serveur AVANT d'activer l'isolation.
-  const cloudProbe = await page.evaluate(async () => {
-    const apiClient = await import('/src/apiClient.ts');
+  result.testStage = 'cloud-probe';
+  await page.evaluate(() => {
+    const bridge = window.__hailiteTestBridge;
+    const apiClient = bridge.apiClient;
     const originalFetch = window.fetch.bind(window);
     const calls = [];
     window.__hailiteCloudTestRequests = calls;
@@ -162,26 +192,42 @@ try {
 
     apiClient.setAuthenticatedSession(true);
     apiClient.setCloudSyncAllowed(true);
-    await apiClient.hydrateFromCloud();
-    apiClient.syncInsert('clients', { id: 'cloud-probe', name: 'Sonde CI' });
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const requests = [...calls];
-    calls.length = 0;
-    return { cloudAllowed: apiClient.isCloudSyncAllowed(), requests };
+    apiClient.hydrateFromCloud()
+      .then(() => {
+        apiClient.syncInsert('clients', { id: 'cloud-probe', name: 'Sonde CI' });
+        bridge.cloudProbeDone = true;
+      })
+      .catch(error => {
+        bridge.cloudProbeError = String(error?.message || error);
+        bridge.cloudProbeDone = true;
+      });
   });
-  result.cloudProbeRequests = cloudProbe.requests;
+  await page.waitForFunction(() => window.__hailiteTestBridge?.cloudProbeDone, { timeout: 30000 });
+  const cloudProbeError = await page.evaluate(() => window.__hailiteTestBridge.cloudProbeError);
+  if (cloudProbeError) throw new Error(`Sonde nuage échouée: ${cloudProbeError}`);
+  await page.waitForFunction(
+    () => window.__hailiteCloudTestRequests?.includes('POST /api/db/clients'),
+    { timeout: 30000 }
+  );
+  result.cloudProbeRequests = await page.evaluate(() => {
+    const requests = [...(window.__hailiteCloudTestRequests || [])];
+    window.__hailiteCloudTestRequests.length = 0;
+    return requests;
+  });
+  const cloudAllowed = await page.evaluate(() => window.__hailiteTestBridge.apiClient.isCloudSyncAllowed());
   result.cloudProbeValid = Boolean(
-    cloudProbe.cloudAllowed && cloudProbe.requests.includes('GET /api/hydrate') &&
-    cloudProbe.requests.includes('POST /api/db/clients')
+    cloudAllowed && result.cloudProbeRequests.includes('GET /api/hydrate') &&
+    result.cloudProbeRequests.includes('POST /api/db/clients')
   );
 
   // La liste exportée par le store est la même source de vérité que celle qui
   // capture le véritable instantané. Le statut réseau est opérationnel et peut
   // légitimement être recalculé à la sortie; toutes les données sont comparées.
-  const realStateBeforeDemo = await page.evaluate(async () => {
-    const { DEMO_SANDBOX_SNAPSHOT_KEYS, useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
-    const keys = DEMO_SANDBOX_SNAPSHOT_KEYS.filter(key => key !== 'offlineSyncStatus');
+  result.testStage = 'snapshot-before-demo';
+  const realStateBeforeDemo = await page.evaluate(() => {
+    const { store, snapshotKeys } = window.__hailiteTestBridge;
+    const state = store.getState();
+    const keys = snapshotKeys.filter(key => key !== 'offlineSyncStatus');
     return {
       keys,
       serialized: JSON.stringify(Object.fromEntries(keys.map(key => [key, state[key]])))
@@ -203,9 +249,9 @@ try {
   await waitForText('Mode Démo 5 ans — données fictives');
   result.demoActivated = true;
 
-  const demoState = await page.evaluate(async () => {
-    const { useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
+  result.testStage = 'demo-state';
+  const demoState = await page.evaluate(() => {
+    const state = window.__hailiteTestBridge.store.getState();
     return {
       active: state.demoSandboxActive,
       totalRows: state.demoSandboxSummary?.counts.totalRows || 0,
@@ -225,21 +271,20 @@ try {
   // Tente une hydratation et une vraie mutation de store pendant la démo. Sans
   // les gardes du bac à sable, ces deux opérations atteindraient le faux nuage
   // validé ci-dessus; avec l'isolation, elles restent entièrement en mémoire.
-  const isolationProof = await page.evaluate(async () => {
-    const apiClient = await import('/src/apiClient.ts');
-    const { useAppStore } = await import('/src/store.ts');
-    await apiClient.hydrateFromCloud();
+  result.testStage = 'demo-isolation';
+  const isolationProof = await page.evaluate(() => {
+    const { apiClient, store } = window.__hailiteTestBridge;
+    void apiClient.hydrateFromCloud();
     const clientName = 'Client ajouté uniquement dans la démo';
-    useAppStore.getState().addClient({
+    store.getState().addClient({
       name: clientName,
       company: 'Bac à sable',
       email: 'demo-only@hailite.example',
       phone: '403-555-0199',
       address: 'Adresse fictive'
     });
-    await new Promise(resolve => setTimeout(resolve, 0));
     return {
-      mutationApplied: useAppStore.getState().clients.some(client => client.name === clientName),
+      mutationApplied: store.getState().clients.some(client => client.name === clientName),
       requests: [...window.__hailiteCloudTestRequests]
     };
   });
@@ -251,14 +296,15 @@ try {
   result.demoStatsVisible = await page.$eval('#view-stats-content', element => (element.innerText || '').trim().length > 500);
 
   await clickButton('Retour aux vraies données');
-  await page.waitForFunction(async () => {
-    const { useAppStore } = await import('/src/store.ts');
-    return !useAppStore.getState().demoSandboxActive;
-  }, { timeout: 30000 });
-  const realStateAfterDemo = await page.evaluate(async () => {
-    const { DEMO_SANDBOX_SNAPSHOT_KEYS, useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
-    const keys = DEMO_SANDBOX_SNAPSHOT_KEYS.filter(key => key !== 'offlineSyncStatus');
+  await page.waitForFunction(
+    () => !(document.body.textContent || '').includes('Mode Démo 5 ans — données fictives'),
+    { timeout: 30000 }
+  );
+  result.testStage = 'snapshot-after-demo';
+  const realStateAfterDemo = await page.evaluate(() => {
+    const { store, snapshotKeys } = window.__hailiteTestBridge;
+    const state = store.getState();
+    const keys = snapshotKeys.filter(key => key !== 'offlineSyncStatus');
     return {
       keys,
       serialized: JSON.stringify(Object.fromEntries(keys.map(key => [key, state[key]])))
@@ -268,6 +314,7 @@ try {
     JSON.stringify(realStateAfterDemo.keys) === JSON.stringify(realStateBeforeDemo.keys) &&
     realStateAfterDemo.serialized === realStateBeforeDemo.serialized
   );
+  result.testStage = 'complete';
 } catch (error) {
   result.testError = String(error?.stack || error);
 } finally {
@@ -281,6 +328,7 @@ result.passed = Boolean(
   result.loginVisibleWithoutReload && result.rootHasContent && result.bodyIsNotBlank &&
   result.cloudProbeValid && result.demoSettingsVisible && result.demoActivated && result.demoCountsValid && result.demoMutationApplied &&
   result.demoStatsVisible && result.demoRealStateRestored && result.demoCloudRequests.length === 0 &&
+  result.consoleErrors.length === 0 && result.pageErrors.length === 0 &&
   !result.hookErrorDetected && !result.testError
 );
 

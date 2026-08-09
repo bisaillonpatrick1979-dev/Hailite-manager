@@ -30,7 +30,7 @@ if main_return not in text:
 safe_guard = """  // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
   // avant un useEffect provoque « Rendered more hooks than during the previous
   // render » et un écran noir au moment de terminer la configuration.
-  if (!isOnboarded || companyInfo.complianceVersion !== '2026.07') {
+  if (!isOnboarded || companyInfo.complianceVersion !== '2026.08') {
     return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
   }
 

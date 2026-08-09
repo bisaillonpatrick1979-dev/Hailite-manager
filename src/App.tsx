@@ -19,6 +19,8 @@ import { TEST_DATASET_SUMMARY } from './testDataset';
 import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
 import { canUseGeofenceBypass, useGeofencing } from './hooks/useGeofencing';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
+import { apiFetch } from './runtimeConfig';
+import { COMPLIANCE_VERSION, USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
@@ -49,13 +51,14 @@ const DemoSandboxPanel = lazy(() => import('./components/DemoSandboxPanel'));
 import EmployeeAvatar from './components/EmployeeAvatar';
 import LiveCompensationPanel from './components/LiveCompensationPanel';
 import CompanyLogo from './components/CompanyLogo';
+import LegalLinks from './components/LegalLinks';
 import SignaturePad from './components/SignaturePad';
 import {
   Building2, Calendar, DollarSign, Clock, User, Plus, Trash, Edit, Check, 
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, CheckSquare, Dumbbell,
-  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX
+  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX, LogOut, Menu
 } from 'lucide-react';
 
 // Petites icônes-avatars générées localement (SVG en data URI) : aucune
@@ -178,6 +181,12 @@ export default function App() {
 
   // App Navigation state
   const [activeTab, setActiveTab] = useState<'home' | 'invoice' | 'projects' | 'documents' | 'inventory' | 'commandes' | 'stats' | 'settings' | 'motivation' | 'prospects' | 'schedule' | 'accounting'>('home');
+
+  // Chaque vue mobile commence en haut. Sans ce garde, changer d'onglet depuis
+  // une longue liste ouvrait le nouvel écran au milieu de son contenu.
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [activeTab]);
   const [activeSettingsTab, setActiveSettingsTab] = useState<number>(0);
   const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
   // Les employés non-admin (incl. sous-traitants) ne doivent voir que les
@@ -320,7 +329,7 @@ export default function App() {
     if (!activeEmployee || visibleSettingsTab !== 12) return;
     let cancelled = false;
     setAiProviderStatusError(false);
-    fetch('/api/ai/status', { headers: authHeaders() })
+    apiFetch('/api/ai/status', { headers: authHeaders() })
       .then(async response => {
         const data = await response.json().catch(() => null);
         if (!response.ok || !data?.providers) throw new Error('AI status unavailable');
@@ -1076,7 +1085,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     try {
       const PROVIDER_NAMES: Record<string, string> = { anthropic: 'Anthropic Claude', openai: 'OpenAI', gemini: 'Google Gemini' };
 
-      const res = await fetch('/api/chat', {
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
@@ -1277,7 +1286,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
   // avant un useEffect provoque « Rendered more hooks than during the previous
   // render » et un écran noir au moment de terminer la configuration.
-  if (!isOnboarded || companyInfo.complianceVersion !== '2026.07') {
+  if (!isOnboarded || companyInfo.complianceVersion !== COMPLIANCE_VERSION) {
     return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
   }
 
@@ -1286,7 +1295,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       id="main-scaffold-container"
       className={`min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 flex flex-col relative select-none ${demoSandboxActive ? 'pt-36 sm:pt-28' : 'pt-16'}`}
     >
-      {activeEmployee && activeEmployee.privacyNoticeVersion !== '2026.07' && (
+      {activeEmployee && activeEmployee.privacyNoticeVersion !== USER_PRIVACY_NOTICE_VERSION && (
         <Suspense fallback={<LazySectionFallback />}>
           <UserPrivacyNotice
             companyInfo={companyInfo}
@@ -1312,31 +1321,32 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </div>
       )}
       {/* Top Navbar */}
-      <nav id="navbar-scaffold" className="fixed top-0 left-0 right-0 h-16 border-b border-gray-800 bg-[#16191F] px-4 flex items-center justify-between z-40">
-        <div className="flex items-center gap-3">
+      <nav id="navbar-scaffold" className="fixed top-0 left-0 right-0 h-16 border-b border-gray-800 bg-[#16191F] px-2 sm:px-4 flex items-center justify-between gap-2 z-40">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <CompanyLogo
             logo={companyInfo.logo}
             companyName={companyInfo.name}
-            className="w-10 h-10 rounded-xl border border-gray-700 bg-white p-1 shadow-md"
+            className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl border border-gray-700 bg-white p-1 shadow-md"
             imageClassName="w-full h-full object-contain rounded-lg"
             fallbackClassName="rounded-xl bg-orange-600 text-white text-sm"
           />
-          <div>
-            <h1 className="text-sm font-black uppercase tracking-tight text-white leading-none">
-              {companyInfo.name}
+          <div className="min-w-0 sm:max-w-[220px]">
+            <h1 className="whitespace-nowrap text-xs sm:text-sm font-black uppercase tracking-tight text-white leading-none">
+              <span className="sm:hidden">Hailite</span>
+              <span className="hidden truncate sm:block">{companyInfo.name}</span>
             </h1>
-            <span className="text-[10px] text-orange-500 font-mono tracking-widest font-bold">
+            <span className="hidden truncate whitespace-nowrap text-[10px] text-orange-500 font-mono tracking-widest font-bold sm:block">
               {t.appName}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
           {/* Assistant IA autonome (admins) : page /assistant installable sur téléphone */}
           {activeEmployee?.role === 'admin' && (
             <a
               href="/assistant"
-              className="flex items-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
+              className="hidden sm:flex items-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
               title={currentLanguage === 'FR' ? 'Assistant IA (plein écran)' : 'AI Assistant (full screen)'}
               aria-label={currentLanguage === 'FR' ? 'Ouvrir l’assistant IA' : 'Open the AI assistant'}
             >
@@ -1349,7 +1359,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             id="open-professional-help-center"
             type="button"
             onClick={() => setHelpCenterOpen(true)}
-            className="flex min-h-10 items-center gap-2 rounded-xl border border-orange-500/30 bg-orange-600/15 px-3 text-orange-200 transition hover:bg-orange-600/25 hover:text-white"
+            className="flex min-h-10 items-center gap-2 rounded-xl border border-orange-500/30 bg-orange-600/15 px-2 sm:px-3 text-orange-200 transition hover:bg-orange-600/25 hover:text-white"
             title={currentLanguage === 'FR' ? 'Centre d’aide et de formation' : 'Help and training center'}
             aria-label={currentLanguage === 'FR' ? 'Ouvrir le centre d’aide' : 'Open the help center'}
           >
@@ -1361,27 +1371,30 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           <button
             id="lang-toggle-nav"
             onClick={() => setLanguage(currentLanguage === 'FR' ? 'EN' : 'FR')}
-            className="px-3 py-1 bg-gray-800 text-[11px] font-bold rounded hover:bg-gray-700 transition cursor-pointer"
+            className="min-h-10 px-2 sm:px-3 py-1 bg-gray-800 text-[11px] font-bold rounded hover:bg-gray-700 transition cursor-pointer"
           >
             {currentLanguage}
           </button>
 
           {/* User Signout */}
           {activeEmployee && (
-            <div className="flex items-center gap-2 border-l border-gray-800 pl-3">
+            <div className="flex items-center gap-1 sm:gap-2 border-l border-gray-800 pl-1 sm:pl-3">
               <span className="hidden md:inline text-xs font-semibold text-gray-300">
                 {activeEmployee.name} ({activeEmployee.role === 'admin' ? t.roleAdmin : t.roleEmployee})
               </span>
               <EmployeeAvatar
                 src={activeEmployee.avatar}
                 name={activeEmployee.name}
-                className="w-10 h-10 rounded-full border border-gray-700 object-cover"
+                className="hidden w-10 h-10 rounded-full border border-gray-700 object-cover sm:block"
               />
               <button
                 onClick={logout}
-                className="text-xs px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold border border-red-500/30 rounded cursor-pointer transition"
+                aria-label={t.logoutBtn}
+                title={t.logoutBtn}
+                className="min-h-10 min-w-10 inline-flex items-center justify-center text-xs px-2 sm:px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold border border-red-500/30 rounded cursor-pointer transition"
               >
-                {t.logoutBtn}
+                <LogOut className="h-4 w-4 sm:hidden" />
+                <span className="hidden sm:inline">{t.logoutBtn}</span>
               </button>
             </div>
           )}
@@ -1560,6 +1573,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </div>
             )}
           </div>
+          <LegalLinks language={currentLanguage} className="mt-4" />
         </div>
       ) : (
         /* ----------------- WORKSPACE (LOGGED IN) ----------------- */
@@ -1711,7 +1725,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   return (
                     <section id="admin-today-banner" className="bg-[#16191F] border border-gray-800 rounded-2xl p-4 space-y-4">
                       <h3 className="text-base font-black text-white flex flex-wrap items-baseline gap-2">
-                        <span>📅 {currentLanguage === 'FR' ? "Aujourd'hui" : 'Today'}</span>
+                        <span className="inline-flex items-center gap-2">
+                          <Calendar className="h-5 w-5 text-orange-400" aria-hidden="true" />
+                          {currentLanguage === 'FR' ? "Aujourd'hui" : 'Today'}
+                        </span>
                         <span className="text-xs text-gray-400 font-semibold capitalize">{todayLabel}</span>
                       </h3>
 
@@ -1721,7 +1738,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             {currentLanguage === 'FR' ? 'Punchs actifs' : 'Active punches'}
                           </span>
                           <span className={`text-2xl font-black ${activePunchCount > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-                            {activePunchCount > 0 ? '🟢 ' : ''}{activePunchCount}
+                            {activePunchCount > 0 && <span className="mr-2 inline-block h-3 w-3 rounded-full bg-green-400" aria-hidden="true" />}
+                            {activePunchCount}
                           </span>
                         </div>
 
@@ -1738,7 +1756,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             {currentLanguage === 'FR' ? 'Factures en retard' : 'Overdue invoices'}
                           </span>
                           <span className={`text-2xl font-black ${overdueInvoiceCount > 0 ? 'text-red-400' : 'text-gray-500'}`}>
-                            {overdueInvoiceCount > 0 ? '🔴 ' : ''}{overdueInvoiceCount}
+                            {overdueInvoiceCount > 0 && <span className="mr-2 inline-block h-3 w-3 rounded-full bg-red-400" aria-hidden="true" />}
+                            {overdueInvoiceCount}
                           </span>
                         </button>
 
@@ -4343,6 +4362,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </p>
                 </div>
 
+                <section className="rounded-xl border border-cyan-500/20 bg-cyan-950/15 p-3">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-cyan-300">
+                    {currentLanguage === 'FR' ? 'Confidentialité et compte' : 'Privacy and account'}
+                  </h4>
+                  <p className="mt-1 text-[10px] leading-relaxed text-gray-400">
+                    {currentLanguage === 'FR'
+                      ? 'Consultez les politiques ou demandez la suppression d’un compte et de ses données.'
+                      : 'Review the policies or request deletion of an account and its data.'}
+                  </p>
+                  <LegalLinks language={currentLanguage} className="mt-2 justify-start" />
+                </section>
+
                 <div className="flex flex-col md:flex-row gap-6">
                   {/* Left: list of settings tabs (réglages de compagnie/équipe réservés à l'admin) */}
                   <div className="w-full md:w-56 flex flex-col gap-1 flex-shrink-0 border-r border-gray-800 pr-2">
@@ -6684,15 +6715,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         dragMomentum={false}
         dragControls={dragControls}
         dragListener={!aiChatOpen}
-        className="fixed bottom-6 right-6 z-50 select-none"
+        className="fixed bottom-20 right-3 sm:right-6 z-50 select-none"
       >
         {!aiChatOpen ? (
           <button
             onClick={() => setAiChatOpen(true)}
             id="floating-ai-agent-btn"
-            className="w-14 h-14 bg-gradient-to-tr from-cyan-500 to-blue-600 rounded-full shadow-2xl flex items-center justify-center text-2xl border-2 border-white/20 hover:scale-110 active:scale-95 transition-transform duration-300 cursor-grab active:cursor-grabbing text-white animate-bounce"
+            aria-label={currentLanguage === 'FR' ? 'Ouvrir l’assistant IA' : 'Open the AI assistant'}
+            className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-tr from-cyan-500 to-blue-600 rounded-full shadow-2xl flex items-center justify-center text-xl sm:text-2xl border-2 border-white/20 hover:scale-110 active:scale-95 transition-transform duration-300 cursor-grab active:cursor-grabbing text-white animate-bounce"
           >
-            ✨
+            <Sparkles className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
           </button>
         ) : (
           <div className="w-80 sm:w-96 h-[500px] bg-[#16191F] border border-gray-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden relative">
@@ -6957,7 +6989,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     activeTab === 'home' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">🏠</span>
+                  <Building2 className="h-6 w-6" aria-hidden="true" />
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminHome}</span>
                 </button>
 
@@ -6967,7 +6999,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     activeTab === 'documents' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">📄</span>
+                  <FileText className="h-6 w-6" aria-hidden="true" />
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminDocs}</span>
                 </button>
 
@@ -6977,7 +7009,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     activeTab === 'projects' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">📋</span>
+                  <Briefcase className="h-6 w-6" aria-hidden="true" />
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navAdminProjects}</span>
                 </button>
 
@@ -6987,7 +7019,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     activeTab === 'stats' ? 'text-orange-500 font-bold scale-105' : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <span className="text-2xl">📊</span>
+                  <BarChart2 className="h-6 w-6" aria-hidden="true" />
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">{t.navShortStats}</span>
                 </button>
 
@@ -7001,7 +7033,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   aria-expanded={showMoreMenu}
                   aria-controls="admin-more-menu"
                 >
-                  <span className="text-2xl">☰</span>
+                  <Menu className="h-6 w-6" aria-hidden="true" />
                   <span className="text-[11px] font-black uppercase tracking-wide leading-none">
                     {currentLanguage === 'FR' ? 'Plus' : 'More'}
                   </span>

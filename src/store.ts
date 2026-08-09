@@ -26,6 +26,7 @@ import {
 import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
 import { browserStorageValue } from './securityStorage';
 import type { DemoSandboxSummary } from './demoSandbox';
+import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 
 interface AppState {
   // Data State
@@ -1025,7 +1026,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ? (() => {
           const now = new Date().toISOString();
           return {
-            privacyNoticeVersion: '2026.07',
+            privacyNoticeVersion: USER_PRIVACY_NOTICE_VERSION,
             privacyNoticeAcknowledgedAt: now,
             locationNoticeAcknowledgedAt: now
           };

@@ -18,7 +18,7 @@ const administrator: Employee = {
   avatar: '',
   level: 1,
   xp: 0,
-  privacyNoticeVersion: '2026.07',
+  privacyNoticeVersion: '2026.08',
   privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
   locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
 };

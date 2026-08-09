@@ -26,5 +26,6 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run validate:features
+      - run: npm run store:validate
       - run: npm run audit
       - run: npm run build:vercel

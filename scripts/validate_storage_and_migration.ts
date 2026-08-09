@@ -87,7 +87,7 @@ assert.ok(!api.includes('syncLegacyMigrationQueue'), 'L’API client ne doit pas
 for (const marker of [
   'prepareLocalTestEnvironment',
   'if (LOCAL_TEST_MODE)',
-  "fetch('/api/bootstrap'",
+  "apiFetch('/api/bootstrap'",
   'identity?.enabled === true',
   'applyCompanyIdentity(identity.company)'
 ]) assert.ok(bootstrap.includes(marker), `Bootstrap de stockage incomplet: ${marker}`);

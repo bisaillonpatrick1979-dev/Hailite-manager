@@ -1,6 +1,7 @@
 import { LOCAL_TEST_DATA_VERSION, LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET, TEST_DATASET_SUMMARY } from './testDataset';
 import { browserStorageValue } from './securityStorage';
+import { apiFetch } from './runtimeConfig';
 
 const TEST_VERSION_KEY = 'gcp_localTestDataVersion';
 const TEST_MODE_KEY = 'gcp_localTestMode';
@@ -142,7 +143,7 @@ export async function prepareCloudState(): Promise<void> {
   }
 
   try {
-    const identityResponse = await fetch('/api/bootstrap', {
+    const identityResponse = await apiFetch('/api/bootstrap', {
       headers: { Accept: 'application/json' },
       cache: 'no-store',
       credentials: 'same-origin'

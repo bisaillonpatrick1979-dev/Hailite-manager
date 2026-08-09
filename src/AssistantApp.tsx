@@ -17,6 +17,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import useAppStore from './store';
 import { authHeaders } from './apiClient';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
+import { apiFetch } from './runtimeConfig';
 import { Camera, Check, Download, LogOut, Mic, Send, Volume2, VolumeX, X } from 'lucide-react';
 
 interface ChatEntry {
@@ -375,7 +376,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       const regionLabel = companyInfo.region
         ? `${companyInfo.region} (${companyInfo.country === 'US' ? (isFR ? 'États-Unis' : 'United States') : 'Canada'})`
         : 'Canada';
-      const res = await fetch('/api/chat', {
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
