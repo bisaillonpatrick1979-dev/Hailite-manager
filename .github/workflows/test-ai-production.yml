@@ -99,9 +99,37 @@ jobs:
                   'error': response.get('error') if isinstance(response, dict) else 'invalid response'
               }
 
+          # Le rapport ne disait que « loginHttp: 401 », ce qui ne permet pas de
+          # distinguer un NIP erroné d'un blocage temporaire ou d'une base
+          # indisponible. Le serveur renvoie pourtant un code précis : on le
+          # conserve, avec un diagnostic en clair.
+          login_code_name = login.get('code') if isinstance(login, dict) else None
+          if login_code == 200:
+              diagnostic = 'Connexion réussie.'
+          elif not selected:
+              diagnostic = (
+                  'Aucun profil ne porte le nom AI_TEST_USER_NAME dans l’annuaire. '
+                  'Vérifiez l’orthographe exacte du secret, accents compris.'
+              )
+          elif login_code_name == 'INVALID_CREDENTIALS':
+              diagnostic = (
+                  'Le profil existe mais le NIP du secret AI_TEST_PIN a été refusé. '
+                  'Réenregistrez AI_TEST_PIN avec les quatre chiffres exacts du compte.'
+              )
+          elif login_code_name == 'THROTTLED':
+              diagnostic = 'Trop de tentatives récentes : le compte est temporairement bloqué.'
+          elif login_code_name == 'AUTH_UNAVAILABLE':
+              diagnostic = 'Base de données indisponible côté serveur.'
+          else:
+              diagnostic = f'Échec inattendu (HTTP {login_code}).'
+
           result.update({
               'directoryHttp': directory_code,
+              'directoryUserFound': bool(selected),
               'loginHttp': login_code,
+              'loginCode': login_code_name,
+              'loginError': login.get('error') if isinstance(login, dict) else None,
+              'diagnostic': diagnostic,
               'cookieCreated': len(cookies) > 0,
               'statusHttp': status_code,
               'configured': configured

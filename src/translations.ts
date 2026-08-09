@@ -8,6 +8,10 @@ export const translations = {
     appName: "Gestion Chantier Pro",
     companyPrefix: "Hailite Xteriors",
     roleAdmin: "Administrateur",
+    adminBadgeTitle: "Administrateur — propriétaire du compte",
+    punchNoProjectForWorker: "Aucun chantier actif ne vous est assigné. Demandez à l'administrateur de vous ajouter au chantier.",
+    punchNoProjectForAdmin: "Aucun chantier actif. Créez-en un dans l'onglet Chantiers.",
+    projectAssigneesEmptyWarning: "Personne n'est assigné : aucun employé ne pourra pointer sur ce chantier.",
     roleEmployee: "Employé",
     roleAccountant: "Comptable",
     roleSecretary: "Secrétaire",
@@ -897,7 +901,7 @@ export const translations = {
     keyBadgeHint: "💡 Chaque réponse de l'assistant affiche le fournisseur et la clé réellement utilisés (badge ⚡ sous la réponse).",
 
     // Panneau latéral droit
-    geofencingStatus: "Géofencing Status",
+    geofencingStatus: "État du géorepérage",
     restrictedBySite: "Restreint par chantier",
     noGlobalRestriction: "Aucune restriction globale",
     railGpsNote: "Les coordonnées GPS de l'appareil sont requises pour puncher in sur tout chantier dans un rayon moyen de 100m.",
@@ -1387,6 +1391,10 @@ export const translations = {
     appName: "Chantier Pro Management",
     companyPrefix: "Hailite Xteriors",
     roleAdmin: "Administrator",
+    adminBadgeTitle: "Administrator — account owner",
+    punchNoProjectForWorker: "No active job site is assigned to you. Ask an administrator to add you to the site.",
+    punchNoProjectForAdmin: "No active job site. Create one in the Projects tab.",
+    projectAssigneesEmptyWarning: "Nobody is assigned: no employee will be able to punch in on this site.",
     roleEmployee: "Employee",
     roleAccountant: "Accountant",
     roleSecretary: "Secretary",
@@ -2276,7 +2284,7 @@ export const translations = {
     keyBadgeHint: "💡 Each assistant reply shows the provider and key actually used (⚡ badge under the reply).",
 
     // Right rail
-    geofencingStatus: "Geofencing Status",
+    geofencingStatus: "Geofencing status",
     restrictedBySite: "Restricted per site",
     noGlobalRestriction: "No global restriction",
     railGpsNote: "The device's GPS coordinates are required to punch in on any job site within an average radius of 100m.",

@@ -194,6 +194,17 @@ export interface InventoryItem {
 
 
 export type ToolAssetStatus = 'in_service' | 'loaned' | 'repair' | 'missing' | 'stolen' | 'retired';
+// Source unique des statuts acceptés : sert à valider ce qui vient de la base
+// avant que l'interface ne s'en serve pour chercher un libellé.
+export const TOOL_ASSET_STATUSES: ToolAssetStatus[] = [
+  'in_service', 'loaned', 'repair', 'missing', 'stolen', 'retired'
+];
+export function normalizeToolAssetStatus(value: unknown): ToolAssetStatus {
+  const candidate = String(value || '');
+  return (TOOL_ASSET_STATUSES as string[]).includes(candidate)
+    ? (candidate as ToolAssetStatus)
+    : 'in_service';
+}
 
 export interface ToolAsset {
   id: string;

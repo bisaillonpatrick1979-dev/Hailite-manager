@@ -14,6 +14,17 @@ const SAFE_KEYS = new Set([
   'gcp_chunkReloadedAt'
 ]);
 
+// Familles de clés autorisées par préfixe, quand l'identifiant fait partie du
+// nom. La progression dans le centre d'aide est une liste d'étapes de tutoriel
+// cochées : aucune donnée personnelle, aucune donnée d'entreprise. Elle doit
+// survivre à une déconnexion, sinon la formation redemande à chaque
+// reconnexion de refaire ce qui a déjà été fait.
+const SAFE_KEY_PREFIXES = ['gcp_help_progress_'];
+
+export function isSafeStorageKey(key: string): boolean {
+  return SAFE_KEYS.has(key) || SAFE_KEY_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
 const SAFE_COMPANY_FIELDS = new Set([
   'name', 'logo', 'country', 'region', 'currency', 'unitSystem', 'dateLocale',
   'taxRate1', 'taxRate2', 'localTaxRate', 'taxRate1Name', 'taxRate2Name',
@@ -36,7 +47,7 @@ export function browserStorageValue(
   allowLocalTestData = false
 ): { allowed: boolean; value?: unknown } {
   if (allowLocalTestData) return { allowed: true, value };
-  if (!SAFE_KEYS.has(key)) return { allowed: false };
+  if (!isSafeStorageKey(key)) return { allowed: false };
   if (key === 'gcp_companyInfo') {
     return { allowed: true, value: sanitizeCompanyPreferences(value) };
   }
@@ -56,7 +67,7 @@ export function purgeLegacySensitiveStorage(allowLocalTestData = false): void {
     const key = localStorage.key(index);
     if (!key || !key.startsWith('gcp_')) continue;
 
-    if (!SAFE_KEYS.has(key)) {
+    if (!isSafeStorageKey(key)) {
       localStorage.removeItem(key);
       continue;
     }

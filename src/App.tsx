@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders, setCloudSyncAllowed, type CloudSyncStatusDetail } from './apiClient';
@@ -26,7 +26,7 @@ import {
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
-import { canEmployeePunchProject, projectsAvailableForPunch } from './projectAccess';
+import { canEmployeePunchProject, effectiveProjectAssignees, projectsAvailableForPunch } from './projectAccess';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -59,7 +59,8 @@ import {
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, CheckSquare, Dumbbell,
-  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX, LogOut, Menu
+  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX, LogOut, Menu,
+  ShieldCheck
 } from 'lucide-react';
 
 // Petites icônes-avatars générées localement (SVG en data URI) : aucune
@@ -302,9 +303,25 @@ export default function App() {
   });
   const [newProjectForm, setNewProjectForm] = useState({
     name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540,
-    radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [] as string[]
+    radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [] as string[],
+    assigneesTouched: false
   });
   const projectAssignableEmployees = employees.filter(employee => employee.role !== 'admin');
+  // Chantiers réellement pointables par la personne connectée. Calculé une fois
+  // ici plutôt que recalculé dans chaque rendu du formulaire de pointage.
+  const punchableProjects = useMemo(
+    () => projectsAvailableForPunch(projects, activeEmployee),
+    [projects, activeEmployee]
+  );
+  // Sélection effective des employés d'un nouveau chantier : tant que personne
+  // n'a touché aux cases, toute l'équipe est retenue. Créer un chantier sans
+  // assigner personne le rendait invisible à tout le monde sauf l'administrateur
+  // — le piège le plus facile à tomber dedans, et le plus silencieux.
+  const newProjectAssignees = effectiveProjectAssignees(
+    projectAssignableEmployees,
+    newProjectForm.assignedEmployees,
+    newProjectForm.assigneesTouched
+  );
   // Éditeur GPS d'un chantier existant (ex: chantier créé par l'IA sans coordonnées)
   const [gpsEditProjectId, setGpsEditProjectId] = useState<string | null>(null);
   const [gpsEditForm, setGpsEditForm] = useState({ address: '', latitude: 0, longitude: 0, radius: 100 });
@@ -588,7 +605,7 @@ export default function App() {
   useEffect(() => {
     if (!activeEmployee || activePunchSession) return;
 
-    const availableProjects = projectsAvailableForPunch(projects, activeEmployee);
+    const availableProjects = punchableProjects;
 
     if (availableProjects.length === 0) {
       if (homePunchProject) setHomePunchProject('');
@@ -601,7 +618,7 @@ export default function App() {
       : availableProjects[0].id;
 
     if (nextProject !== homePunchProject) setHomePunchProject(nextProject);
-  }, [activeEmployee, activePunchSession, homePunchProject, projects]);
+  }, [activeEmployee, activePunchSession, homePunchProject, punchableProjects]);
 
   // Photo de reçu/outil : réduite côté client (max 1280px, JPEG) comme les photos IA
   const handleExpensePhotoSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1375,8 +1392,34 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           {activeEmployee && (
             <div className="flex items-center gap-1 sm:gap-2 border-l border-gray-800 pl-1 sm:pl-3">
               <span className="hidden md:inline text-xs font-semibold text-gray-300">
-                {activeEmployee.name} ({activeEmployee.role === 'admin' ? t.roleAdmin : t.roleEmployee})
+                {activeEmployee.name}
+                {activeEmployee.role === 'admin' ? (
+                  // Insigne du propriétaire : il doit être reconnaissable d'un
+                  // coup d'œil, y compris quand on passe d'un compte à l'autre
+                  // pour vérifier ce que voit un employé.
+                  <span
+                    title={t.adminBadgeTitle}
+                    className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 align-middle text-[10px] font-black uppercase tracking-wide text-amber-300"
+                  >
+                    <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                    {t.roleAdmin}
+                  </span>
+                ) : (
+                  <span className="ml-1 text-gray-400">({t.roleEmployee})</span>
+                )}
               </span>
+              {/* Sur téléphone, le nom et son insigne sont masqués faute de
+                  place : cette pastille garde le repère visuel du compte
+                  administrateur, là où l'on teste justement les deux rôles. */}
+              {activeEmployee.role === 'admin' && (
+                <span
+                  title={t.adminBadgeTitle}
+                  aria-label={t.adminBadgeTitle}
+                  className="md:hidden inline-flex items-center justify-center rounded-full border border-amber-400/40 bg-amber-400/10 p-1 text-amber-300"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+              )}
               <EmployeeAvatar
                 src={activeEmployee.avatar}
                 name={activeEmployee.name}
@@ -2505,7 +2548,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         latitude: Number(newProjectForm.latitude),
                         longitude: Number(newProjectForm.longitude),
                         radius: Number(newProjectForm.radius),
-                        assignedEmployees: [...newProjectForm.assignedEmployees],
+                        assignedEmployees: [...newProjectAssignees],
                         status: 'active',
                         tasks,
                         tools
@@ -2513,7 +2556,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       alert(t.projectAddedAlert);
                       setNewProjectForm({
                         name: '', clientName: '', address: '', latitude: 45.5088, longitude: -73.5540,
-                        radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: []
+                        radius: 100, status: 'active', tasksText: '', toolsText: '', assignedEmployees: [],
+                        assigneesTouched: false
                       });
                     }}
                     className="p-4 bg-gray-950 border border-gray-850 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4"
@@ -2618,10 +2662,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             type="button"
                             onClick={() => {
                               const everyWorkerSelected = projectAssignableEmployees.every(employee =>
-                                newProjectForm.assignedEmployees.includes(employee.id)
+                                newProjectAssignees.includes(employee.id)
                               );
                               setNewProjectForm(previous => ({
                                 ...previous,
+                                assigneesTouched: true,
                                 assignedEmployees: everyWorkerSelected
                                   ? []
                                   : projectAssignableEmployees.map(employee => employee.id)
@@ -2629,7 +2674,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             }}
                             className="min-h-10 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 text-[10px] font-black text-orange-200"
                           >
-                            {projectAssignableEmployees.every(employee => newProjectForm.assignedEmployees.includes(employee.id))
+                            {projectAssignableEmployees.every(employee => newProjectAssignees.includes(employee.id))
                               ? t.clearAssignments
                               : t.assignAllWorkers}
                           </button>
@@ -2639,7 +2684,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       {projectAssignableEmployees.length > 0 ? (
                         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {projectAssignableEmployees.map(employee => {
-                            const checked = newProjectForm.assignedEmployees.includes(employee.id);
+                            const checked = newProjectAssignees.includes(employee.id);
                             return (
                               <label
                                 key={employee.id}
@@ -2650,9 +2695,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   checked={checked}
                                   onChange={() => setNewProjectForm(previous => ({
                                     ...previous,
+                                    assigneesTouched: true,
                                     assignedEmployees: checked
-                                      ? previous.assignedEmployees.filter(id => id !== employee.id)
-                                      : [...previous.assignedEmployees, employee.id]
+                                      ? newProjectAssignees.filter(id => id !== employee.id)
+                                      : [...newProjectAssignees, employee.id]
                                   }))}
                                   className="h-5 w-5 accent-orange-500"
                                 />
@@ -2664,6 +2710,15 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       ) : (
                         <p className="mt-3 rounded-lg border border-gray-800 bg-gray-900 p-3 text-xs text-gray-500">
                           {t.projectAssigneesNone}
+                        </p>
+                      )}
+
+                      {/* Un chantier sans personne assignée n'apparaît chez
+                          aucun employé au moment de pointer. C'est permis, mais
+                          ça ne doit jamais arriver par inadvertance. */}
+                      {projectAssignableEmployees.length > 0 && newProjectAssignees.length === 0 && (
+                        <p role="alert" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-200">
+                          {t.projectAssigneesEmptyWarning}
                         </p>
                       )}
                     </fieldset>
@@ -2753,10 +2808,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               <div id="view-inventory-content" className="bg-[#16191F] border border-gray-800 rounded-2xl p-6 flex flex-col gap-6">
                 
                 {/* Segmented Sub-Tabs */}
-                <div className="flex border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-2xl">
+                {/* Sur un téléphone de 390 px, trois libellés côte à côte se
+                    coupaient sur deux lignes et devenaient illisibles. Ils
+                    défilent horizontalement en dessous de 640 px et ne se
+                    partagent la largeur qu'à partir de là. */}
+                <div className="flex gap-1 overflow-x-auto border-b border-gray-800 p-1 bg-gray-950 rounded-xl max-w-2xl sm:overflow-visible">
                   <button
                     onClick={() => setInventorySubTab('stock')}
-                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                    className={`shrink-0 whitespace-nowrap px-3 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer sm:flex-1 sm:shrink ${
                       inventorySubTab === 'stock'
                         ? 'bg-orange-600 text-white shadow-lg'
                         : 'text-gray-400 hover:text-white hover:bg-gray-900'
@@ -2766,7 +2825,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </button>
                   <button
                     onClick={() => setInventorySubTab('catalogue')}
-                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                    className={`shrink-0 whitespace-nowrap px-3 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer sm:flex-1 sm:shrink ${
                       inventorySubTab === 'catalogue'
                         ? 'bg-orange-600 text-white shadow-lg'
                         : 'text-gray-400 hover:text-white hover:bg-gray-900'
@@ -2776,7 +2835,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   </button>
                   <button
                     onClick={() => setInventorySubTab('tools')}
-                    className={`flex-1 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer ${
+                    className={`shrink-0 whitespace-nowrap px-3 py-2 text-xs font-black rounded-lg transition-all duration-200 uppercase tracking-wider cursor-pointer sm:flex-1 sm:shrink ${
                       inventorySubTab === 'tools'
                         ? 'bg-orange-600 text-white shadow-lg'
                         : 'text-gray-400 hover:text-white hover:bg-gray-900'
@@ -7331,10 +7390,19 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-xs text-white"
                 >
                   <option value="">{t.selectSiteOption}</option>
-                  {projectsAvailableForPunch(projects, activeEmployee).map(p => (
+                  {punchableProjects.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+                {/* Une liste vide sans explication laisse l'employé bloqué
+                    devant un menu qui ne s'ouvre sur rien. On dit pourquoi, et
+                    la phrase diffère selon qu'il faut créer un chantier ou
+                    demander une assignation. */}
+                {punchableProjects.length === 0 && (
+                  <p role="status" className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] font-bold leading-relaxed text-amber-200">
+                    {activeEmployee.role === 'admin' ? t.punchNoProjectForAdmin : t.punchNoProjectForWorker}
+                  </p>
+                )}
               </div>
 
               {/* Select Tarification Mode */}
