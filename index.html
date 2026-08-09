@@ -9,7 +9,11 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Hailite Manager" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://hailite-manager.vercel.app; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <!-- %%API_ORIGIN%% est remplacé à la construction par l'origine de
+         VITE_API_BASE_URL (voir vite.config.ts). Vide pour le build web, où
+         'self' suffit déjà ; renseigné pour le build mobile, dont la WebView
+         appelle le serveur depuis une autre origine. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'%%API_ORIGIN%%; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="192x192" href="/app-icon-192.png" />
     <link rel="apple-touch-icon" href="/app-icon-180.png" />

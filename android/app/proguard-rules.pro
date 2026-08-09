@@ -1,21 +1,48 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# ---------------------------------------------------------------------------
+# Règles R8 / ProGuard — build de release
+# ---------------------------------------------------------------------------
+# Le build de release active minifyEnabled et shrinkResources (voir
+# build.gradle). R8 supprime alors tout code qu'il croit inutilisé.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Le problème : Capacitor ne référence PAS ses plugins directement. Il les
+# retrouve à l'exécution, par annotation et par nom de classe, depuis le pont
+# JavaScript. R8 ne voit donc aucun appel vers eux et peut les effacer. Le
+# symptôme est déroutant : l'APK de débogage (non minifié) fonctionne, et
+# c'est uniquement la version publiée sur la boutique qui perd le GPS ou
+# l'écran de démarrage.
+#
+# Ces règles conservent le pont, les plugins et tout ce qui est atteint par
+# réflexion. Elles ne coûtent que quelques kilooctets.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# --- Pont Capacitor et plugins ---------------------------------------------
+-keep class com.getcapacitor.** { *; }
+-keep interface com.getcapacitor.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
+-keep class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    @com.getcapacitor.PluginMethod <methods>;
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# --- Plugins officiels utilisés par l'application --------------------------
+# Géolocalisation (géorepérage du pointage) et écran de démarrage.
+-keep class com.capacitorjs.plugins.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# --- Plugins Cordova éventuellement embarqués par Capacitor ----------------
+-keep class org.apache.cordova.** { *; }
+
+# --- Classes de l'application ----------------------------------------------
+-keep class ca.hailite.manager.** { *; }
+
+# --- Réflexion et interface JavaScript -------------------------------------
+# @JavascriptInterface est le point d'entrée du WebView vers le code natif :
+# renommer ces méthodes rompt silencieusement toute communication.
+-keepattributes *Annotation*, JavascriptInterface, Signature, InnerClasses, EnclosingMethod
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
+# --- Confort de diagnostic --------------------------------------------------
+# Conserve les numéros de ligne pour que les rapports de plantage de Play
+# Console restent lisibles, sans révéler les noms de fichiers d'origine.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

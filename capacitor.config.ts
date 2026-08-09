@@ -11,6 +11,15 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     webContentsDebuggingEnabled: false
   },
+  server: {
+    // Épinglé volontairement. Ce schéma détermine l'origine de la WebView
+    // Android (`https://localhost`), qui doit correspondre exactement à la
+    // liste NATIVE_APP_ORIGINS du serveur (securityMiddleware.ts). C'est déjà
+    // la valeur par défaut de Capacitor 8, mais la laisser implicite ferait
+    // dépendre l'authentification de l'application native d'un choix interne
+    // de la bibliothèque : une future mise à jour pourrait la déconnecter.
+    androidScheme: 'https'
+  },
   plugins: {
     CapacitorHttp: {
       enabled: true

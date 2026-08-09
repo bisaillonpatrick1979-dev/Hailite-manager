@@ -75,7 +75,18 @@ const capacitor = read('capacitor.config.ts');
 includes('capacitor.config.ts', "appId: 'ca.hailite.manager'");
 includes('capacitor.config.ts', "appName: 'Hailite Manager'");
 includes('capacitor.config.ts', "webDir: 'dist'");
-excludes('capacitor.config.ts', 'server:', 'aucune URL WebView distante dans la configuration de production');
+// Ce qui doit rester interdit, c'est de charger l'interface depuis un serveur
+// distant : Google rejette les simples enveloppes de site web, et l'application
+// exécuterait du code livré hors de la version examinée. C'est `server.url` qui
+// fait cela — pas la clé `server` elle-même, qui sert aussi à épingler le
+// schéma local de la WebView (voir capacitor.config.ts).
+excludes('capacitor.config.ts', 'url:', 'aucune URL WebView distante dans la configuration de production');
+excludes('capacitor.config.ts', 'cleartext: true', 'aucun trafic en clair autorisé par Capacitor');
+includes(
+  'capacitor.config.ts',
+  "androidScheme: 'https'",
+  'le schéma Android est épinglé (il détermine l’origine acceptée par le serveur)'
+);
 includes('capacitor.config.ts', 'allowMixedContent: false');
 includes('capacitor.config.ts', 'webContentsDebuggingEnabled: false');
 check(capacitor.includes("loggingBehavior: 'debug'"), 'les journaux WebView sont limités aux builds debug');
