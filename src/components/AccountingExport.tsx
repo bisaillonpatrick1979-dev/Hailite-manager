@@ -11,8 +11,9 @@
 //     Excel affiche « Ã© » à la place des accents.
 import { useCallback, useMemo, useState } from 'react';
 import useAppStore from '../store';
-import { translations } from '../translations';
-import { Download, FileSpreadsheet } from 'lucide-react';
+import { fmt, translations } from '../translations';
+import { AlertTriangle, Download, FileSpreadsheet } from 'lucide-react';
+import { reportingThreshold, summarizeSubcontractorPayments } from '../accountingSubcontractors';
 
 type Period = 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all' | 'custom';
 
@@ -45,7 +46,7 @@ function download(filename: string, content: string) {
 export default function AccountingExport() {
   const {
     currentLanguage, companyInfo, documents, expenses,
-    payrollPayments, punchSessions, projects
+    payrollPayments, punchSessions, projects, employees
   } = useAppStore();
 
   const t = translations[currentLanguage];
@@ -105,6 +106,26 @@ export default function AccountingExport() {
     payroll: periodPayroll.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0),
     hours: periodPunches.reduce((s, p) => s + (p.totalWorkedHours || 0), 0)
   }), [sales, periodExpenses, periodPayroll, periodPunches]);
+
+  // Cumul des versements par sous-traitant : la pièce que le comptable réclame
+  // pour le T5018 (Canada) ou le 1099-NEC (États-Unis), et la seule qui
+  // manquait à cet export.
+  const threshold = useMemo(
+    () => reportingThreshold(companyInfo.country, Number(range.to.slice(0, 4)) || new Date().getFullYear()),
+    [companyInfo.country, range.to]
+  );
+  const subcontractors = useMemo(
+    () => summarizeSubcontractorPayments(employees, periodPayroll, threshold ? threshold.amount : null),
+    [employees, periodPayroll, threshold]
+  );
+
+  const exportSubcontractors = () => download(`${slug}_sous-traitants_${stamp}.csv`, buildCsv(
+    [t.accColSubName, t.accColSubBusiness, t.accColSubTaxNumber, t.accColSubAddress,
+     t.accColSubPhone, t.accColSubPayments, t.accColSubTotal, t.accColSubThreshold],
+    subcontractors.rows.map(r => [
+      r.name, r.businessName, r.taxNumber, r.address, r.phone,
+      r.paymentCount, num(r.total), r.meetsThreshold ? t.wordYes : t.wordNo
+    ]), sep));
 
   const exportSales = () => download(`${slug}_ventes_${stamp}.csv`, buildCsv(
     [t.accColDate, t.accColNumber, t.accColClient, t.accColSubtotal, t.accColTax,
@@ -178,7 +199,10 @@ export default function AccountingExport() {
     { key: 'sales', label: t.accBtnSales, hint: t.accHintSales, count: sales.length, run: exportSales },
     { key: 'expenses', label: t.accBtnExpenses, hint: t.accHintExpenses, count: periodExpenses.length, run: exportExpenses },
     { key: 'payroll', label: t.accBtnPayroll, hint: t.accHintPayroll, count: periodPayroll.length, run: exportPayroll },
-    { key: 'hours', label: t.accBtnHours, hint: t.accHintHours, count: periodPunches.length, run: exportHours }
+    { key: 'hours', label: t.accBtnHours, hint: t.accHintHours, count: periodPunches.length, run: exportHours },
+    { key: 'subcontractors', label: t.accBtnSubcontractors,
+      hint: threshold ? fmt(t.accHintSubcontractorsForm, { form: threshold.form }) : t.accHintSubcontractors,
+      count: subcontractors.rows.length, run: exportSubcontractors }
   ];
 
   const periods: Array<{ key: Period; label: string }> = [
@@ -232,6 +256,24 @@ export default function AccountingExport() {
       </div>
 
       {/* Aperçu de la période : évite d'exporter un fichier vide sans le savoir */}
+      {/* Un sous-traitant absent d'une déclaration légale parce que son type de
+          travailleur n'a jamais été rempli, c'est exactement le genre d'oubli
+          silencieux qui coûte cher. On le dit avant l'export, pas après. */}
+      {subcontractors.unclassified.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <div className="text-[11px] leading-relaxed text-amber-100">
+            <p className="font-black uppercase tracking-wide">{t.accUnclassifiedTitle}</p>
+            <p className="mt-1 font-bold">
+              {fmt(t.accUnclassifiedBody, {
+                count: subcontractors.unclassified.length,
+                names: subcontractors.unclassified.map(u => u.name || u.employeeId).join(', ')
+              })}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {[
           { label: t.accSumSales, value: money(totals.sales) },
