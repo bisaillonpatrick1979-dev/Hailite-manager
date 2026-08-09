@@ -52,9 +52,21 @@ export function authHeaders(): Record<string, string> {
 
 export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
 
+// Identité renvoyée par la connexion. Les trois champs de consentement sont
+// inclus pour que le client sache immédiatement si les avis ont déjà été
+// acceptés, sans attendre l'hydratation.
+export interface AuthLoginUser {
+  id: string;
+  name: string;
+  role: string;
+  privacyNoticeVersion?: string;
+  privacyNoticeAcknowledgedAt?: string;
+  locationNoticeAcknowledgedAt?: string;
+}
+
 // Connexion vérifiée côté serveur : le cookie HttpOnly est mémorisé par le navigateur.
 export async function authLogin(employeeId: string, nip: string):
-  Promise<{ status: AuthLoginStatus; user?: { id: string; name: string; role: string } }> {
+  Promise<{ status: AuthLoginStatus; user?: AuthLoginUser }> {
   try {
     const res = await apiFetch('/api/auth/login', {
       method: 'POST',

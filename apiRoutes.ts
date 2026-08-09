@@ -682,6 +682,18 @@ export function registerApiRoutes(app: express.Express): void {
       }
       await clearLoginFailures(throttleKey);
       const ctx = result.ctx;
+
+      // L'état des consentements part avec la réponse de connexion. Sans cela,
+      // le client ouvrait une session sans savoir si l'avis avait déjà été
+      // accepté, et réaffichait l'écran de confidentialité à chaque connexion
+      // en attendant l'hydratation. Une lecture par connexion, rien de plus.
+      const { data: consent } = await supabase!
+        .from('app_users')
+        .select('privacy_notice_version, privacy_notice_acknowledged_at, location_notice_acknowledged_at')
+        .eq('id', ctx.userId)
+        .eq('company_id', ctx.companyId)
+        .maybeSingle();
+
       const { token, expiresAt } = signSession(ctx);
       const nativeClient = ['android', 'ios'].includes(String(req.get('x-hailite-client') || '').toLowerCase());
       if (!nativeClient) {
@@ -696,7 +708,14 @@ export function registerApiRoutes(app: express.Express): void {
       logAudit(ctx, 'login', 'auth', ctx.userId);
       return res.json({
         expiresAt,
-        user: { id: ctx.userId, name: ctx.name, role: ctx.role },
+        user: {
+          id: ctx.userId,
+          name: ctx.name,
+          role: ctx.role,
+          privacyNoticeVersion: (consent as any)?.privacy_notice_version || '',
+          privacyNoticeAcknowledgedAt: (consent as any)?.privacy_notice_acknowledged_at || '',
+          locationNoticeAcknowledgedAt: (consent as any)?.location_notice_acknowledged_at || ''
+        },
         // L'app native ne peut pas utiliser le cookie SameSite du domaine web.
         // Son jeton de quatre heures reste uniquement en mémoire JavaScript et
         // disparaît à la fermeture ou à la déconnexion de l'application.

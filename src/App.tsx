@@ -59,7 +59,8 @@ import {
   ChevronRight, ChevronLeft, Send, Activity, FileText, Layers, ShoppingBag, 
   BarChart2, Settings, AlertTriangle, MapPin, RotateCw, Search, Sparkles, 
   X, Briefcase, Percent, ShieldAlert, Laptop, CheckSquare, Dumbbell,
-  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX, LogOut, Menu
+  Play, Pause, Award, HelpCircle, Phone, Mail, Coins, Camera, Mic, Volume2, VolumeX, LogOut, Menu,
+  ShieldCheck
 } from 'lucide-react';
 
 // Petites icônes-avatars générées localement (SVG en data URI) : aucune
@@ -1375,8 +1376,34 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           {activeEmployee && (
             <div className="flex items-center gap-1 sm:gap-2 border-l border-gray-800 pl-1 sm:pl-3">
               <span className="hidden md:inline text-xs font-semibold text-gray-300">
-                {activeEmployee.name} ({activeEmployee.role === 'admin' ? t.roleAdmin : t.roleEmployee})
+                {activeEmployee.name}
+                {activeEmployee.role === 'admin' ? (
+                  // Insigne du propriétaire : il doit être reconnaissable d'un
+                  // coup d'œil, y compris quand on passe d'un compte à l'autre
+                  // pour vérifier ce que voit un employé.
+                  <span
+                    title={t.adminBadgeTitle}
+                    className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 align-middle text-[10px] font-black uppercase tracking-wide text-amber-300"
+                  >
+                    <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                    {t.roleAdmin}
+                  </span>
+                ) : (
+                  <span className="ml-1 text-gray-400">({t.roleEmployee})</span>
+                )}
               </span>
+              {/* Sur téléphone, le nom et son insigne sont masqués faute de
+                  place : cette pastille garde le repère visuel du compte
+                  administrateur, là où l'on teste justement les deux rôles. */}
+              {activeEmployee.role === 'admin' && (
+                <span
+                  title={t.adminBadgeTitle}
+                  aria-label={t.adminBadgeTitle}
+                  className="md:hidden inline-flex items-center justify-center rounded-full border border-amber-400/40 bg-amber-400/10 p-1 text-amber-300"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+              )}
               <EmployeeAvatar
                 src={activeEmployee.avatar}
                 name={activeEmployee.name}

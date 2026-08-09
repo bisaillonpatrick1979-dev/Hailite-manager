@@ -28,6 +28,7 @@ import { browserStorageValue } from './securityStorage';
 import type { DemoSandboxSummary } from './demoSandbox';
 import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import { resolveOnboardingState } from './onboardingState';
+import { resolveViewerProfile } from './viewerProfile';
 
 interface AppState {
   // Data State
@@ -911,12 +912,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     // profils de démonstration. Une panne réseau ne peut jamais ouvrir une session.
     const server = await authLogin(employeeId, nip);
     if (server.status === 'ok' && server.user) {
+      // Les consentements viennent du serveur dès la connexion : l'écran d'avis
+      // de confidentialité ne doit réapparaître que pour quelqu'un qui ne l'a
+      // réellement jamais accepté, jamais parce que l'hydratation tarde.
       const authenticatedEmployee: Employee = {
         ...emp,
         id: server.user.id,
         name: server.user.name || emp.name,
         role: normalizeAppRole(server.user.role),
-        nip: ''
+        nip: '',
+        privacyNoticeVersion: server.user.privacyNoticeVersion || undefined,
+        privacyNoticeAcknowledgedAt: server.user.privacyNoticeAcknowledgedAt || undefined,
+        locationNoticeAcknowledgedAt: server.user.locationNoticeAcknowledgedAt || undefined
       };
       set({
         activeEmployee: authenticatedEmployee,
@@ -2366,23 +2373,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           rowToCompanyInfo(companyRow)
         )
       : null;
-    const viewerEmployee = result.viewer
-      ? employees.find(employee => employee.id === result.viewer!.userId) || ({
-          id: result.viewer.userId,
-          name: result.viewer.name || '',
-          nip: '',
-          role: normalizeAppRole(result.viewer.role),
-          hourlyRate: 0,
-          workerType: '',
-          asNumber: '',
-          phone: '',
-          address: '',
-          hireDate: '',
-          avatar: '',
-          level: 1,
-          xp: 0
-        } as Employee)
-      : null;
+    // Le profil actif est reconstruit par un module dédié : il garantit qu'un
+    // consentement déjà accordé ne peut pas être effacé par une lecture, ce qui
+    // faisait réapparaître l'avis de confidentialité (voir viewerProfile.ts).
+    const viewerEmployee = resolveViewerProfile(
+      employees,
+      result.viewer,
+      normalizeAppRole(result.viewer?.role),
+      currentOnboardingState.activeEmployee
+    );
 
     set(() => {
       const next: Partial<AppState> = {
