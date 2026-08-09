@@ -607,12 +607,15 @@ export default function UserHelpCenter({
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
 
   const isFR = language === 'FR';
+  // Conservée dans localStorage (préfixe autorisé par la politique de stockage,
+  // voir securityStorage.ts) : la formation ne doit être suivie qu'une fois, pas
+  // à chaque reconnexion.
   const progressKey = `gcp_help_progress_${employeeId}`;
 
   useEffect(() => {
     if (!open) return;
     try {
-      const stored = JSON.parse(sessionStorage.getItem(progressKey) || '[]');
+      const stored = JSON.parse(localStorage.getItem(progressKey) || '[]');
       setCompletedSteps(Array.isArray(stored) ? stored : []);
     } catch {
       setCompletedSteps([]);
@@ -664,7 +667,7 @@ export default function UserHelpCenter({
   const toggleStarter = (id: string) => {
     setCompletedSteps(current => {
       const next = current.includes(id) ? current.filter(item => item !== id) : [...current, id];
-      try { sessionStorage.setItem(progressKey, JSON.stringify(next)); } catch { /* sessionStorage unavailable */ }
+      try { localStorage.setItem(progressKey, JSON.stringify(next)); } catch { /* stockage indisponible */ }
       return next;
     });
   };
@@ -785,7 +788,7 @@ export default function UserHelpCenter({
                   })}
                 </div>
                 {completionCount > 0 && (
-                  <button type="button" onClick={() => { setCompletedSteps([]); try { sessionStorage.removeItem(progressKey); } catch { /* ignore */ } }} className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-white">
+                  <button type="button" onClick={() => { setCompletedSteps([]); try { localStorage.removeItem(progressKey); } catch { /* ignore */ } }} className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-white">
                     <RotateCcw className="h-4 w-4" /> {isFR ? 'Recommencer le parcours' : 'Reset the path'}
                   </button>
                 )}
