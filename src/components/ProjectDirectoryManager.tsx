@@ -236,12 +236,12 @@ export default function ProjectDirectoryManager() {
             return (
               <article key={project.id} className="overflow-hidden rounded-2xl border border-gray-800 bg-gray-900">
                 <div className="p-4 sm:p-5">
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between sm:gap-4">
                     <div className="min-w-0">
-                      <h4 className="truncate text-lg font-black text-white">{project.name}</h4>
-                      <p className="mt-1 truncate text-sm font-bold text-orange-300">{project.clientName}</p>
+                      <h4 className="line-clamp-2 text-lg font-black leading-tight text-white" title={project.name}>{project.name}</h4>
+                      <p className="mt-1 line-clamp-2 text-sm font-bold text-orange-300" title={project.clientName}>{project.clientName}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase ${
+                    <span className={`shrink-0 self-start rounded-full border px-3 py-1 text-[10px] font-black uppercase ${
                       project.status === 'active'
                         ? 'border-green-500/30 bg-green-500/10 text-green-300'
                         : project.status === 'completed'

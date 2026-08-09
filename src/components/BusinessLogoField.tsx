@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, Trash } from 'lucide-react';
+import { Trash, Upload } from 'lucide-react';
 import { compressImageFile } from '../imageUtils';
 import CompanyLogo from './CompanyLogo';
 
@@ -40,10 +40,19 @@ export default function BusinessLogoField({ value, onChange, businessName, curre
           <p className="text-[9px] text-gray-500 mt-1">{t('Utilisé sur ses factures envoyées à la compagnie.', 'Used on invoices sent to the company.')}</p>
         </div>
       </div>
-      <input id={inputId} type="file" accept="image/*" capture="environment" className="hidden" onChange={event => handleFile(event.target.files?.[0])} />
+      <input
+        id={inputId}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={event => {
+          const input = event.currentTarget;
+          void handleFile(input.files?.[0]).finally(() => { input.value = ''; });
+        }}
+      />
       <div className="flex gap-2">
         <label htmlFor={inputId} className="flex-1 cursor-pointer inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[10px] font-black text-emerald-300">
-          <Camera className="w-4 h-4" /> {t('Prendre ou choisir le logo', 'Take or choose logo')}
+          <Upload className="w-4 h-4" /> {t('Choisir dans Photos ou Fichiers', 'Choose from Photos or Files')}
         </label>
         {value && (
           <button type="button" onClick={() => onChange('')} className="p-2 rounded-lg border border-red-900/50 bg-red-950 text-red-400" aria-label={t('Retirer le logo', 'Remove logo')}>

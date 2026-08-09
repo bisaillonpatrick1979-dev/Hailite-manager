@@ -10,6 +10,7 @@ import type {
   ShiftAssignment, SafetyRecord
 } from './types';
 import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
+import { apiFetch, isNativeRuntime } from './runtimeConfig';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
 // identifiants "prefix-Date.now()" ne sont pas des UUID valides et feraient échouer
@@ -30,9 +31,12 @@ export function genId(): string {
 // JavaScript ne peut donc ni le lire ni l'exfiltrer depuis localStorage.
 // ---------------------------------------------------------------------------
 let authenticatedSession = false;
+let nativeSessionToken = '';
 
-export function setAuthenticatedSession(active: boolean) {
+export function setAuthenticatedSession(active: boolean, sessionToken?: string) {
   authenticatedSession = active;
+  if (!active) nativeSessionToken = '';
+  if (active && isNativeRuntime && sessionToken) nativeSessionToken = sessionToken;
   // Purge les jetons lisibles laissés par les versions précédentes.
   try {
     localStorage.removeItem('gcp_authToken');
@@ -43,7 +47,7 @@ export function setAuthenticatedSession(active: boolean) {
 export function hasAuthenticatedSession(): boolean { return authenticatedSession; }
 
 export function authHeaders(): Record<string, string> {
-  return {};
+  return nativeSessionToken ? { Authorization: `Bearer ${nativeSessionToken}` } : {};
 }
 
 export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
@@ -52,7 +56,7 @@ export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
 export async function authLogin(employeeId: string, nip: string):
   Promise<{ status: AuthLoginStatus; user?: { id: string; name: string; role: string } }> {
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -60,7 +64,7 @@ export async function authLogin(employeeId: string, nip: string):
     });
     if (res.ok) {
       const data = await res.json();
-      setAuthenticatedSession(true);
+      setAuthenticatedSession(true, typeof data.sessionToken === 'string' ? data.sessionToken : undefined);
       return { status: 'ok', user: data.user };
     }
     if (res.status === 401) return { status: 'invalid' };
@@ -72,10 +76,10 @@ export async function authLogin(employeeId: string, nip: string):
 }
 
 export async function authLogout(): Promise<void> {
-  setAuthenticatedSession(false);
   try {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    await apiFetch('/api/auth/logout', { method: 'POST', headers: authHeaders(), credentials: 'same-origin' });
   } catch { /* le cookie expirera côté serveur même si le réseau est coupé */ }
+  setAuthenticatedSession(false);
 }
 
 // Annuaire minimal (sans NIP/NAS/salaire) pour l'écran de connexion, avant authentification
@@ -83,7 +87,7 @@ export interface DirectoryUser { id: string; name: string; avatar: string }
 export async function fetchLoginDirectory(): Promise<DirectoryUser[]> {
   if (!cloudSyncAllowed || demoSandboxIsolation) return [];
   try {
-    const res = await fetch('/api/auth/directory', { credentials: 'same-origin' });
+    const res = await apiFetch('/api/auth/directory', { credentials: 'same-origin' });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data.users) ? data.users : [];
@@ -125,7 +129,7 @@ export function getCompanyId() { return cachedCompanyId; }
 async function dbList(table: string): Promise<any[]> {
   if (demoSandboxIsolation) return [];
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
-  const res = await fetch(`/api/db/${table}?limit=500`, { headers: authHeaders(), credentials: 'same-origin' });
+  const res = await apiFetch(`/api/db/${table}?limit=500`, { headers: authHeaders(), credentials: 'same-origin' });
   if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
   return res.json();
 }
@@ -133,7 +137,7 @@ async function dbList(table: string): Promise<any[]> {
 async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
   if (demoSandboxIsolation) return { demo: true };
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
-  const res = await fetch(`/api/db/${table}`, {
+  const res = await apiFetch(`/api/db/${table}`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -146,7 +150,7 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
 async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
   if (demoSandboxIsolation) return { demo: true };
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
-  const res = await fetch(`/api/db/${table}`, {
+  const res = await apiFetch(`/api/db/${table}`, {
     method: 'PUT',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -159,7 +163,7 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
 async function dbUpdate(table: string, id: string, row: Record<string, any>): Promise<any> {
   if (demoSandboxIsolation) return { demo: true };
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
-  const res = await fetch(`/api/db/${table}/${id}`, {
+  const res = await apiFetch(`/api/db/${table}/${id}`, {
     method: 'PATCH',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -172,7 +176,7 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
 async function dbDelete(table: string, id: string): Promise<void> {
   if (demoSandboxIsolation) return;
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
-  const res = await fetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders(), credentials: 'same-origin' });
+  const res = await apiFetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders(), credentials: 'same-origin' });
   if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
 }
 
@@ -229,10 +233,10 @@ export async function savePrivacyNoticeAcknowledgement(): Promise<PrivacyNoticeA
   noteMutation();
   notifySync({ status: 'pending', label });
   try {
-    const res = await fetch('/api/auth/privacy-notice', {
+    const res = await apiFetch('/api/auth/privacy-notice', {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...authHeaders() }
     });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -362,7 +366,7 @@ export function projectAssignmentsToRows(p: Project) {
 
 async function replaceProjectChildren(project: Project): Promise<void> {
   if (demoSandboxIsolation) return;
-  const res = await fetch(`/api/projects/${encodeURIComponent(project.id)}/children`, {
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(project.id)}/children`, {
     method: 'PUT',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1058,7 +1062,7 @@ export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
   if (demoSandboxIsolation) return { enabled: false, tables: {} };
   if (!cloudSyncAllowed) return { enabled: false, tables: {} };
   try {
-    const res = await fetch('/api/hydrate', { headers: authHeaders(), credentials: 'same-origin' });
+    const res = await apiFetch('/api/hydrate', { headers: authHeaders(), credentials: 'same-origin' });
     if (res.status === 401) {
       setAuthenticatedSession(false);
       cloudEnabled = false;

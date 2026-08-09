@@ -5,12 +5,16 @@ import 'dotenv/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Les nouvelles clés `sb_secret_...` sont privilégiées. La clé service_role
+// historique demeure acceptée afin de permettre une migration sans coupure.
+const supabaseServerKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-export const supabaseEnabled = !!(supabaseUrl && supabaseServiceKey);
+export const supabaseEnabled = !!(supabaseUrl && supabaseServerKey);
 
 export const supabase: SupabaseClient | null = supabaseEnabled
-  ? createClient(supabaseUrl as string, supabaseServiceKey as string, { auth: { persistSession: false } })
+  ? createClient(supabaseUrl as string, supabaseServerKey as string, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    })
   : null;
 
 // Toute table exposée par l'API générique porte company_id. Cela permet aux
@@ -40,7 +44,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // choisir arbitrairement la première ligne serait une fuite interentreprises.
 export async function resolveCompanyId(): Promise<string> {
   if (cachedCompanyId) return cachedCompanyId;
-  if (!supabase) throw new Error('Supabase non configuré (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY manquants)');
+  if (!supabase) throw new Error('Supabase non configuré (SUPABASE_URL / SUPABASE_SECRET_KEY manquants)');
 
   const configured = String(process.env.DEFAULT_COMPANY_ID || '').trim();
   if (configured) {

@@ -33,5 +33,10 @@ export async function compressImageFile(
 
 export function looksLikeImage(value?: string | null): boolean {
   const source = String(value || '').trim();
-  return source.startsWith('data:image/') || /^https?:\/\//i.test(source) || source.startsWith('blob:');
+  return source.startsWith('data:image/')
+    || /^https?:\/\//i.test(source)
+    || source.startsWith('blob:')
+    || source.startsWith('/')
+    || source.startsWith('./')
+    || source.startsWith('../');
 }

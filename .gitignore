@@ -7,3 +7,9 @@ coverage/
 *-test-result.json
 .env*
 !.env.example
+!.env.mobile
+
+# Clé de signature Android : elle ne doit jamais entrer dans Git.
+android/keystore.properties
+android/*.jks
+android/*.keystore

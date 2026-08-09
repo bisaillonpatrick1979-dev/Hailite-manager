@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
 import useAppStore from '../store';
+
+// Le contournement du géorepérage sert uniquement aux essais visuels locaux.
+// Il ne doit jamais devenir un raccourci de pointage pour un utilisateur réel.
+export function canUseGeofenceBypass(localTestMode: boolean, role?: string | null): boolean {
+  return localTestMode && role === 'admin';
+}
 
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3; // earth radius in meters
@@ -20,51 +28,85 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
 }
 
 export function useGeofencing() {
-  const { companyInfo, projects } = useAppStore();
+  const companyInfo = useAppStore(state => state.companyInfo);
+  const projects = useAppStore(state => state.projects);
+  const activeEmployee = useAppStore(state => state.activeEmployee);
   const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(false);
 
   const checkLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      setGpsError('Geolocation is not supported');
-      return;
-    }
-
     setIsChecking(true);
     setGpsError(null);
 
+    const acceptPosition = (latitude: number, longitude: number) => {
+      setCoords({ latitude, longitude });
+      setGpsError(null);
+      setIsChecking(false);
+    };
+
+    const rejectPosition = (error: { code?: number | string; message?: string }) => {
+      // Un refus de permission ou un signal indisponible est un état prévu sur
+      // mobile, pas une erreur d'application. L'interface affiche le résultat.
+      console.warn('GPS indisponible', { code: error.code, message: error.message });
+      const code = String(error.code || '').toLowerCase();
+      const message = String(error.message || '').toLowerCase();
+      let msg = 'Unknown GPS Error';
+      if (code === '1' || code.includes('denied') || message.includes('denied')) {
+        msg = 'Permission denied by user';
+      } else if (code === '2' || code.includes('unavailable') || message.includes('unavailable')) {
+        msg = 'Position unavailable';
+      } else if (code === '3' || code.includes('timeout') || message.includes('timeout')) {
+        msg = 'GPS query timed out';
+      }
+      // Une ancienne position ne doit jamais être réutilisée après l'échec
+      // d'un rafraîchissement : elle pourrait provenir d'un autre chantier.
+      setCoords(null);
+      setGpsError(msg);
+      setIsChecking(false);
+    };
+
+    if (Capacitor.isNativePlatform()) {
+      void (async () => {
+        try {
+          let permission = await Geolocation.checkPermissions();
+          if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
+            permission = await Geolocation.requestPermissions({ permissions: ['location', 'coarseLocation'] });
+          }
+          if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
+            rejectPosition({ code: 'denied', message: 'Location permission denied' });
+            return;
+          }
+          const position = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
+          acceptPosition(position.coords.latitude, position.coords.longitude);
+        } catch (error: any) {
+          rejectPosition({ code: error?.code, message: error?.message });
+        }
+      })();
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      rejectPosition({ code: 'unavailable', message: 'Geolocation is not supported' });
+      return;
+    }
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setCoords({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-        setGpsError(null);
-        setIsChecking(false);
+        acceptPosition(position.coords.latitude, position.coords.longitude);
       },
       (error) => {
-        console.error('GPS Geolocation error', error);
-        let msg = 'Unknown GPS Error';
-        if (error.code === error.PERMISSION_DENIED) {
-          msg = 'Permission denied by user';
-        } else if (error.code === error.POSITION_UNAVAILABLE) {
-          msg = 'Position unavailable';
-        } else if (error.code === error.TIMEOUT) {
-          msg = 'GPS query timed out';
-        }
-        setGpsError(msg);
-        setIsChecking(false);
+        rejectPosition({ code: error.code, message: error.message });
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }, []);
 
   useEffect(() => {
-    if (companyInfo.geofencingEnabled) {
+    if (companyInfo.geofencingEnabled && activeEmployee?.locationNoticeAcknowledgedAt) {
       checkLocation();
     }
-  }, [companyInfo.geofencingEnabled, checkLocation]);
+  }, [companyInfo.geofencingEnabled, activeEmployee?.locationNoticeAcknowledgedAt, checkLocation]);
 
   // Evaluates punchability on a certain project
   const evaluateProjectGeofence = useCallback((projectId: string) => {

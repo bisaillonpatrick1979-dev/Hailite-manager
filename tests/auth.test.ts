@@ -29,6 +29,20 @@ test('les sessions signées refusent toute altération', () => {
   assert.equal(auth.verifySession(`${token.slice(0, -1)}x`), null);
 });
 
+test('une application native peut authentifier ses requêtes avec Bearer', () => {
+  const context = {
+    userId: '00000000-0000-4000-8000-000000000001',
+    companyId: '00000000-0000-4000-8000-000000000002',
+    role: 'employee' as const,
+    name: 'Mobile Test'
+  };
+  const { token } = auth.signSession(context);
+  const request = { headers: { authorization: `Bearer ${token}` } } as any;
+  assert.deepEqual(auth.extractAuth(request), context);
+  request.headers.authorization = `Bearer ${token.slice(0, -1)}x`;
+  assert.equal(auth.extractAuth(request), null);
+});
+
 test('l’annuaire utilise une référence opaque et stable', () => {
   const companyId = '00000000-0000-4000-8000-000000000002';
   const userId = '00000000-0000-4000-8000-000000000001';

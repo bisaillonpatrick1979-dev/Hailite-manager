@@ -3,7 +3,7 @@
 // Vercel (api/index.ts). Isolé dans son propre module pour être monté sur
 // n'importe quelle instance Express sans dupliquer la logique.
 //
-// SÉCURITÉ : la clé SUPABASE_SERVICE_ROLE_KEY reste côté serveur ; chaque route
+// SÉCURITÉ : la clé Supabase secrète reste côté serveur ; chaque route
 // de données exige un jeton de session (voir auth.ts) et applique une matrice
 // de permissions par table + rôle, un scoping strict par company_id, la
 // redaction des colonnes sensibles (NIP, NAS/SIN, banque, clés API) et un
@@ -19,6 +19,7 @@ import {
   isLoginThrottled, recordLoginFailure, clearLoginFailures, logAudit,
   createLoginHandle, hashPin, SESSION_COOKIE_NAME
 } from './auth.js';
+import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
 
 // Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
 const KNOWN_TABLES = [
@@ -125,8 +126,6 @@ const canRead = (table: string, role: AppRole) => (TABLE_READ_ROLES[table] || AD
 const canWrite = (table: string, role: AppRole) => (TABLE_WRITE_ROLES[table] || ADMIN_ONLY).includes(role);
 const protectedRuntime = supabaseEnabled || process.env.NODE_ENV === 'production';
 const PROJECT_MEDIA_BUCKET = process.env.SUPABASE_PROJECT_MEDIA_BUCKET || 'project-media';
-const USER_PRIVACY_NOTICE_VERSION = '2026.07';
-
 const EMPLOYEE_PROJECT_TABLES = new Set([
   'project_tasks', 'project_tools', 'project_assignments', 'project_photos',
   'change_orders', 'safety_records'
@@ -684,17 +683,24 @@ export function registerApiRoutes(app: express.Express): void {
       await clearLoginFailures(throttleKey);
       const ctx = result.ctx;
       const { token, expiresAt } = signSession(ctx);
-      res.cookie(SESSION_COOKIE_NAME, token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        path: '/',
-        maxAge: Math.max(0, expiresAt - Date.now())
-      });
+      const nativeClient = ['android', 'ios'].includes(String(req.get('x-hailite-client') || '').toLowerCase());
+      if (!nativeClient) {
+        res.cookie(SESSION_COOKIE_NAME, token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          path: '/',
+          maxAge: Math.max(0, expiresAt - Date.now())
+        });
+      }
       logAudit(ctx, 'login', 'auth', ctx.userId);
       return res.json({
         expiresAt,
-        user: { id: ctx.userId, name: ctx.name, role: ctx.role }
+        user: { id: ctx.userId, name: ctx.name, role: ctx.role },
+        // L'app native ne peut pas utiliser le cookie SameSite du domaine web.
+        // Son jeton de quatre heures reste uniquement en mémoire JavaScript et
+        // disparaît à la fermeture ou à la déconnexion de l'application.
+        ...(nativeClient ? { sessionToken: token } : {})
       });
     } catch (error: any) {
       console.error('Error on /api/auth/login:', error);

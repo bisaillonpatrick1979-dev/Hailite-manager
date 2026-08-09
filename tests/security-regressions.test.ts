@@ -97,7 +97,7 @@ test('la confirmation de confidentialité est limitée au compte de la session',
   assert.match(routes, /location_notice_acknowledged_at: acknowledgedAt/);
   assert.doesNotMatch(routes, /privacy-notice'[\s\S]{0,1600}req\.body/);
 
-  assert.match(apiClient, /fetch\('\/api\/auth\/privacy-notice'/);
+  assert.match(apiClient, /apiFetch\('\/api\/auth\/privacy-notice'/);
   assert.match(store, /acknowledgePrivacyNotice: async \(\)/);
   assert.match(app, /onAccept=\{acknowledgePrivacyNotice\}/);
   assert.doesNotMatch(app, /onAccept=\{updateEmployee\}/);

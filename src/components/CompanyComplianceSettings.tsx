@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, Database, Globe2, RefreshCcw, ShieldCheck, Trash } from 'lucide-react';
+import { Database, Globe2, RefreshCcw, ShieldCheck, Trash, Upload } from 'lucide-react';
 import useAppStore from '../store';
 import { compressImageFile } from '../imageUtils';
 import { getDefaultRegion, marketLabel, type MarketCode } from '../internationalRegions';
@@ -34,8 +34,17 @@ export default function CompanyComplianceSettings() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <input id="settings-company-logo" type="file" accept="image/*" capture="environment" className="hidden" onChange={event => upload(event.target.files?.[0])} />
-          <label htmlFor="settings-company-logo" className="cursor-pointer inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-[10px] font-black text-cyan-300"><Camera className="w-4 h-4" />{isFR ? 'Changer le logo' : 'Change logo'}</label>
+          <input
+            id="settings-company-logo"
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={event => {
+              const input = event.currentTarget;
+              void upload(input.files?.[0]).finally(() => { input.value = ''; });
+            }}
+          />
+          <label htmlFor="settings-company-logo" className="cursor-pointer inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-[10px] font-black text-cyan-300"><Upload className="w-4 h-4" />{isFR ? 'Choisir dans Photos ou Fichiers' : 'Choose from Photos or Files'}</label>
           {companyInfo.logo && <button type="button" onClick={() => updateCompanyInfo({ logo: '' })} className="p-2 rounded-xl border border-red-900/50 bg-red-950 text-red-400" aria-label={isFR ? 'Retirer le logo' : 'Remove logo'}><Trash className="w-4 h-4" /></button>}
         </div>
       </div>
@@ -47,7 +56,14 @@ export default function CompanyComplianceSettings() {
         <div className="rounded-xl border border-gray-800 bg-gray-950 p-3"><ShieldCheck className="w-4 h-4 text-emerald-400" /><p className="mt-2 uppercase text-gray-500 font-black">{isFR ? 'Confidentialité' : 'Privacy'}</p><p className="text-white font-bold mt-1">v{companyInfo.privacyPolicyVersion || '—'} · {companyInfo.retentionMonths || 84} {isFR ? 'mois' : 'months'}</p></div>
       </div>
 
-      <button type="button" onClick={() => setIsOnboarded(false)} className="w-full min-h-12 rounded-xl border border-orange-500/35 bg-orange-500/10 text-orange-300 font-black text-xs inline-flex items-center justify-center gap-2"><RefreshCcw className="w-4 h-4" />{isFR ? 'Reprendre la configuration pays, taxes et confidentialité' : 'Reopen country, tax, and privacy setup'}</button>
+      <button
+        type="button"
+        onClick={() => {
+          updateCompanyInfo({ isOnboarded: false });
+          setIsOnboarded(false);
+        }}
+        className="w-full min-h-12 rounded-xl border border-orange-500/35 bg-orange-500/10 text-orange-300 font-black text-xs inline-flex items-center justify-center gap-2"
+      ><RefreshCcw className="w-4 h-4" />{isFR ? 'Reprendre la configuration pays, taxes et confidentialité' : 'Reopen country, tax, and privacy setup'}</button>
       <p className="text-[9px] text-gray-500">{isFR ? 'La réouverture ne supprime aucune donnée. Les nouveaux choix remplacent les paramètres de configuration.' : 'Reopening does not delete data. New choices replace configuration settings.'}</p>
     </section>
   );

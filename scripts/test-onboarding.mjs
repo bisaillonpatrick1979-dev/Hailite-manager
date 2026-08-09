@@ -1,18 +1,26 @@
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 
 const result = {
   testedAt: new Date().toISOString(),
   url: process.env.ONBOARDING_URL || 'http://127.0.0.1:4173',
   onboardingVisible: false,
+  logoPickerUsesFiles: false,
+  logoUploadPreview: false,
   clickedFinish: false,
   mainVisibleWithoutReload: false,
   loginVisibleWithoutReload: false,
+  onboardingAbsentAfterReload: false,
   rootHasContent: false,
   bodyIsNotBlank: false,
   hookErrorDetected: false,
   cloudProbeValid: false,
   cloudProbeRequests: [],
+  manualProjectCreated: false,
+  manualProjectAssigned: false,
+  projectVisibleInEmployeePunch: false,
+  projectSyncRequests: [],
   demoSettingsVisible: false,
   demoActivated: false,
   demoCountsValid: false,
@@ -22,6 +30,7 @@ const result = {
   demoCloudRequests: [],
   consoleErrors: [],
   pageErrors: [],
+  testStage: 'launch',
   passed: false
 };
 
@@ -39,6 +48,7 @@ try {
     if (message.type() === 'error') result.consoleErrors.push(message.text());
   });
   page.on('pageerror', error => result.pageErrors.push(error.message));
+  page.on('dialog', async dialog => { await dialog.accept(); });
 
   const setLabelValue = async (fragment, value) => {
     await page.evaluate(({ fragment, value }) => {
@@ -55,6 +65,23 @@ try {
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
     }, { fragment, value });
+  };
+
+  const setSelectorValue = async (selector, value) => {
+    await page.evaluate(({ selector, value }) => {
+      const input = document.querySelector(selector);
+      if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement)) {
+        throw new Error(`Champ introuvable: ${selector}`);
+      }
+      const prototype = input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : input instanceof HTMLSelectElement
+          ? HTMLSelectElement.prototype
+          : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, { selector, value });
   };
 
   const checkLabel = async fragment => {
@@ -88,6 +115,21 @@ try {
   await page.waitForSelector('#hailite-onboarding-screen', { visible: true, timeout: 30000 });
   result.onboardingVisible = true;
 
+  result.logoPickerUsesFiles = await page.$eval('#company-logo-upload', input => {
+    const label = document.querySelector(`label[for="${input.id}"]`);
+    return input.getAttribute('accept') === 'image/*' &&
+      !input.hasAttribute('capture') &&
+      /Photos ou Fichiers/i.test(label?.textContent || '');
+  });
+  const onboardingLogoInput = await page.$('#company-logo-upload');
+  await onboardingLogoInput.uploadFile(fileURLToPath(new URL('../public/app-icon-192.png', import.meta.url)));
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('#hailite-onboarding-screen img')]
+      .some(image => image.getAttribute('src')?.startsWith('data:image/')),
+    { timeout: 30000 }
+  );
+  result.logoUploadPreview = true;
+
   await setLabelValue('Nom légal ou commercial', 'Hailite Test Transition');
   await setLabelValue('Courriel de compagnie', 'test@hailite.example');
   await setLabelValue('Courriel pour les demandes de confidentialité', 'privacy@hailite.example');
@@ -117,18 +159,51 @@ try {
   result.rootHasContent = await page.$eval('#root', element => element.childElementCount > 0 && element.innerHTML.trim().length > 100);
   result.bodyIsNotBlank = await page.$eval('body', element => (element.innerText || '').trim().length > 100);
 
-  // Le test importe le store uniquement depuis le serveur Vite de validation.
-  // Il établit une session admin fictive en mémoire sans ajouter le moindre
+  // Une relance du même appareil ne doit jamais présenter l'onboarding une
+  // deuxième fois après sa confirmation.
+  await page.reload({ waitUntil: 'networkidle0', timeout: 90000 });
+  await page.waitForSelector('#login-container-wrapper', { visible: true, timeout: 30000 });
+  result.onboardingAbsentAfterReload = await page.$('#hailite-onboarding-screen') === null;
+
+  // Charge les modules du serveur Vite en arrière-plan et conserve leurs
+  // références dans la page. Ne pas retourner la promesse import() à Puppeteer:
+  // certains Chromium la libèrent prématurément (« Promise was collected »).
+  // Ce pont n'existe que dans cette page de test et n'ajoute rien à l'app.
+  result.testStage = 'test-bridge';
+  await page.evaluate(() => {
+    window.__hailiteTestBridge = null;
+    window.__hailiteTestBridgeError = '';
+    Promise.all([import('/src/store.ts'), import('/src/apiClient.ts')])
+      .then(([storeModule, apiClient]) => {
+        window.__hailiteTestBridge = {
+          store: storeModule.useAppStore,
+          snapshotKeys: storeModule.DEMO_SANDBOX_SNAPSHOT_KEYS,
+          apiClient,
+          cloudProbeDone: false,
+          cloudProbeError: ''
+        };
+      })
+      .catch(error => { window.__hailiteTestBridgeError = String(error?.message || error); });
+  });
+  await page.waitForFunction(
+    () => Boolean(window.__hailiteTestBridge || window.__hailiteTestBridgeError),
+    { timeout: 30000 }
+  );
+  const bridgeError = await page.evaluate(() => window.__hailiteTestBridgeError);
+  if (bridgeError) throw new Error(`Pont de test impossible à charger: ${bridgeError}`);
+
+  // Établit une session admin fictive en mémoire sans ajouter le moindre
   // contournement d'authentification au bundle de production.
-  await page.evaluate(async () => {
-    const { useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
+  result.testStage = 'session';
+  await page.evaluate(() => {
+    const { store } = window.__hailiteTestBridge;
+    const state = store.getState();
     const admin = state.employees.find(employee => employee.role === 'admin');
     if (!admin) throw new Error('Administrateur local de validation introuvable');
-    useAppStore.setState({
+    store.setState({
       activeEmployee: {
         ...admin,
-        privacyNoticeVersion: '2026.07',
+        privacyNoticeVersion: '2026.08',
         privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
         locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
       }
@@ -137,8 +212,10 @@ try {
 
   // Branche un faux serveur authentifié, puis prouve que les chemins lecture et
   // écriture atteignent réellement ce serveur AVANT d'activer l'isolation.
-  const cloudProbe = await page.evaluate(async () => {
-    const apiClient = await import('/src/apiClient.ts');
+  result.testStage = 'cloud-probe';
+  await page.evaluate(() => {
+    const bridge = window.__hailiteTestBridge;
+    const apiClient = bridge.apiClient;
     const originalFetch = window.fetch.bind(window);
     const calls = [];
     window.__hailiteCloudTestRequests = calls;
@@ -162,26 +239,125 @@ try {
 
     apiClient.setAuthenticatedSession(true);
     apiClient.setCloudSyncAllowed(true);
-    await apiClient.hydrateFromCloud();
-    apiClient.syncInsert('clients', { id: 'cloud-probe', name: 'Sonde CI' });
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const requests = [...calls];
-    calls.length = 0;
-    return { cloudAllowed: apiClient.isCloudSyncAllowed(), requests };
+    apiClient.hydrateFromCloud()
+      .then(() => {
+        apiClient.syncInsert('clients', { id: 'cloud-probe', name: 'Sonde CI' });
+        bridge.cloudProbeDone = true;
+      })
+      .catch(error => {
+        bridge.cloudProbeError = String(error?.message || error);
+        bridge.cloudProbeDone = true;
+      });
   });
-  result.cloudProbeRequests = cloudProbe.requests;
+  await page.waitForFunction(() => window.__hailiteTestBridge?.cloudProbeDone, { timeout: 30000 });
+  const cloudProbeError = await page.evaluate(() => window.__hailiteTestBridge.cloudProbeError);
+  if (cloudProbeError) throw new Error(`Sonde nuage échouée: ${cloudProbeError}`);
+  await page.waitForFunction(
+    () => window.__hailiteCloudTestRequests?.includes('POST /api/db/clients'),
+    { timeout: 30000 }
+  );
+  result.cloudProbeRequests = await page.evaluate(() => {
+    const requests = [...(window.__hailiteCloudTestRequests || [])];
+    window.__hailiteCloudTestRequests.length = 0;
+    return requests;
+  });
+  const cloudAllowed = await page.evaluate(() => window.__hailiteTestBridge.apiClient.isCloudSyncAllowed());
   result.cloudProbeValid = Boolean(
-    cloudProbe.cloudAllowed && cloudProbe.requests.includes('GET /api/hydrate') &&
-    cloudProbe.requests.includes('POST /api/db/clients')
+    cloudAllowed && result.cloudProbeRequests.includes('GET /api/hydrate') &&
+    result.cloudProbeRequests.includes('POST /api/db/clients')
+  );
+
+  // Régression réelle : crée un chantier depuis le formulaire, assigne Liam,
+  // puis ouvre le punch avec ce compte et vérifie l'option dans le <select>.
+  result.testStage = 'manual-project-assignment';
+  await clickButton('Projets');
+  await page.waitForSelector('#view-projects-content', { visible: true, timeout: 30000 });
+  await setSelectorValue('#view-projects-content form input[placeholder*="Condos"]', 'Chantier réparation Punch');
+  await setSelectorValue('#view-projects-content form input[placeholder*="Sogeprim"]', 'Client Test Punch');
+  await setSelectorValue('#view-projects-content form input[placeholder*="Taschereau"]', '1234 Rue du Test, Calgary');
+  await checkLabel('Liam Tremblay');
+  await clickButton('Enregistrer Chantier');
+
+  await page.waitForFunction(
+    () => window.__hailiteTestBridge?.store.getState().projects
+      .some(project => project.name === 'Chantier réparation Punch'),
+    { timeout: 30000 }
+  );
+  const manualProject = await page.evaluate(() => {
+    const project = window.__hailiteTestBridge.store.getState().projects
+      .find(candidate => candidate.name === 'Chantier réparation Punch');
+    return project ? {
+      id: project.id,
+      assignedEmployees: [...project.assignedEmployees]
+    } : null;
+  });
+  result.manualProjectCreated = Boolean(manualProject);
+  result.manualProjectAssigned = Boolean(manualProject?.assignedEmployees.includes('test-employee-1'));
+
+  if (manualProject) {
+    await page.waitForFunction(
+      projectId => window.__hailiteCloudTestRequests?.some(request =>
+        request === `PUT /api/projects/${projectId}/children`
+      ),
+      { timeout: 30000 },
+      manualProject.id
+    );
+  }
+  result.projectSyncRequests = await page.evaluate(() => {
+    const requests = [...(window.__hailiteCloudTestRequests || [])];
+    window.__hailiteCloudTestRequests.length = 0;
+    return requests;
+  });
+
+  await page.evaluate(() => {
+    const { store } = window.__hailiteTestBridge;
+    const worker = store.getState().employees.find(employee => employee.id === 'test-employee-1');
+    if (!worker) throw new Error('Employé Liam Tremblay introuvable');
+    store.setState({
+      activeEmployee: {
+        ...worker,
+        privacyNoticeVersion: '2026.08',
+        privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
+        locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
+      }
+    });
+  });
+  await clickButton('Puncher');
+  await clickButton('PUNCH IN');
+  await page.waitForSelector('#punchin-modal-container', { visible: true, timeout: 30000 });
+  result.projectVisibleInEmployeePunch = await page.$eval(
+    '#punchin-modal-container select',
+    select => [...select.options].some(option => option.textContent?.includes('Chantier réparation Punch'))
+  );
+
+  // Ferme la fenêtre et remet l'administrateur pour poursuivre le test démo.
+  await page.evaluate(() => {
+    document.querySelector('#punchin-modal-container button')?.click();
+    const { store } = window.__hailiteTestBridge;
+    const admin = store.getState().employees.find(employee => employee.role === 'admin');
+    if (!admin) throw new Error('Administrateur de validation introuvable après le test de punch');
+    store.setState({
+      activeEmployee: {
+        ...admin,
+        privacyNoticeVersion: '2026.08',
+        privacyNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z',
+        locationNoticeAcknowledgedAt: '2026-08-06T12:00:00.000Z'
+      }
+    });
+  });
+  await page.waitForFunction(
+    () => window.__hailiteTestBridge?.store.getState().activeEmployee?.role === 'admin',
+    { timeout: 30000 }
   );
 
   // La liste exportée par le store est la même source de vérité que celle qui
   // capture le véritable instantané. Le statut réseau est opérationnel et peut
   // légitimement être recalculé à la sortie; toutes les données sont comparées.
-  const realStateBeforeDemo = await page.evaluate(async () => {
-    const { DEMO_SANDBOX_SNAPSHOT_KEYS, useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
-    const keys = DEMO_SANDBOX_SNAPSHOT_KEYS.filter(key => key !== 'offlineSyncStatus');
+  result.testStage = 'snapshot-before-demo';
+  const realStateBeforeDemo = await page.evaluate(() => {
+    const { store, snapshotKeys } = window.__hailiteTestBridge;
+    const state = store.getState();
+    const keys = snapshotKeys.filter(key => key !== 'offlineSyncStatus');
     return {
       keys,
       serialized: JSON.stringify(Object.fromEntries(keys.map(key => [key, state[key]])))
@@ -203,9 +379,9 @@ try {
   await waitForText('Mode Démo 5 ans — données fictives');
   result.demoActivated = true;
 
-  const demoState = await page.evaluate(async () => {
-    const { useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
+  result.testStage = 'demo-state';
+  const demoState = await page.evaluate(() => {
+    const state = window.__hailiteTestBridge.store.getState();
     return {
       active: state.demoSandboxActive,
       totalRows: state.demoSandboxSummary?.counts.totalRows || 0,
@@ -225,21 +401,20 @@ try {
   // Tente une hydratation et une vraie mutation de store pendant la démo. Sans
   // les gardes du bac à sable, ces deux opérations atteindraient le faux nuage
   // validé ci-dessus; avec l'isolation, elles restent entièrement en mémoire.
-  const isolationProof = await page.evaluate(async () => {
-    const apiClient = await import('/src/apiClient.ts');
-    const { useAppStore } = await import('/src/store.ts');
-    await apiClient.hydrateFromCloud();
+  result.testStage = 'demo-isolation';
+  const isolationProof = await page.evaluate(() => {
+    const { apiClient, store } = window.__hailiteTestBridge;
+    void apiClient.hydrateFromCloud();
     const clientName = 'Client ajouté uniquement dans la démo';
-    useAppStore.getState().addClient({
+    store.getState().addClient({
       name: clientName,
       company: 'Bac à sable',
       email: 'demo-only@hailite.example',
       phone: '403-555-0199',
       address: 'Adresse fictive'
     });
-    await new Promise(resolve => setTimeout(resolve, 0));
     return {
-      mutationApplied: useAppStore.getState().clients.some(client => client.name === clientName),
+      mutationApplied: store.getState().clients.some(client => client.name === clientName),
       requests: [...window.__hailiteCloudTestRequests]
     };
   });
@@ -251,14 +426,15 @@ try {
   result.demoStatsVisible = await page.$eval('#view-stats-content', element => (element.innerText || '').trim().length > 500);
 
   await clickButton('Retour aux vraies données');
-  await page.waitForFunction(async () => {
-    const { useAppStore } = await import('/src/store.ts');
-    return !useAppStore.getState().demoSandboxActive;
-  }, { timeout: 30000 });
-  const realStateAfterDemo = await page.evaluate(async () => {
-    const { DEMO_SANDBOX_SNAPSHOT_KEYS, useAppStore } = await import('/src/store.ts');
-    const state = useAppStore.getState();
-    const keys = DEMO_SANDBOX_SNAPSHOT_KEYS.filter(key => key !== 'offlineSyncStatus');
+  await page.waitForFunction(
+    () => !(document.body.textContent || '').includes('Mode Démo 5 ans — données fictives'),
+    { timeout: 30000 }
+  );
+  result.testStage = 'snapshot-after-demo';
+  const realStateAfterDemo = await page.evaluate(() => {
+    const { store, snapshotKeys } = window.__hailiteTestBridge;
+    const state = store.getState();
+    const keys = snapshotKeys.filter(key => key !== 'offlineSyncStatus');
     return {
       keys,
       serialized: JSON.stringify(Object.fromEntries(keys.map(key => [key, state[key]])))
@@ -268,6 +444,7 @@ try {
     JSON.stringify(realStateAfterDemo.keys) === JSON.stringify(realStateBeforeDemo.keys) &&
     realStateAfterDemo.serialized === realStateBeforeDemo.serialized
   );
+  result.testStage = 'complete';
 } catch (error) {
   result.testError = String(error?.stack || error);
 } finally {
@@ -277,10 +454,15 @@ try {
 result.hookErrorDetected = [...result.consoleErrors, ...result.pageErrors]
   .some(message => /Rendered more hooks|hooks than during the previous render|change in the order of Hooks/i.test(message));
 result.passed = Boolean(
-  result.onboardingVisible && result.clickedFinish && result.mainVisibleWithoutReload &&
-  result.loginVisibleWithoutReload && result.rootHasContent && result.bodyIsNotBlank &&
-  result.cloudProbeValid && result.demoSettingsVisible && result.demoActivated && result.demoCountsValid && result.demoMutationApplied &&
+  result.onboardingVisible && result.logoPickerUsesFiles && result.logoUploadPreview &&
+  result.clickedFinish && result.mainVisibleWithoutReload && result.loginVisibleWithoutReload &&
+  result.onboardingAbsentAfterReload && result.rootHasContent && result.bodyIsNotBlank &&
+  result.cloudProbeValid && result.manualProjectCreated && result.manualProjectAssigned &&
+  result.projectVisibleInEmployeePunch && result.projectSyncRequests.some(request => request.startsWith('POST /api/db/projects')) &&
+  result.projectSyncRequests.some(request => request.includes('/children')) &&
+  result.demoSettingsVisible && result.demoActivated && result.demoCountsValid && result.demoMutationApplied &&
   result.demoStatsVisible && result.demoRealStateRestored && result.demoCloudRequests.length === 0 &&
+  result.consoleErrors.length === 0 && result.pageErrors.length === 0 &&
   !result.hookErrorDetected && !result.testError
 );
 

@@ -645,9 +645,9 @@ export default function ClientDocumentsManager() {
             >
               
               {/* Header inside row */}
-              <div className="flex items-start justify-between gap-2">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-col items-start justify-between gap-2 sm:flex-row">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="text-xs font-mono font-black text-white">{doc.number}</span>
                     <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded border font-semibold bg-gray-900 text-gray-400">
                       {doc.type === 'quote' ? t.cdmDocQuoteShort : doc.type === 'contract' ? t.cdmDocContractShort : t.cdmDocInvoiceShort}
@@ -660,15 +660,15 @@ export default function ClientDocumentsManager() {
                   </p>
                 </div>
 
-                <div className="text-right space-y-1">
+                <div className="max-w-full space-y-1 text-left sm:text-right">
                   <span className={`text-[10px] font-mono border px-2 py-0.5 rounded-full font-bold uppercase ${getStatusColor(doc.status)}`}>
                     {getStatusTranslation(doc.status)}
                   </span>
                   {doc.refQuote && (
-                    <p className="text-[9px] text-blue-400 font-mono">{t.cdmQuoteRef} {doc.refQuote}</p>
+                    <p className="break-all text-[9px] text-blue-400 font-mono">{t.cdmQuoteRef} {doc.refQuote}</p>
                   )}
                   {doc.refContract && (
-                    <p className="text-[9px] text-purple-300 font-mono">{currentLanguage === 'FR' ? 'Contrat réf.' : 'Contract ref.'} {doc.refContract}</p>
+                    <p className="break-all text-[9px] text-purple-300 font-mono">{currentLanguage === 'FR' ? 'Contrat réf.' : 'Contract ref.'} {doc.refContract}</p>
                   )}
                 </div>
               </div>
@@ -690,7 +690,7 @@ export default function ClientDocumentsManager() {
               </div>
 
               {/* Action buttons */}
-              <div className="flex items-center justify-between border-t border-gray-805 pt-3">
+              <div className="flex min-w-0 flex-col items-stretch justify-between gap-2 border-t border-gray-805 pt-3 sm:flex-row sm:items-center">
                 {!isSignedContract(doc) ? (
                   <button
                     onClick={() => {
@@ -706,7 +706,7 @@ export default function ClientDocumentsManager() {
                   <span className="p-1.5 text-amber-400" title={currentLanguage === 'FR' ? 'Suppression interdite après signature' : 'Deletion prohibited after signing'}><Lock className="h-4 w-4" /></span>
                 )}
 
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   {/* Modification autorisée pour tous les documents sauf le contrat signé. */}
                   {isSignedContract(doc) ? (
                     <span className="inline-flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-black uppercase text-amber-300" title={currentLanguage === 'FR' ? 'Le contenu de ce contrat signé est définitivement verrouillé.' : 'The content of this signed contract is permanently locked.'}>

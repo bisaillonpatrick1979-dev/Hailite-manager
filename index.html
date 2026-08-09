@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0F1115" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Hailite Manager" />
+    <!-- %%API_ORIGIN%% est remplacé à la construction par l'origine de
+         VITE_API_BASE_URL (voir vite.config.ts). Vide pour le build web, où
+         'self' suffit déjà ; renseigné pour le build mobile, dont la WebView
+         appelle le serveur depuis une autre origine. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'%%API_ORIGIN%%; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/app-icon-192.png" />
+    <link rel="apple-touch-icon" href="/app-icon-180.png" />
     <title>Hailite Manager — Gestion de chantier</title>
     <meta name="description" content="Plateforme bilingue de gestion de chantiers, employés, pointage, inventaire, paie, clients et facturation." />
   </head>

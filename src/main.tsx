@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { prepareCloudState } from './cloudBootstrap';
 import { purgeLegacySensitiveStorage } from './securityStorage';
 import { LOCAL_TEST_MODE } from './testProfiles';
+import { isNativeRuntime } from './runtimeConfig';
 import './index.css';
 
 // ---------------------------------------------------------------------------
@@ -147,3 +148,14 @@ startApplication().catch(async error => {
   // échoue pour une raison inattendue.
   renderApplication(await loadRouteComponent());
 });
+
+// L'installation PWA sert de solution multiplateforme hors des boutiques.
+// Capacitor embarque déjà les fichiers web : aucun service worker n'est requis
+// dans l'application native et il pourrait y conserver une version périmée.
+if (import.meta.env.PROD && !isNativeRuntime && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(error => {
+      console.warn('Le mode hors connexion n’a pas pu être activé :', error);
+    });
+  });
+}
