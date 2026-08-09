@@ -198,7 +198,17 @@ export default function App() {
   const visibleSettingsTab = (activeEmployee && activeEmployee.role !== 'admin' && ![2, 3].includes(activeSettingsTab))
     ? 2
     : activeSettingsTab;
-  const [statsMonth, setStatsMonth] = useState<string>('2026-06');
+  // Mois affiché par l'onglet Statistiques. Il était figé sur une valeur écrite
+  // à la main : passé cette date, toute la page — gains, heures, sessions,
+  // calcul de paie, statistiques par employé et par chantier, bilan simplifié —
+  // montrait un mois vide pendant que le tableau de bord affichait les vraies
+  // heures du jour. Deux écrans, deux réponses, pour les mêmes données.
+  // Calculé sur l'heure locale : en fin de soirée en Alberta, l'heure UTC est
+  // déjà au lendemain et pourrait basculer de mois trop tôt.
+  const [statsMonth, setStatsMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   useEffect(() => {
     if (!demoSandboxActive || !demoSandboxSummary) return;
     setStatsMonth(demoSandboxSummary.latestStatsMonth);
@@ -3570,7 +3580,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <section id="team-work-calendars" className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div>
-                            <div className="inline-flex px-2 py-1 rounded bg-cyan-500/10 text-cyan-400 font-mono text-[9px] uppercase font-black">TEAM CALENDAR</div>
+                            <div className="inline-flex px-2 py-1 rounded bg-cyan-500/10 text-cyan-400 font-mono text-[9px] uppercase font-black">{t.statsTeamCalendarTag}</div>
                             <h4 className="text-sm font-black text-white mt-2">📅 {currentLanguage === 'FR' ? "Calendriers des employés" : 'Employee calendars'}</h4>
                             <p className="text-xs text-gray-500 mt-1">{currentLanguage === 'FR' ? 'Choisissez un employé, puis touchez une journée pour ouvrir sa fiche complète.' : 'Choose an employee, then tap a day to open the complete daily record.'}</p>
                           </div>
@@ -3600,7 +3610,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   {activeEmployee && activeEmployee.role === 'admin' && (
                     <div className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
                       <div className="flex items-center gap-2">
-                        <div className="p-1 px-1.5 rounded bg-orange-650/10 text-orange-500 font-mono text-[9px] uppercase font-bold text-center">ADMIN PANEL</div>
+                        <div className="p-1 px-1.5 rounded bg-orange-650/10 text-orange-500 font-mono text-[9px] uppercase font-bold text-center">{t.statsAdminPanelTag}</div>
                         <h4 className="text-xs font-black text-white uppercase tracking-wider">{t.teamIndividualStats} ({employees.length})</h4>
                       </div>
 
@@ -3695,7 +3705,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   {/* -------------------- DETAILED PROJECT STATISTICS SECTION -------------------- */}
                   <div className="p-5 bg-gray-950 border border-gray-850 rounded-2xl space-y-4">
                     <div className="flex items-center gap-2">
-                      <div className="p-1 px-1.5 rounded bg-cyan-650/10 text-cyan-500 font-mono text-[9px] uppercase font-bold text-center">FIELD STATISTICS</div>
+                      <div className="p-1 px-1.5 rounded bg-cyan-650/10 text-cyan-500 font-mono text-[9px] uppercase font-bold text-center">{t.statsFieldTag}</div>
                       <h4 className="text-xs font-black text-white uppercase tracking-wider">{t.globalProjectStats}</h4>
                     </div>
 
