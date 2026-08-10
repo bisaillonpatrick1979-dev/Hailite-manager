@@ -26,7 +26,7 @@ import {
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
-import { canEmployeePunchProject, effectiveProjectAssignees, projectsAvailableForPunch } from './projectAccess';
+import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from './projectAccess';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -7401,7 +7401,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 >
                   <option value="">{t.selectSiteOption}</option>
                   {punchableProjects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                    <option key={p.id} value={p.id}>{projectPickerLabel(p, projects)}</option>
                   ))}
                 </select>
                 {/* Une liste vide sans explication laisse l'employé bloqué
