@@ -9,6 +9,24 @@ export function canUseGeofenceBypass(localTestMode: boolean, role?: string | nul
   return localTestMode && role === 'admin';
 }
 
+// Un chantier est géorepéré dès qu'il porte des coordonnées utilisables.
+//
+// L'ancien test `!project.latitude || !project.longitude` désactivait le
+// géorepérage dès qu'UNE des deux valait 0 — or 0 est une latitude parfaitement
+// valide. Un chantier à latitude 0 laissait donc pointer de n'importe où, sans
+// le dire.
+//
+// Le modèle stocke 0 par défaut (`rowToProject` fait `r.latitude || 0`), donc
+// le couple exactement (0, 0) reste le seul marqueur possible de « jamais
+// saisi » : c'est un point du golfe de Guinée, jamais un chantier de toiture.
+// Toute autre combinaison, y compris une seule coordonnée à zéro, est traitée
+// comme une position réelle.
+export function hasProjectCoordinates(project: { latitude?: number | null; longitude?: number | null }): boolean {
+  const { latitude, longitude } = project;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  return !(latitude === 0 && longitude === 0);
+}
+
 export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3; // earth radius in meters
   const phi1 = (lat1 * Math.PI) / 180;
@@ -116,8 +134,13 @@ export function useGeofencing() {
     }
 
     const project = projects.find((p) => p.id === projectId);
-    // 2. If no project or no valid coordinates defined, allow punch (fail-safe)
-    if (!project || !project.latitude || !project.longitude) {
+    // 2. Aucun chantier ou aucune coordonnée : le géorepérage ne s'applique pas.
+    //    Le test porte sur le TYPE et non sur la valeur : `0` est un nombre
+    //    valide (équateur, méridien de Greenwich) mais aussi la valeur que
+    //    prennent les chantiers dont les coordonnées n'ont jamais été saisies.
+    //    L'ancien test `!project.latitude` désactivait donc le géorepérage sans
+    //    le dire dès qu'un chantier avait 0 comme coordonnée.
+    if (!project || !hasProjectCoordinates(project)) {
       return { canPunch: true, distance: 0, requiredRadius: 0, msg: 'No GPS coordinate constraints on this project' };
     }
 
@@ -126,11 +149,16 @@ export function useGeofencing() {
       return { canPunch: false, isChecking: true, distance: 0, requiredRadius: project.radius, msg: 'Checking location...' };
     }
 
-    // 4. If GPS error occurred and we have NO coords
+    // 4. GPS en échec et aucune position : le travail n'est jamais bloqué (un
+    //    sous-sol, un toit métallique ou une permission refusée sont des
+    //    situations normales de chantier), mais le pointage part « à vérifier »
+    //    au lieu de se faire passer pour validé. C'est la gestion qui tranche.
     if (gpsError && !coords) {
-      // Fail-safe: if GPS fails or permissions are blocked, we don't block work but warning is appropriate.
-      // However user requested: "GPS non disponible sur l'appareil (fail-safe : on laisse passer)"
-      return { canPunch: true, distance: 0, requiredRadius: project.radius, isFailSafe: true, msg: `Fail-safe passes: ${gpsError}` };
+      return {
+        canPunch: true, distance: 0, requiredRadius: project.radius,
+        isFailSafe: true, needsApproval: true,
+        msg: `Position indisponible, pointage à faire approuver : ${gpsError}`
+      };
     }
 
     if (!coords) {

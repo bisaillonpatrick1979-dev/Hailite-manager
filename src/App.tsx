@@ -738,8 +738,19 @@ export default function App() {
       rate: homeRateCustom,
       // Le travail demeure possible lorsque le téléphone ne fournit pas de
       // position, mais la fiche ne prétend plus que le GPS a été validé.
-      withinGeofence: geofencingBypassActive || !gpsFailSafeUsed
+      withinGeofence: geofencingBypassActive || !gpsFailSafeUsed,
+      // La position part avec le pointage : c'est le serveur qui recalcule la
+      // distance au chantier et tranche (voir enforcePunchGeofence).
+      latitude: coords?.latitude,
+      longitude: coords?.longitude,
+      needsApproval: gpsFailSafeUsed
     });
+
+    // Sans position vérifiable, le pointage est accepté mais devra être
+    // approuvé par le bureau : on le dit tout de suite au travailleur.
+    if (gpsFailSafeUsed) {
+      alert(t.punchNeedsApprovalAlert);
+    }
 
     playSoundCue('in');
     setShowPunchInModal(false);
@@ -1378,9 +1389,15 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       )}
       {!demoSandboxActive && syncFailure && (
         <div className="fixed top-16 left-0 right-0 z-[90] flex items-center justify-between gap-3 border-b border-red-500/40 bg-red-950/95 px-4 py-2 text-xs text-red-100 shadow-lg">
-          <span>
+          <span className="min-w-0 break-words">
             {currentLanguage === 'FR' ? 'Sauvegarde nuage échouée' : 'Cloud save failed'}
-            {' — '}{syncFailure.label}. {currentLanguage === 'FR' ? 'Vérifiez la connexion puis réessayez.' : 'Check the connection and try again.'}
+            {' — '}{syncFailure.label}.{' '}
+            {/* Le motif renvoyé par le serveur (« vous êtes à 340 m du
+                chantier ») est bien plus utile que le conseil générique :
+                on l'affiche dès qu'il existe. */}
+            {syncFailure.message
+              ? syncFailure.message
+              : (currentLanguage === 'FR' ? 'Vérifiez la connexion puis réessayez.' : 'Check the connection and try again.')}
           </span>
           <button type="button" onClick={() => setSyncFailure(null)} className="rounded px-2 py-1 font-bold hover:bg-red-900">
             {currentLanguage === 'FR' ? 'Fermer' : 'Dismiss'}

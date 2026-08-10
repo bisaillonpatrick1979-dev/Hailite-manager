@@ -131,6 +131,8 @@ export const translations = {
     grossAccumulated: "Valeur brute accumulée",
     // Bandeau financier du tableau de bord (revenu / coûts / marge)
     labourCostTile: "Coût main-d'œuvre",
+    punchNeedsApprovalAlert: "Position GPS indisponible. Votre pointage est enregistré, mais devra être approuvé par le bureau.",
+    geofenceServerRefused: "Pointage refusé par le serveur : vous êtes trop loin du chantier.",
     financeStripTitle: "Finances de la compagnie",
     financeStripHint: "Revenu facturé, coûts réels et marge pour la période choisie.",
     periodMonth: "Mois",
@@ -1548,6 +1550,8 @@ export const translations = {
     grossAccumulated: "Accumulated gross value",
     // Dashboard finance strip (revenue / costs / margin)
     labourCostTile: "Labour cost",
+    punchNeedsApprovalAlert: "GPS position unavailable. Your punch is recorded, but will need office approval.",
+    geofenceServerRefused: "Punch refused by the server: you are too far from the site.",
     financeStripTitle: "Company finances",
     financeStripHint: "Invoiced revenue, actual costs and margin for the selected period.",
     periodMonth: "Month",

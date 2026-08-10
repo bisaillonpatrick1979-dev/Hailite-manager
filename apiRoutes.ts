@@ -176,6 +176,99 @@ function applyReadScope(query: any, table: string, auth: AuthContext, projectIds
   return query;
 }
 
+// ---------------------------------------------------------------------------
+// Géorepérage vérifié par le serveur
+// ---------------------------------------------------------------------------
+// La règle de géorepérage vivait uniquement dans le navigateur : le serveur
+// acceptait n'importe quel pointage et faisait confiance au drapeau
+// `within_geofence` envoyé par le client. Refuser la permission de
+// localisation, ou rejouer la requête à la main, suffisait donc à pointer de
+// n'importe où. Le serveur recalcule maintenant la distance lui-même.
+//
+// Le couple exactement (0, 0) marque un chantier dont les coordonnées n'ont
+// jamais été saisies — voir hasProjectCoordinates côté client.
+function projectIsGeofenced(project: { latitude: unknown; longitude: unknown }): boolean {
+  const latitude = Number(project.latitude);
+  const longitude = Number(project.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+  return !(latitude === 0 && longitude === 0);
+}
+
+// Distance orthodromique en mètres (même formule que le client).
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(deltaPhi / 2) ** 2
+    + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+interface GeofenceVerdict {
+  ok: boolean;
+  error?: string;
+  distanceMeters?: number;
+  radiusMeters?: number;
+}
+
+// Réécrit `within_geofence` et `approval_status` à partir de la position
+// réellement transmise. Le client ne décide plus de sa propre conformité.
+export async function enforcePunchGeofence(
+  payload: Record<string, any>,
+  auth: AuthContext
+): Promise<GeofenceVerdict> {
+  // La gestion peut saisir un pointage pour autrui (correction, oubli) : le
+  // géorepérage vise le travailleur sur le terrain.
+  if (isManager(auth.role)) return { ok: true };
+  if (!supabase || typeof payload.project_id !== 'string' || !payload.project_id) return { ok: true };
+
+  const { data: company } = await supabase
+    .from('companies')
+    .select('geofencing_enabled')
+    .eq('id', auth.companyId)
+    .maybeSingle();
+  if (!company || company.geofencing_enabled === false) return { ok: true };
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('latitude, longitude, radius')
+    .eq('id', payload.project_id)
+    .eq('company_id', auth.companyId)
+    .maybeSingle();
+  if (!project || !projectIsGeofenced(project)) return { ok: true };
+
+  const latitude = Number(payload.latitude);
+  const longitude = Number(payload.longitude);
+  const hasPosition = Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  if (!hasPosition) {
+    // Position indisponible : on n'empêche pas de travailler (sous-sol, toit
+    // métallique, permission refusée), mais le pointage ne peut pas prétendre
+    // avoir été vérifié et part en attente d'approbation.
+    payload.within_geofence = false;
+    payload.approval_status = 'pending';
+    return { ok: true };
+  }
+
+  const radius = Number(project.radius);
+  const radiusMeters = Number.isFinite(radius) && radius > 0 ? radius : 100;
+  const distanceMeters = haversineMeters(latitude, longitude, Number(project.latitude), Number(project.longitude));
+
+  if (distanceMeters > radiusMeters) {
+    return {
+      ok: false,
+      distanceMeters,
+      radiusMeters,
+      error: `Pointage refusé : vous êtes à ${distanceMeters} m du chantier (maximum ${radiusMeters} m).`
+    };
+  }
+
+  payload.within_geofence = true;
+  return { ok: true, distanceMeters, radiusMeters };
+}
+
 async function hasProjectAccess(auth: AuthContext, projectId: unknown): Promise<boolean> {
   if (!supabase || typeof projectId !== 'string' || !projectId) return false;
   const { data: project, error } = await supabase
@@ -1152,6 +1245,17 @@ export function registerApiRoutes(app: express.Express): void {
       }
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
+      }
+      if (table === 'punches') {
+        const verdict = await enforcePunchGeofence(payload, auth);
+        if (!verdict.ok) {
+          logAudit(auth, 'punch.geofence_refused', 'punches', null, {
+            project_id: payload.project_id ?? null,
+            distance_m: verdict.distanceMeters ?? null,
+            radius_m: verdict.radiusMeters ?? null
+          });
+          return res.status(403).json({ error: verdict.error });
+        }
       }
       if (table === 'safety_records') {
         payload.created_by = auth.userId;

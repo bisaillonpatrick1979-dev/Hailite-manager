@@ -140,6 +140,11 @@ export interface PunchSession {
   withinGeofence: boolean;
   attemptedOutsideGeofence?: boolean; // logged infractions
   outsideDetails?: string; // e.g., "At 345m"
+  // Position relevée au moment du pointage. Elle est transmise au serveur, qui
+  // recalcule lui-même la distance au chantier : `withinGeofence` venant du
+  // navigateur n'est jamais une preuve, seulement un affichage.
+  latitude?: number;
+  longitude?: number;
   surfaceMaterials?: SurfaceMaterialInput[];
   revenue: number;
   totalWorkedHours?: number;

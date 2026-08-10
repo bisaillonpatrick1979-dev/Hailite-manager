@@ -155,6 +155,9 @@ interface AppState {
     withinGeofence: boolean;
     attemptedOutsideGeofence?: boolean;
     outsideDetails?: string;
+    latitude?: number;
+    longitude?: number;
+    needsApproval?: boolean;
   }) => void;
   pausePunchSession: (id: string) => void;
   resumePunchSession: (id: string) => void;
@@ -1762,7 +1765,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Punch Sessions
-  startPunchSession: ({ employeeId, projectId, payMode, rate, withinGeofence, attemptedOutsideGeofence, outsideDetails }) => {
+  startPunchSession: ({ employeeId, projectId, payMode, rate, withinGeofence, attemptedOutsideGeofence, outsideDetails, latitude, longitude, needsApproval }) => {
     const { punchSessions, employees, projects } = get();
     const emp = employees.find(e => e.id === employeeId);
     const proj = projects.find(p => p.id === projectId);
@@ -1788,7 +1791,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       withinGeofence,
       attemptedOutsideGeofence,
       outsideDetails,
-      revenue: 0
+      latitude,
+      longitude,
+      revenue: 0,
+      // Sans position vérifiable, le quart ne peut pas se déclarer conforme :
+      // il part explicitement en attente de vérification du bureau.
+      approvalStatus: needsApproval ? 'pending' : undefined
     };
 
     const updated = [newPunch, ...punchSessions];
