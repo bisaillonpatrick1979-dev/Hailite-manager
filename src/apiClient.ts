@@ -970,7 +970,9 @@ export function documentToRow(doc: GCPDocument, companyId?: string) {
   return {
     id: doc.id, company_id: companyId, kind: doc.type, document_number: doc.number, date: doc.date,
     due_date: doc.dueDate, status: doc.status, ref_quote: doc.refQuote, ref_contract: doc.refContract,
-    client_id: doc.clientId, client_email: doc.clientEmail, client_phone: doc.clientPhone,
+    // client_name est relu à l'affichage (rowToDocument) : sans l'écrire, le nom
+    // du client repartait vide à chaque rechargement depuis le nuage.
+    client_id: doc.clientId, client_name: doc.clientName, client_email: doc.clientEmail, client_phone: doc.clientPhone,
     client_address: doc.clientAddress, site_address: doc.siteAddress, is_simple_layout: doc.isSimpleLayout,
     subtotal: doc.subtotal, discount_pct: doc.discountPct, tax_rate: doc.taxRate, tax_amount: doc.taxAmount,
     total: doc.total, holdback_pct: doc.holdbackPct, holdback_amount: doc.holdbackAmount,
