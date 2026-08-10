@@ -646,6 +646,28 @@ function requireKnownTable(table: string, res: express.Response): boolean {
   return true;
 }
 
+
+// ---------------------------------------------------------------------------
+// Colonnes héritées restées obligatoires (table punches)
+// ---------------------------------------------------------------------------
+// La table « punches » porte deux colonnes pour la même personne : « user_id »,
+// du schéma d'origine et déclarée NOT NULL, et « employee_id », ajoutée
+// ensuite et devenue celle que toute l'application lit et filtre. Le client
+// n'écrit que la seconde : chaque pointage était donc refusé par Postgres avec
+// « null value in column "user_id" violates not-null constraint », et
+// l'employé voyait « Sauvegarde nuage échouée — vérifiez la connexion » alors
+// que le réseau n'y était pour rien.
+//
+// On remplit ici l'une à partir de l'autre, dans les deux sens, pour qu'elles
+// ne puissent jamais diverger, quelle que soit la version du client qui écrit.
+function alignLegacyUserColumns(table: string, payload: Record<string, any>): void {
+  if (table !== 'punches') return;
+  const employee = payload.employee_id ?? payload.user_id ?? null;
+  if (employee === null) return;
+  payload.employee_id = employee;
+  payload.user_id = employee;
+}
+
 // Monte toutes les routes /api/* sur une instance Express donnée. Suppose que
 // express.json() a déjà été appliqué en middleware par l'appelant.
 export function registerApiRoutes(app: express.Express): void {
@@ -1118,6 +1140,7 @@ export function registerApiRoutes(app: express.Express): void {
         // company_id imposé par le jeton : le client ne choisit jamais son tenant
         payload.company_id = auth.companyId;
       }
+      alignLegacyUserColumns(table, payload);
       if (table === 'app_users') {
         await prepareAppUserPin(payload, true);
       }
@@ -1331,6 +1354,7 @@ export function registerApiRoutes(app: express.Express): void {
       if (TABLES_WITH_COMPANY_ID.has(table)) {
         payload.company_id = auth.companyId;
       }
+      alignLegacyUserColumns(table, payload);
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
       }
@@ -1416,6 +1440,9 @@ export function registerApiRoutes(app: express.Express): void {
       // Empêche toute réaffectation de tenant ou de clé primaire via PATCH.
       delete payload.company_id;
       delete payload[idColumn];
+      // Si la modification touche la personne rattachée, les deux colonnes
+      // héritées doivent bouger ensemble (voir alignLegacyUserColumns).
+      alignLegacyUserColumns(table, payload);
       if (table === 'app_users') await prepareAppUserPin(payload, false);
       if (!(await parentBelongsToCompany(table, { ...existing, ...payload }, auth.companyId))) {
         return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
