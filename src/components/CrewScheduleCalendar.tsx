@@ -13,8 +13,9 @@ import useAppStore from '../store';
 import { translations } from '../translations';
 import type { ShiftAssignment } from '../types';
 import { CalendarDays, ChevronLeft, ChevronRight, Plus, UserMinus, X } from 'lucide-react';
+import { localDayKey } from '../localTime';
 
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const isoDay = (d: Date) => localDayKey(d);
 
 // Lundi de la semaine contenant la date donnée
 function mondayOf(date: Date): Date {

@@ -139,11 +139,26 @@ export function isCloudSyncAllowed() { return cloudSyncAllowed && !demoSandboxIs
 let cachedCompanyId: string | null = null;
 export function getCompanyId() { return cachedCompanyId; }
 
+// Le serveur explique ses refus dans le corps JSON (« Pointage refusé : vous
+// êtes à 340 m du chantier »). Ne garder que le code HTTP privait l'utilisateur
+// de la seule information utile : ce message remonte jusqu'au bandeau de
+// synchronisation.
+async function apiError(res: Response, fallbackLabel: string): Promise<Error> {
+  let detail = '';
+  try {
+    const body = await res.json();
+    detail = String(body?.error || '').trim();
+  } catch {
+    // Réponse sans corps JSON exploitable : on garde le libellé technique.
+  }
+  return new Error(detail || `${fallbackLabel} → ${res.status}`);
+}
+
 async function dbList(table: string): Promise<any[]> {
   if (demoSandboxIsolation) return [];
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await apiFetch(`/api/db/${table}?limit=500`, { headers: authHeaders(), credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`GET ${table} → ${res.status}`);
+  if (!res.ok) throw await apiError(res, `GET ${table}`);
   return res.json();
 }
 
@@ -156,7 +171,7 @@ async function dbInsert(table: string, row: Record<string, any>): Promise<any> {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
-  if (!res.ok) throw new Error(`POST ${table} → ${res.status}`);
+  if (!res.ok) throw await apiError(res, `POST ${table}`);
   return res.json();
 }
 
@@ -169,7 +184,7 @@ async function dbUpsert(table: string, row: Record<string, any>): Promise<any> {
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
-  if (!res.ok) throw new Error(`PUT ${table} → ${res.status}`);
+  if (!res.ok) throw await apiError(res, `PUT ${table}`);
   return res.json();
 }
 
@@ -182,7 +197,7 @@ async function dbUpdate(table: string, id: string, row: Record<string, any>): Pr
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(row)
   });
-  if (!res.ok) throw new Error(`PATCH ${table}/${id} → ${res.status}`);
+  if (!res.ok) throw await apiError(res, `PATCH ${table}/${id}`);
   return res.json();
 }
 
@@ -190,7 +205,7 @@ async function dbDelete(table: string, id: string): Promise<void> {
   if (demoSandboxIsolation) return;
   if (!cloudSyncAllowed) throw new Error('Cloud sync disabled by company settings');
   const res = await apiFetch(`/api/db/${table}/${id}`, { method: 'DELETE', headers: authHeaders(), credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`DELETE ${table}/${id} → ${res.status}`);
+  if (!res.ok) throw await apiError(res, `DELETE ${table}/${id}`);
 }
 
 // Horodatage de la dernière écriture locale vers le cloud. L'hydratation
@@ -389,7 +404,7 @@ async function replaceProjectChildren(project: Project): Promise<void> {
       assignments: projectAssignmentsToRows(project)
     })
   });
-  if (!res.ok) throw new Error(`PUT project children → ${res.status}`);
+  if (!res.ok) throw await apiError(res, 'PUT project children');
 }
 
 // Une seule requête appelle une fonction Postgres transactionnelle : aucune
@@ -415,8 +430,14 @@ export function punchToRow(p: PunchSession, companyId?: string) {
     project_id: p.projectId, project_name: p.projectName, pay_mode: p.payMode, rate: p.rate,
     start_time: p.startTime, end_time: p.endTime, paused_at: p.pausedAt, total_pause_minutes: p.totalPauseMinutes,
     within_geofence: p.withinGeofence, attempted_outside_geofence: p.attemptedOutsideGeofence || false,
+    latitude: typeof p.latitude === 'number' ? p.latitude : null,
+    longitude: typeof p.longitude === 'number' ? p.longitude : null,
     outside_details: p.outsideDetails, revenue: p.revenue, total_worked_hours: p.totalWorkedHours,
-    surface_materials: p.surfaceMaterials || null
+    surface_materials: p.surfaceMaterials || null,
+    // Validation administrative et piste d'audit des corrections d'heures
+    approval_status: p.approvalStatus || 'pending',
+    approved_by: p.approvedById || null, approved_by_name: p.approvedByName || null,
+    approved_at: p.approvedAt || null, corrections: p.corrections || null
   };
 }
 
@@ -426,8 +447,14 @@ export function rowToPunch(r: any): PunchSession {
     projectName: r.project_name || '', payMode: r.pay_mode, rate: r.rate || 0, startTime: r.start_time,
     endTime: r.end_time, pausedAt: r.paused_at, totalPauseMinutes: r.total_pause_minutes || 0,
     withinGeofence: r.within_geofence ?? true, attemptedOutsideGeofence: r.attempted_outside_geofence || false,
+    latitude: typeof r.latitude === 'number' ? r.latitude : undefined,
+    longitude: typeof r.longitude === 'number' ? r.longitude : undefined,
     outsideDetails: r.outside_details || undefined, surfaceMaterials: r.surface_materials || undefined,
-    revenue: r.revenue || 0, totalWorkedHours: r.total_worked_hours ?? undefined
+    revenue: r.revenue || 0, totalWorkedHours: r.total_worked_hours ?? undefined,
+    approvalStatus: r.approval_status || 'pending',
+    approvedById: r.approved_by || undefined, approvedByName: r.approved_by_name || undefined,
+    approvedAt: r.approved_at || undefined,
+    corrections: Array.isArray(r.corrections) ? r.corrections : undefined
   };
 }
 

@@ -131,8 +131,10 @@ export default function MotivationTab() {
   const getTeamStats = (team: MotivationTeam) => {
     const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
     
-    // Total hours and revenues from finished or running sessions today (YYYY-MM-DD format)
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Cumul depuis le début, conformément aux tuiles « Heures Totales » et
+    // « Revenu » affichées plus bas. (Une variable « todayStr » traînait ici
+    // sans être utilisée : le commentaire annonçait un total du jour que le
+    // calcul n'a jamais fait.)
     const teamPunches = punchSessions.filter(p => team.memberIds.includes(p.employeeId));
     
     const activeHours = teamPunches.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
@@ -703,7 +705,7 @@ export default function MotivationTab() {
 
                     <div className="pl-2 flex items-center justify-between text-xs text-gray-400 font-mono">
                       <span className="font-bold">🔨 {isFrench ? 'Chantier :' : 'Site:'}</span>
-                      <span className="text-white font-black truncate max-w-[150px]">{stats.activeProjectNames}</span>
+                      <span className="text-white font-black break-words text-right min-w-0">{stats.activeProjectNames}</span>
                     </div>
                   </div>
                 );

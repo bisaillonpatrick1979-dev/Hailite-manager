@@ -6,7 +6,7 @@ import {
   WeeklyGoal, MotivationTeam, MotivationGoal,
   GCPDocument, GCPDocumentLineItem, GCPDocumentMaterialLine, GCPDocumentLabourLine, GCPDocumentOtherLine, GCPDocumentSubcontractLine, GCPDocumentPaymentHistoryEntry,
   ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead, ShiftAssignment,
-  SafetyRecord
+  SafetyRecord, PunchCorrection
 } from './types';
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
@@ -29,6 +29,8 @@ import type { DemoSandboxSummary } from './demoSandbox';
 import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import { resolveOnboardingState } from './onboardingState';
 import { resolveViewerProfile } from './viewerProfile';
+import { todayKey, localDayKey, setAppTimeZone } from './localTime';
+import { punchDayKeys, recomputePunchTotals } from './punchHours';
 
 interface AppState {
   // Data State
@@ -153,10 +155,20 @@ interface AppState {
     withinGeofence: boolean;
     attemptedOutsideGeofence?: boolean;
     outsideDetails?: string;
+    latitude?: number;
+    longitude?: number;
+    needsApproval?: boolean;
   }) => void;
   pausePunchSession: (id: string) => void;
   resumePunchSession: (id: string) => void;
   stopPunchSession: (id: string, surfaceMaterials?: { name: string; quantity: number; unitPrice: number; emoji: string }[]) => void;
+  // Validation administrative des heures (réservée à la gestion)
+  correctPunchSession: (
+    id: string,
+    changes: { startTime?: string; endTime?: string; totalPauseMinutes?: number },
+    note?: string
+  ) => { ok: boolean; message?: string };
+  approvePunchSession: (id: string) => { ok: boolean; message?: string };
 
   // Invoice CRUD
   addInvoice: (inv: Omit<Invoice, 'id' | 'invoiceNumber'>) => void;
@@ -642,7 +654,10 @@ const getStartOfWeekISO = () => {
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   const monday = new Date(d.setDate(diff));
-  return monday.toISOString().split('T')[0];
+  // getDay/getDate travaillent déjà en heure locale : on garde la même journée
+  // en la formatant localement plutôt qu'en UTC, sinon le lundi calculé pouvait
+  // ressortir en dimanche pour les fuseaux à l'ouest de Greenwich.
+  return localDayKey(monday);
 };
 
 const initialMotivationTeams: MotivationTeam[] = [
@@ -790,6 +805,84 @@ export const getLevelFromXP = (xp: number): number => {
   }
   return level;
 };
+
+// ---------------------------------------------------------------------------
+// Propagation d'une correction d'heures vers les factures
+// ---------------------------------------------------------------------------
+// Corriger un pointage sans toucher aux factures laissait deux chiffres
+// différents dans l'application. On recalcule donc les factures **brouillons**
+// qui contiennent le pointage. Une facture déjà envoyée ou payée n'est jamais
+// modifiée en silence : elle est signalée à la gestion par une alerte.
+type StoreGet = () => AppState;
+type StoreSet = (partial: Partial<AppState>) => void;
+
+function recalculateInvoicesForPunch(get: StoreGet, set: StoreSet, punchId: string): {
+  updatedInvoiceNumbers: string[];
+  lockedInvoiceNumbers: string[];
+} {
+  const { invoices, punchSessions, companyInfo } = get();
+  const concerned = invoices.filter(invoice => invoice.sessionIds.includes(punchId));
+  if (concerned.length === 0) return { updatedInvoiceNumbers: [], lockedInvoiceNumbers: [] };
+
+  const gstRate = companyInfo.taxRate1 !== undefined ? companyInfo.taxRate1 : 0;
+  const qstRate = companyInfo.taxRate2 !== undefined ? companyInfo.taxRate2 : 0;
+  const localRate = companyInfo.localTaxRate !== undefined ? companyInfo.localTaxRate : 0;
+
+  const updatedInvoiceNumbers: string[] = [];
+  const lockedInvoiceNumbers: string[] = [];
+
+  const nextInvoices = invoices.map(invoice => {
+    if (!invoice.sessionIds.includes(punchId)) return invoice;
+    if (invoice.status !== 'draft') {
+      lockedInvoiceNumbers.push(invoice.invoiceNumber);
+      return invoice;
+    }
+    const sessions = punchSessions.filter(punch => invoice.sessionIds.includes(punch.id));
+    const totalHours = sessions.reduce((sum, punch) => sum + (punch.totalWorkedHours || 0), 0);
+    const amount = Number(sessions.reduce((sum, punch) => sum + (punch.revenue || 0), 0).toFixed(2));
+    const gstAmount = Number((amount * gstRate).toFixed(2));
+    const qstAmount = Number((amount * qstRate).toFixed(2));
+    const localTaxAmount = Number((amount * localRate).toFixed(2));
+    const recomputed: Invoice = {
+      ...invoice,
+      totalHours: Number(totalHours.toFixed(2)),
+      amount,
+      gstAmount,
+      qstAmount,
+      localTaxAmount,
+      totalWithTaxes: Number((amount + gstAmount + qstAmount + localTaxAmount).toFixed(2))
+    };
+    updatedInvoiceNumbers.push(invoice.invoiceNumber);
+    syncUpdate('payroll_entries', recomputed.id, invoiceToRow(recomputed));
+    return recomputed;
+  });
+
+  if (updatedInvoiceNumbers.length > 0) {
+    set({ invoices: nextInvoices });
+    saveState('gcp_invoices', nextInvoices);
+  }
+
+  // Une facture verrouillée doit être reprise à la main : on laisse une trace
+  // visible plutôt que de modifier un document déjà transmis.
+  for (const number of lockedInvoiceNumbers) {
+    const invoice = concerned.find(candidate => candidate.invoiceNumber === number);
+    get().addHRAlert({
+      type: 'warning',
+      title: 'Facture à revoir après correction des heures',
+      message: `Les heures d'un pointage de la facture ${number} ont été corrigées, `
+        + `mais cette facture n'est plus un brouillon (${invoice?.status}). `
+        + `Vérifiez le montant avant paiement.`,
+      employeeId: invoice?.employeeId || '',
+      employeeName: invoice?.employeeName || ''
+    });
+  }
+
+  return { updatedInvoiceNumbers, lockedInvoiceNumbers };
+}
+
+// Le fuseau des journées de travail est appliqué avant la création du store :
+// les totaux calculés au premier rendu doivent déjà utiliser le bon fuseau.
+setAppTimeZone(getSavedState<CompanyInfo>('gcp_companyInfo', initialCompanyInfo).timeZone);
 
 export const useAppStore = create<AppState>((set, get) => ({
   // En production, les données métier partent vides et sont hydratées depuis le
@@ -1163,7 +1256,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newGoal: MotivationGoal = {
       ...goal,
       id: genId(),
-      startDate: new Date().toISOString().split('T')[0],
+      startDate: todayKey(),
       current: 0,
       status: 'active'
     };
@@ -1248,7 +1341,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Compute current week revenue
       const empPunchesThisWeek = punchSessions.filter(p => {
         if (p.employeeId !== emp.id) return false;
-        const punchDate = p.startTime.split('T')[0];
+        const punchDate = localDayKey(p.startTime);
         return punchDate >= currentMonday;
       });
       
@@ -1263,11 +1356,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       const empPunches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
       if (empPunches.length > 0) {
         const sortedPunches = [...empPunches].sort((a,b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
-        const uniqueDates = Array.from(new Set(sortedPunches.map(p => p.startTime.split('T')[0])));
-        
+        // Les journées viennent du fuseau local et incluent les deux journées
+        // d'un pointage de nuit : une série ne doit pas se briser parce qu'un
+        // quart s'est terminé après minuit.
+        const uniqueDates = Array.from(new Set(sortedPunches.flatMap(p => punchDayKeys(p))))
+          .sort((a, b) => b.localeCompare(a));
+
         let streak = 0;
-        let todayStr = new Date().toISOString().split('T')[0];
-        let yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        let todayStr = todayKey();
+        let yesterdayStr = localDayKey(Date.now() - 86400000);
         
         if (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr) {
           streak = 1;
@@ -1316,7 +1413,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         computedVal = relevantPunches.reduce((sum, p) => sum + (p.surfaceMaterials?.reduce((s, m) => s + m.quantity, 0) || 0), 0);
       } else if (goal.metric === 'safety_days') {
         const safePunches = relevantPunches.filter(p => !p.attemptedOutsideGeofence);
-        const uniqueSafeDates = new Set(safePunches.map(p => p.startTime.split('T')[0]));
+        const uniqueSafeDates = new Set(safePunches.flatMap(p => punchDayKeys(p)));
         computedVal = uniqueSafeDates.size;
       } else {
         computedVal = goal.current;
@@ -1637,6 +1734,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ companyInfo: updated });
     saveState('gcp_companyInfo', updated);
     setCloudSyncAllowed(updated.dataStorageMode !== 'local');
+    // Les journées de travail suivent le fuseau de la compagnie dès qu'il est
+    // défini; sinon celui de l'appareil continue de s'appliquer.
+    setAppTimeZone(updated.timeZone);
     const companyId = getCompanyId();
     if (companyId) syncUpdate('companies', companyId, companyInfoToRow(updated));
   },
@@ -1665,7 +1765,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Punch Sessions
-  startPunchSession: ({ employeeId, projectId, payMode, rate, withinGeofence, attemptedOutsideGeofence, outsideDetails }) => {
+  startPunchSession: ({ employeeId, projectId, payMode, rate, withinGeofence, attemptedOutsideGeofence, outsideDetails, latitude, longitude, needsApproval }) => {
     const { punchSessions, employees, projects } = get();
     const emp = employees.find(e => e.id === employeeId);
     const proj = projects.find(p => p.id === projectId);
@@ -1691,7 +1791,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       withinGeofence,
       attemptedOutsideGeofence,
       outsideDetails,
-      revenue: 0
+      latitude,
+      longitude,
+      revenue: 0,
+      // Sans position vérifiable, le quart ne peut pas se déclarer conforme :
+      // il part explicitement en attente de vérification du bureau.
+      approvalStatus: needsApproval ? 'pending' : undefined
     };
 
     const updated = [newPunch, ...punchSessions];
@@ -1751,10 +1856,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   stopPunchSession: (id, surfaceMaterials) => {
     const { punchSessions } = get();
+    // Idempotence : un second appel (double clic, retour réseau, rejeu hors
+    // ligne) ne doit ni rallonger les heures, ni redonner l'XP, ni retirer une
+    // deuxième fois les matériaux de l'inventaire. On sort avant tout effet.
+    const target = punchSessions.find(p => p.id === id);
+    if (!target || target.endTime !== null) return;
+
     const updated = punchSessions.map(p => {
       if (p.id === id) {
         const endTime = new Date().toISOString();
-        const start = new Date(p.startTime).getTime();
         const end = new Date(endTime).getTime();
 
         // Si la session est toujours en pause au moment de l'arrêt, on compte
@@ -1765,29 +1875,18 @@ export const useAppStore = create<AppState>((set, get) => ({
           totalPauseMinutes += Math.max(0, (end - pauseStart) / 60000);
         }
 
-        let totalWorkedHours = (end - start) / 3600000; // hours in decimal
-        // Subtract pause minutes
-        totalWorkedHours = Math.max(0, totalWorkedHours - (totalPauseMinutes / 60));
-
-        let revenue = 0;
-        if (p.payMode === 'horaire') {
-          revenue = Number((totalWorkedHours * p.rate).toFixed(2));
-        } else if (p.payMode === 'forfait') {
-          revenue = p.rate;
-        } else if (p.payMode === 'surface') {
-          // If surface, rely on input materials done
-          const materialsCost = surfaceMaterials?.reduce((sum, mat) => sum + (mat.quantity * mat.unitPrice), 0) || 0;
-          revenue = materialsCost;
-        }
+        // Heures et montant viennent de la formule commune : l'arrêt du
+        // pointage et la correction administrative doivent toujours produire
+        // le même résultat pour les mêmes bornes.
+        const closed = { ...p, endTime, pausedAt: null, totalPauseMinutes, surfaceMaterials };
+        const totals = recomputePunchTotals(closed);
 
         return {
-          ...p,
-          endTime,
-          pausedAt: null,
-          totalPauseMinutes,
-          totalWorkedHours: Number(totalWorkedHours.toFixed(2)),
-          surfaceMaterials,
-          revenue
+          ...closed,
+          ...totals,
+          // Un quart fermé attend la vérification du bureau avant de servir de
+          // base ferme à la paie et à la facturation.
+          approvalStatus: 'pending' as const
         };
       }
       return p;
@@ -1820,6 +1919,121 @@ export const useAppStore = create<AppState>((set, get) => ({
         saveState('gcp_inventory', updatedInventory);
       }
     }
+  },
+
+  // ---------------------------------------------------------------------
+  // Validation administrative des heures
+  // ---------------------------------------------------------------------
+  // Un pointage erroné (oubli de punch out, mauvais chantier) était jusqu'ici
+  // irréparable : personne, pas même l'administrateur, ne pouvait corriger.
+  // La correction recalcule les totaux avec la même formule que l'arrêt du
+  // pointage, journalise l'auteur et propage aux factures brouillons.
+  correctPunchSession: (id, changes, note) => {
+    const { punchSessions, activeEmployee, currentLanguage } = get();
+    const isFR = currentLanguage === 'FR';
+    const editor = activeEmployee;
+    if (!editor || (editor.role !== 'admin' && editor.role !== 'secretary')) {
+      return { ok: false, message: isFR ? 'Correction réservée à la gestion.' : 'Corrections are reserved for management.' };
+    }
+    const target = punchSessions.find(p => p.id === id);
+    if (!target) {
+      return { ok: false, message: isFR ? 'Pointage introuvable.' : 'Punch not found.' };
+    }
+    if (!target.endTime) {
+      return { ok: false, message: isFR ? 'Terminez le pointage avant de le corriger.' : 'Close the punch before correcting it.' };
+    }
+
+    const nextStart = changes.startTime || target.startTime;
+    const nextEnd = changes.endTime || target.endTime;
+    const nextPause = changes.totalPauseMinutes === undefined
+      ? target.totalPauseMinutes
+      : Math.max(0, changes.totalPauseMinutes);
+
+    if (Number.isNaN(new Date(nextStart).getTime()) || Number.isNaN(new Date(nextEnd).getTime())) {
+      return { ok: false, message: isFR ? 'Date ou heure invalide.' : 'Invalid date or time.' };
+    }
+    if (new Date(nextEnd).getTime() <= new Date(nextStart).getTime()) {
+      return { ok: false, message: isFR ? 'La fin doit suivre le début.' : 'End must come after start.' };
+    }
+    const elapsedMinutes = (new Date(nextEnd).getTime() - new Date(nextStart).getTime()) / 60000;
+    if (nextPause > elapsedMinutes) {
+      return { ok: false, message: isFR ? 'La pause dépasse la durée du quart.' : 'Break exceeds the shift length.' };
+    }
+
+    const at = new Date().toISOString();
+    const trace: PunchCorrection[] = [];
+    const noter = (field: PunchCorrection['field'], before: string, after: string) => {
+      if (before === after) return;
+      trace.push({ at, byId: editor.id, byName: editor.name, field, before, after, note });
+    };
+    noter('startTime', target.startTime, nextStart);
+    noter('endTime', target.endTime, nextEnd);
+    noter('pauseMinutes', String(target.totalPauseMinutes), String(nextPause));
+
+    if (trace.length === 0) {
+      return { ok: false, message: isFR ? 'Aucun changement à enregistrer.' : 'Nothing to change.' };
+    }
+
+    const draft: PunchSession = { ...target, startTime: nextStart, endTime: nextEnd, totalPauseMinutes: nextPause };
+    const totals = recomputePunchTotals(draft);
+    const corrected: PunchSession = {
+      ...draft,
+      ...totals,
+      approvalStatus: 'corrected',
+      corrections: [...(target.corrections || []), ...trace]
+    };
+
+    const updated = punchSessions.map(p => (p.id === id ? corrected : p));
+    set({ punchSessions: updated });
+    saveState('gcp_punchSessions', updated);
+    syncUpdate('punches', id, punchToRow(corrected));
+
+    get().recomputeGoalsAndStreaks();
+    const cascade = recalculateInvoicesForPunch(get, set, id);
+
+    return {
+      ok: true,
+      message: cascade.lockedInvoiceNumbers.length > 0
+        ? (isFR
+            ? `Heures corrigées. Facture déjà émise à revoir : ${cascade.lockedInvoiceNumbers.join(', ')}.`
+            : `Hours corrected. Already-issued invoice needs review: ${cascade.lockedInvoiceNumbers.join(', ')}.`)
+        : (isFR ? 'Heures corrigées et facture brouillon mise à jour.' : 'Hours corrected and draft invoice updated.')
+    };
+  },
+
+  approvePunchSession: (id) => {
+    const { punchSessions, activeEmployee, currentLanguage } = get();
+    const isFR = currentLanguage === 'FR';
+    const editor = activeEmployee;
+    if (!editor || (editor.role !== 'admin' && editor.role !== 'secretary')) {
+      return { ok: false, message: isFR ? 'Approbation réservée à la gestion.' : 'Approval is reserved for management.' };
+    }
+    const target = punchSessions.find(p => p.id === id);
+    if (!target) return { ok: false, message: isFR ? 'Pointage introuvable.' : 'Punch not found.' };
+    if (!target.endTime) {
+      return { ok: false, message: isFR ? 'Terminez le pointage avant de l’approuver.' : 'Close the punch before approving it.' };
+    }
+    if (target.approvalStatus === 'approved') {
+      return { ok: false, message: isFR ? 'Ce pointage est déjà approuvé.' : 'This punch is already approved.' };
+    }
+
+    const at = new Date().toISOString();
+    const approved: PunchSession = {
+      ...target,
+      approvalStatus: 'approved',
+      approvedById: editor.id,
+      approvedByName: editor.name,
+      approvedAt: at,
+      corrections: [...(target.corrections || []), {
+        at, byId: editor.id, byName: editor.name,
+        field: 'approval', before: target.approvalStatus || 'pending', after: 'approved'
+      }]
+    };
+    const updated = punchSessions.map(p => (p.id === id ? approved : p));
+    set({ punchSessions: updated });
+    saveState('gcp_punchSessions', updated);
+    syncUpdate('punches', id, punchToRow(approved));
+    return { ok: true, message: isFR ? 'Pointage approuvé.' : 'Punch approved.' };
   },
 
   // Invoices actions
@@ -1876,7 +2090,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       employeeId,
       employeeName: emp.name,
       invoiceNumber: nextSequentialNumber(invoices.map(i => i.invoiceNumber), 'INV'),
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
       sessionIds: unInvoicedPunches.map(p => p.id),
       totalHours: Number(totalHours.toFixed(2)),
       amount: Number(amount.toFixed(2)),
@@ -2032,8 +2246,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       number,
       status: 'draft',
       refQuote: quote.number,
-      date: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0],
+      date: todayKey(),
+      dueDate: localDayKey(Date.now() + 30 * 24 * 3600000),
       // Régénère les identifiants des lignes copiées du devis : elles gardaient sinon
       // les mêmes id que les lignes du devis, ce qui provoquait une collision de clé
       // primaire lors de la synchronisation cloud (document_items.id est unique).
@@ -2057,7 +2271,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const newPayment: GCPDocumentPaymentHistoryEntry = {
       id: genId(),
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
       amount,
       method,
       notes: notes || 'Paiement partiel enregistré'
@@ -2422,6 +2636,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (onboardingResolution) {
       saveState('gcp_companyInfo', onboardingResolution.companyInfo);
       saveState('gcp_isOnboarded', onboardingResolution.isOnboarded);
+      // La compagnie hydratée depuis le cloud peut imposer son propre fuseau.
+      setAppTimeZone((onboardingResolution.companyInfo as CompanyInfo).timeZone);
 
       // Au premier login, l'onboarding vient d'être terminé avant que la session
       // sécurisée existe. On le pousse maintenant, puis les appareils suivants

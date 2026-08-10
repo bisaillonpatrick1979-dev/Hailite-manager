@@ -50,6 +50,12 @@ export interface Employee {
   workMode?: 'sqft' | 'hour' | 'flat';
   contractRenewalDate?: string;
   vacationRateOverride?: number;
+  // Surcharges d'heures supplémentaires pour cet employé. Laissées vides, les
+  // règles de la compagnie s'appliquent.
+  overtimeExempt?: boolean;                // non admissible aux heures supp.
+  overtimeDailyHoursOverride?: number;
+  overtimeWeeklyHoursOverride?: number;
+  overtimeMultiplierOverride?: number;
   email?: string;
   city?: string;
   province?: string;
@@ -106,6 +112,25 @@ export interface SurfaceMaterialInput {
   emoji: string;
 }
 
+// Étape de validation administrative d'un pointage.
+// « pending »   : fermé par le travailleur, pas encore vérifié par le bureau.
+// « corrected » : les heures ont été rectifiées par la gestion.
+// « approved »  : vérifié, sert de base à la paie et à la facturation.
+export type PunchApprovalStatus = 'pending' | 'corrected' | 'approved';
+
+// Piste d'audit : chaque modification d'heures ou d'état est horodatée avec
+// son auteur. Indispensable pour vendre l'application à d'autres entrepreneurs
+// — et pour qu'un employé puisse contester une correction.
+export interface PunchCorrection {
+  at: string;        // ISO
+  byId: string;
+  byName: string;
+  field: 'startTime' | 'endTime' | 'pauseMinutes' | 'approval';
+  before: string;
+  after: string;
+  note?: string;
+}
+
 export interface PunchSession {
   id: string;
   employeeId: string;
@@ -121,9 +146,21 @@ export interface PunchSession {
   withinGeofence: boolean;
   attemptedOutsideGeofence?: boolean; // logged infractions
   outsideDetails?: string; // e.g., "At 345m"
+  // Position relevée au moment du pointage. Elle est transmise au serveur, qui
+  // recalcule lui-même la distance au chantier : `withinGeofence` venant du
+  // navigateur n'est jamais une preuve, seulement un affichage.
+  latitude?: number;
+  longitude?: number;
   surfaceMaterials?: SurfaceMaterialInput[];
   revenue: number;
   totalWorkedHours?: number;
+  // Validation administrative. Absent = « pending » (pointages d'avant la
+  // mise en place de la validation, traités comme non encore vérifiés).
+  approvalStatus?: PunchApprovalStatus;
+  approvedById?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  corrections?: PunchCorrection[];
 }
 
 export interface Invoice {
@@ -331,6 +368,14 @@ export interface CompanyInfo {
 
   // Salaried Payroll Settings
   payrollVacationRate?: number;
+  // Heures supplémentaires : règle par défaut de la compagnie, applicable à
+  // tous les salariés. Chaque employé peut la surcharger (voir Employee).
+  overtimeDailyHours?: number;    // seuil quotidien, défaut 8
+  overtimeWeeklyHours?: number;   // seuil hebdomadaire, défaut 44
+  overtimeMultiplier?: number;    // défaut 1,5
+  // Arrondi appliqué au total de chaque journée travaillée, en minutes.
+  // 15 = au quart d'heure le plus proche. 0 = aucun arrondi.
+  hourRoundingMinutes?: number;
   payrollHealthInsurance?: number;
   payrollDentalInsurance?: number;
   payrollLifeInsurance?: number;
@@ -358,6 +403,11 @@ export interface CompanyInfo {
   currency?: string;
   unitSystem?: 'imperial' | 'metric';
   dateLocale?: string;
+  // Fuseau horaire des journées de travail (ex. « America/Edmonton »). Laissé
+  // vide, l'application utilise celui de l'appareil : le téléphone du
+  // travailleur et le bureau sont normalement dans la même province. À définir
+  // seulement si les chantiers ou le personnel se trouvent dans un autre fuseau.
+  timeZone?: string;
   localTaxRate?: number;
   taxConfirmedAt?: string;
   taxDisclaimerAcceptedAt?: string;

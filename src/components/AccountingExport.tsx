@@ -14,6 +14,7 @@ import useAppStore from '../store';
 import { fmt, translations } from '../translations';
 import { AlertTriangle, Download, FileSpreadsheet } from 'lucide-react';
 import { reportingThreshold, summarizeSubcontractorPayments } from '../accountingSubcontractors';
+import { localDayKey } from '../localTime';
 
 type Period = 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all' | 'custom';
 
@@ -63,7 +64,7 @@ export default function AccountingExport() {
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth();
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const iso = (d: Date) => localDayKey(d);
     switch (period) {
       case 'thisMonth': return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
       case 'lastMonth': return { from: iso(new Date(y, m - 1, 1)), to: iso(new Date(y, m, 0)) };

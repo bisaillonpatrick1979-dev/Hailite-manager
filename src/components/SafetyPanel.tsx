@@ -15,6 +15,7 @@ import { translations } from '../translations';
 import SignaturePad from './SignaturePad';
 import type { Project, SafetyAttendee, SafetyRecord, SafetyRecordType } from '../types';
 import { ChevronDown, ChevronUp, HardHat, Printer, Trash, X } from 'lucide-react';
+import { todayKey } from '../localTime';
 
 const TYPES: SafetyRecordType[] = ['toolbox', 'hazard'];
 
@@ -97,7 +98,7 @@ export default function SafetyPanel({ project, defaultOpen = false }: Props) {
     addSafetyRecord({
       type,
       projectId: project.id,
-      date: new Date().toISOString().slice(0, 10),
+      date: todayKey(),
       topic: topic.trim(),
       hazards: type === 'hazard' ? hazards : undefined,
       controls: controls.trim() || undefined,

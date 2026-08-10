@@ -23,10 +23,14 @@ import { apiFetch } from './runtimeConfig';
 import { COMPLIANCE_VERSION, USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
-  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
+  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax,
+  CA_PENSION_CAP, CA_EMPLOYMENT_INSURANCE_CAP, cappedAnnualContribution
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from './projectAccess';
+import { todayKey, currentMonthKey, localDayKey, isInLocalMonth } from './localTime';
+import { punchHoursOnDay, punchHoursInMonth, punchRevenueOnDay, punchRevenueInMonth, punchRevenueInPeriod, punchDayKeys } from './punchHours';
+import { resolveOvertimeRules, computeHoursBreakdown, grossFromBreakdown, type HoursBreakdown } from './overtime';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -35,6 +39,7 @@ const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsMa
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
 const AccountingExport = lazy(() => import('./components/AccountingExport'));
 const CrewScheduleCalendar = lazy(() => import('./components/CrewScheduleCalendar'));
+const PunchApprovalPanel = lazy(() => import('./components/PunchApprovalPanel'));
 const MyScheduleStrip = lazy(() => import('./components/MyScheduleStrip'));
 const LeadPipeline = lazy(() => import('./components/LeadPipeline'));
 const ProjectPhotoGallery = lazy(() => import('./components/ProjectPhotoGallery'));
@@ -119,7 +124,8 @@ export default function App() {
     addInventoryItem, updateInventoryItem,
     deleteInventoryItem, addSupplierOrder, updateSupplierOrder, addClient, updateClient,
     deleteClient, updateCompanyInfo, resolveHRAlert, startPunchSession, pausePunchSession,
-    resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
+    resumePunchSession, stopPunchSession, correctPunchSession, approvePunchSession,
+    generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
     personalExpenses, addPersonalExpense, deletePersonalExpense,
@@ -209,6 +215,9 @@ export default function App() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  // Période du bandeau financier du tableau de bord : mois courant, année
+  // courante, ou tout l'historique depuis l'ouverture.
+  const [dashboardPeriod, setDashboardPeriod] = useState<'month' | 'year' | 'all'>('month');
   useEffect(() => {
     if (!demoSandboxActive || !demoSandboxSummary) return;
     setStatsMonth(demoSandboxSummary.latestStatsMonth);
@@ -290,6 +299,11 @@ export default function App() {
     employeeProvince: string;
     payFrequency: 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';
     annualSalary: number;
+    // Surcharges d'heures supplémentaires. 0 = suivre la règle de la compagnie.
+    overtimeExempt: boolean;
+    overtimeDailyHoursOverride: number;
+    overtimeWeeklyHoursOverride: number;
+    overtimeMultiplierOverride: number;
     credentials: EmployeeCredential[];
   }>({
     name: '',
@@ -309,6 +323,10 @@ export default function App() {
     employeeProvince: companyInfo.region || 'AB',
     payFrequency: 'weekly',
     annualSalary: 0,
+    overtimeExempt: false,
+    overtimeDailyHoursOverride: 0,
+    overtimeWeeklyHoursOverride: 0,
+    overtimeMultiplierOverride: 0,
     credentials: []
   });
   const [newProjectForm, setNewProjectForm] = useState({
@@ -674,7 +692,7 @@ export default function App() {
       projectId: homePunchProject || '',
       amount: Number(amount.toFixed(2)),
       tax: 0,
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
       photoUrl: expensePhoto || undefined,
       submittedById: activeEmployee.id,
       submittedByName: activeEmployee.name
@@ -731,8 +749,19 @@ export default function App() {
       rate: homeRateCustom,
       // Le travail demeure possible lorsque le téléphone ne fournit pas de
       // position, mais la fiche ne prétend plus que le GPS a été validé.
-      withinGeofence: geofencingBypassActive || !gpsFailSafeUsed
+      withinGeofence: geofencingBypassActive || !gpsFailSafeUsed,
+      // La position part avec le pointage : c'est le serveur qui recalcule la
+      // distance au chantier et tranche (voir enforcePunchGeofence).
+      latitude: coords?.latitude,
+      longitude: coords?.longitude,
+      needsApproval: gpsFailSafeUsed
     });
+
+    // Sans position vérifiable, le pointage est accepté mais devra être
+    // approuvé par le bureau : on le dit tout de suite au travailleur.
+    if (gpsFailSafeUsed) {
+      alert(t.punchNeedsApprovalAlert);
+    }
 
     playSoundCue('in');
     setShowPunchInModal(false);
@@ -774,35 +803,37 @@ export default function App() {
   // agrégé des données de l'app (revenus, dépenses, équipes, inventaire, etc.)
   // suivi du protocole d'actions que l'IA peut déclencher dans l'application.
   const buildAiAppContext = (): string => {
-    const now = new Date();
-    const monthPrefix = now.toISOString().slice(0, 7); // "2026-07"
+    const monthPrefix = currentMonthKey(); // « AAAA-MM » dans le fuseau local
+    // Les champs `date` (dépenses, paies, paiements) sont déjà des journées
+    // civiles « AAAA-MM-JJ » : un préfixe suffit. Les pointages, eux, sont des
+    // instants absolus et passent par les utilitaires de mois local.
     const inMonth = (dateStr?: string | null) => !!dateStr && dateStr.startsWith(monthPrefix);
 
-    const monthPunches = punchSessions.filter(p => inMonth(p.startTime) && p.endTime);
+    const closedPunches = punchSessions.filter(p => p.endTime);
     const punchStatsByEmployee = employees.map(emp => {
-      const punches = monthPunches.filter(p => p.employeeId === emp.id);
+      const punches = closedPunches.filter(p => p.employeeId === emp.id);
       return {
         nom: emp.name, role: emp.role, tauxHoraire: emp.hourlyRate,
-        heuresCeMois: Number(punches.reduce((s, p) => s + (p.totalWorkedHours || 0), 0).toFixed(1)),
-        coutMainOeuvreCeMois: Number(punches.reduce((s, p) => s + (p.revenue || 0), 0).toFixed(2))
+        heuresCeMois: Number(punches.reduce((s, p) => s + punchHoursInMonth(p, monthPrefix), 0).toFixed(1)),
+        coutMainOeuvreCeMois: Number(punches.reduce((s, p) => s + punchRevenueInMonth(p, monthPrefix), 0).toFixed(2))
       };
     });
     const teamStats = motivationTeams.map(team => ({
       equipe: team.name,
       membres: team.memberIds.map(id => employees.find(e => e.id === id)?.name).filter(Boolean),
-      heuresCeMois: Number(monthPunches
+      heuresCeMois: Number(closedPunches
         .filter(p => team.memberIds.includes(p.employeeId))
-        .reduce((s, p) => s + (p.totalWorkedHours || 0), 0).toFixed(1))
+        .reduce((s, p) => s + punchHoursInMonth(p, monthPrefix), 0).toFixed(1))
     }));
     const revenusClientsCeMois = documents
       .filter(d => d.type === 'invoice')
       .reduce((s, d) => s + (d.paymentsHistory || []).filter(p => inMonth(p.date)).reduce((x, p) => x + p.amount, 0), 0);
     const depensesCeMois = expenses.filter(e => inMonth(e.date)).reduce((s, e) => s + e.amount + (e.tax || 0), 0);
     const paiesVerseesCeMois = payrollPayments.filter(p => inMonth(p.date) && p.status === 'paid').reduce((s, p) => s + p.amount, 0);
-    const coutMainOeuvreCeMois = monthPunches.reduce((s, p) => s + (p.revenue || 0), 0);
+    const coutMainOeuvreCeMois = closedPunches.reduce((s, p) => s + punchRevenueInMonth(p, monthPrefix), 0);
 
     const data = {
-      dateDuJour: now.toISOString().split('T')[0],
+      dateDuJour: todayKey(),
       moisCourant: monthPrefix,
       financesDuMois: {
         revenusClientsEncaisses: Number(revenusClientsCeMois.toFixed(2)),
@@ -819,7 +850,7 @@ export default function App() {
       equipes: teamStats,
       chantiers: projects.map(p => ({
         nom: p.name, client: p.clientName, statut: p.status,
-        heuresCeMois: Number(monthPunches.filter(x => x.projectId === p.id).reduce((s, x) => s + (x.totalWorkedHours || 0), 0).toFixed(1))
+        heuresCeMois: Number(closedPunches.filter(x => x.projectId === p.id).reduce((s, x) => s + punchHoursInMonth(x, monthPrefix), 0).toFixed(1))
       })),
       inventaire: inventory.map(i => ({
         nom: i.name, quantite: i.quantity, unite: i.unit, seuilMin: i.minThreshold,
@@ -863,7 +894,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           asNumber: String(params.asNumber || ''),
           phone: String(params.phone || ''),
           address: String(params.address || ''),
-          hireDate: new Date().toISOString().split('T')[0],
+          hireDate: todayKey(),
           avatar: makeIconAvatar('👷', '#F97316')
         });
         return fmt(t.aiActEmployeeCreated, { name: String(params.name), nip });
@@ -923,7 +954,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           : undefined;
         const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(params.date || ''))
           ? String(params.date)
-          : new Date().toISOString().split('T')[0];
+          : todayKey();
         const amount = Math.max(0, Number(params.amount));
         const tax = Math.max(0, Number(params.tax) || 0);
         addExpense({
@@ -953,7 +984,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         const totalAmount = Number(items.reduce((s: number, it: any) => s + it.quantity * it.price, 0).toFixed(2));
         addSupplierOrder({
           supplierName: String(params.supplierName),
-          date: new Date().toISOString().split('T')[0],
+          date: todayKey(),
           items,
           status: 'ordered',
           totalAmount
@@ -1172,6 +1203,42 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     };
   };
 
+  // Revenu, coûts et marge de la compagnie sur une période.
+  // Le préfixe suit les clés de journée locales : « 2026-07 » pour un mois,
+  // « 2026 » pour une année, chaîne vide pour tout l'historique.
+  // La formule est volontairement identique à celle des fiches de chantier
+  // (revenu facturé − dépenses − main-d'œuvre) : deux écrans de l'application
+  // ne doivent jamais afficher deux marges différentes.
+  const getCompanyFinances = (periodPrefix: string) => {
+    const billedInvoices = documents.filter(d =>
+      d.type === 'invoice' &&
+      (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
+      (d.date || '').startsWith(periodPrefix)
+    );
+    const revenue = billedInvoices.reduce((sum, d) => sum + (d.total || 0), 0);
+    // Encaissé : utile pour la trésorerie, affiché en second plan.
+    const collected = documents
+      .filter(d => d.type === 'invoice')
+      .reduce((sum, d) => sum + (d.paymentsHistory || [])
+        .filter(payment => (payment.date || '').startsWith(periodPrefix))
+        .reduce((inner, payment) => inner + (payment.amount || 0), 0), 0);
+
+    const labourCost = punchSessions
+      .filter(p => p.endTime !== null)
+      .reduce((sum, p) => sum + punchRevenueInPeriod(p, periodPrefix), 0);
+    const expenseCost = expenses
+      .filter(e => (e.date || '').startsWith(periodPrefix))
+      .reduce((sum, e) => sum + (e.amount || 0) + (e.tax || 0), 0);
+    const totalCost = labourCost + expenseCost;
+    const margin = revenue - totalCost;
+
+    return {
+      revenue, collected, labourCost, expenseCost, totalCost, margin,
+      marginPct: revenue > 0 ? (margin / revenue) * 100 : 0,
+      invoiceCount: billedInvoices.length
+    };
+  };
+
   // Progressive Tax Bracket Estimator — s'adapte au pays/province de la compagnie
   // au lieu de présumer le Québec. Pour les États-Unis, l'impôt fédéral/état n'est
   // pas modélisé en détail (affiché avec une mention "à valider" dans l'UI).
@@ -1186,8 +1253,22 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     return brackets ? computeBracketTax(annualGross, brackets) : annualGross * CA_PROVINCIAL_FALLBACK_RATE;
   };
 
-  const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number) => {
-    let gross = hours * emp.hourlyRate;
+  // Répartition régulier / supplémentaire d'un employé sur une période, selon
+  // les règles de la compagnie et les éventuelles surcharges de sa fiche.
+  const getEmployeeHours = (emp: Employee, periodPrefix: string): HoursBreakdown => {
+    const rules = resolveOvertimeRules(companyInfo, emp);
+    const punches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
+    return computeHoursBreakdown(punches, rules, periodPrefix);
+  };
+
+  const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number | HoursBreakdown) => {
+    // Les appels historiques passaient un simple total d'heures. On accepte les
+    // deux formes : un nombre est traité comme des heures toutes régulières.
+    const breakdown: HoursBreakdown = typeof hours === 'number'
+      ? { regularHours: hours, overtimeHours: 0, totalHours: hours, byDay: [] }
+      : hours;
+    const overtimeMultiplier = resolveOvertimeRules(company, emp).multiplier;
+    let gross = grossFromBreakdown(breakdown, emp.hourlyRate, overtimeMultiplier);
     const isContractor = emp.workerType === 'contractor';
 
     if (isContractor) {
@@ -1239,12 +1320,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       : (company.payrollVacationRate !== undefined ? company.payrollVacationRate : 6);
     const vacationAmount = gross * (vacRate / 100);
 
-    // Source deductions (pension + secondary deduction rates adapt to the company's province/state)
-    const cpp = gross * payrollMeta.pensionRate;
-    const ei = gross * payrollMeta.secondaryDeductionRate;
-    
-    // Income taxes
+    // Retenues à la source. Les taux suivent la province/l'État de la
+    // compagnie ; les cotisations RRQ/RPC et AE s'arrêtent une fois le maximum
+    // annuel atteint. Sans ce plafond, la paie surévaluait les retenues des
+    // meilleurs salaires toute l'année durant.
     const annualGross = gross * periods;
+    const cpp = companyCountry === 'CA'
+      ? cappedAnnualContribution(annualGross, payrollMeta.pensionRate, CA_PENSION_CAP) / periods
+      : gross * payrollMeta.pensionRate;
+    const ei = companyCountry === 'CA'
+      ? cappedAnnualContribution(annualGross, payrollMeta.secondaryDeductionRate, CA_EMPLOYMENT_INSURANCE_CAP) / periods
+      : gross * payrollMeta.secondaryDeductionRate;
     const fedTaxAnn = calculateProgressiveTax(annualGross, true);
     const provTaxAnn = calculateProgressiveTax(annualGross, false);
     
@@ -1333,9 +1419,15 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       )}
       {!demoSandboxActive && syncFailure && (
         <div className="fixed top-16 left-0 right-0 z-[90] flex items-center justify-between gap-3 border-b border-red-500/40 bg-red-950/95 px-4 py-2 text-xs text-red-100 shadow-lg">
-          <span>
+          <span className="min-w-0 break-words">
             {currentLanguage === 'FR' ? 'Sauvegarde nuage échouée' : 'Cloud save failed'}
-            {' — '}{syncFailure.label}. {currentLanguage === 'FR' ? 'Vérifiez la connexion puis réessayez.' : 'Check the connection and try again.'}
+            {' — '}{syncFailure.label}.{' '}
+            {/* Le motif renvoyé par le serveur (« vous êtes à 340 m du
+                chantier ») est bien plus utile que le conseil générique :
+                on l'affiche dès qu'il existe. */}
+            {syncFailure.message
+              ? syncFailure.message
+              : (currentLanguage === 'FR' ? 'Vérifiez la connexion puis réessayez.' : 'Check the connection and try again.')}
           </span>
           <button type="button" onClick={() => setSyncFailure(null)} className="rounded px-2 py-1 font-bold hover:bg-red-900">
             {currentLanguage === 'FR' ? 'Fermer' : 'Dismiss'}
@@ -1368,7 +1460,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           {activeEmployee?.role === 'admin' && (
             <a
               href="/assistant"
-              className="hidden sm:flex items-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
+              // min-h-11 : la zone tactile faisait 30 px, sous le minimum de
+              // 44 px utilisable avec des gants sur un chantier.
+              className="hidden sm:flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
               title={currentLanguage === 'FR' ? 'Assistant IA (plein écran)' : 'AI Assistant (full screen)'}
               aria-label={currentLanguage === 'FR' ? 'Ouvrir l’assistant IA' : 'Open the AI assistant'}
             >
@@ -2008,8 +2102,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.hoursWorkedToday}</p>
                         <p className="text-lg font-bold text-white mt-1">
                           {punchSessions
-                            .filter(p => p.employeeId === activeEmployee.id && p.startTime.startsWith(new Date().toISOString().split('T')[0]))
-                            .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0).toFixed(2)}h
+                            .filter(p => p.employeeId === activeEmployee.id)
+                            .reduce((sum, p) => sum + punchHoursOnDay(p, todayKey()), 0).toFixed(2)}h
                         </p>
                       </div>
                       
@@ -2017,8 +2111,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.earningsToday}</p>
                         <p className="text-lg font-bold text-green-400 mt-1">
                           {punchSessions
-                            .filter(p => p.employeeId === activeEmployee.id && p.startTime.startsWith(new Date().toISOString().split('T')[0]))
-                            .reduce((sum, p) => sum + p.revenue, 0).toFixed(2)}$
+                            .filter(p => p.employeeId === activeEmployee.id)
+                            .reduce((sum, p) => sum + punchRevenueOnDay(p, todayKey()), 0).toFixed(2)}$
                         </p>
                       </div>
 
@@ -2151,7 +2245,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-3xl font-black text-white mt-1">
                             {getAdminStats().activeWorkersCount} / {employees.length - 1}
                           </p>
-                          <span className="text-xs text-green-400 font-black uppercase mt-1 block">{t.onActiveSite}</span>
+                          <span className="text-xs text-green-400 font-black uppercase mt-1 block break-words">{t.onActiveSite}</span>
                         </div>
                       </div>
 
@@ -2164,7 +2258,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-3xl font-black text-white mt-1">
                             {getAdminStats().totalHrs.toFixed(1)}h
                           </p>
-                          <span className="text-xs text-blue-400 font-bold uppercase mt-1 block">{t.sinceOpening}</span>
+                          <span className="text-xs text-blue-400 font-bold uppercase mt-1 block break-words">{t.sinceOpening}</span>
                         </div>
                       </div>
 
@@ -2172,16 +2266,98 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <div className="p-4 bg-green-600/10 text-green-500 rounded-xl">
                           <DollarSign className="w-7 h-7" />
                         </div>
-                        <div>
-                          <p className="text-xs uppercase font-black text-gray-400 tracking-wider">{t.monthlyEarnings}</p>
-                          <p className="text-3xl font-black text-[#22C55E] mt-1">
-                            {getAdminStats().totalWages.toFixed(2)}$
+                        <div className="min-w-0">
+                          <p className="text-xs uppercase font-black text-gray-400 tracking-wider">{t.labourCostTile}</p>
+                          <p className="text-3xl font-black text-[#22C55E] mt-1 break-words">
+                            {money(getAdminStats().totalWages)}
                           </p>
-                          <span className="text-xs text-emerald-400 font-black uppercase mt-1 block">{t.grossAccumulated}</span>
+                          <span className="text-xs text-emerald-400 font-black uppercase mt-1 block break-words">{t.grossAccumulated}</span>
                         </div>
                       </div>
 
                     </div>
+
+                    {/* Bandeau financier : revenu facturé, coûts réels et marge.
+                        Trois chiffres côte à côte pour éviter qu'un montant seul
+                        soit pris pour un autre — c'est ce qui rendait l'ancienne
+                        tuile trompeuse (elle affichait un coût sous l'étiquette
+                        « Revenu Total »). */}
+                    {(() => {
+                      const periodPrefix = dashboardPeriod === 'month'
+                        ? currentMonthKey()
+                        : dashboardPeriod === 'year'
+                          ? currentMonthKey().slice(0, 4)
+                          : '';
+                      const fin = getCompanyFinances(periodPrefix);
+                      const periodOptions: { key: 'month' | 'year' | 'all'; label: string }[] = [
+                        { key: 'month', label: t.periodMonth },
+                        { key: 'year', label: t.periodYear },
+                        { key: 'all', label: t.periodAll }
+                      ];
+                      return (
+                        <div id="dashboard-finance-strip" className="bg-[#16191F] border border-gray-800 rounded-2xl p-5 shadow-lg">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-black text-white uppercase tracking-wider">{t.financeStripTitle}</h4>
+                              <p className="text-[11px] text-gray-400 mt-0.5">{t.financeStripHint}</p>
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0" role="group" aria-label={t.financeStripTitle}>
+                              {periodOptions.map(option => (
+                                <button
+                                  key={option.key}
+                                  type="button"
+                                  onClick={() => setDashboardPeriod(option.key)}
+                                  aria-pressed={dashboardPeriod === option.key}
+                                  className={`min-h-11 px-3 rounded-lg text-xs font-black uppercase tracking-wide transition-colors cursor-pointer ${
+                                    dashboardPeriod === option.key
+                                      ? 'bg-orange-600 text-white'
+                                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                                  }`}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5">
+                            <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-4 min-w-0">
+                              <p className="text-[10px] uppercase font-black text-gray-400 tracking-wider">{t.financeRevenue}</p>
+                              <p className="text-2xl font-black text-[#22C55E] mt-1 break-words">{money(fin.revenue)}</p>
+                              <p className="text-[10px] text-gray-500 mt-1 break-words">
+                                {fmt(t.financeRevenueHint, { n: fin.invoiceCount })}
+                              </p>
+                              <p className="text-[10px] text-emerald-400/80 mt-0.5 break-words">
+                                {fmt(t.financeCollectedHint, { amount: money(fin.collected) })}
+                              </p>
+                            </div>
+
+                            <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-4 min-w-0">
+                              <p className="text-[10px] uppercase font-black text-gray-400 tracking-wider">{t.financeCosts}</p>
+                              <p className="text-2xl font-black text-orange-400 mt-1 break-words">{money(fin.totalCost)}</p>
+                              <p className="text-[10px] text-gray-500 mt-1 break-words">
+                                {fmt(t.financeLabourHint, { amount: money(fin.labourCost) })}
+                              </p>
+                              <p className="text-[10px] text-gray-500 mt-0.5 break-words">
+                                {fmt(t.financeExpensesHint, { amount: money(fin.expenseCost) })}
+                              </p>
+                            </div>
+
+                            <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-4 min-w-0">
+                              <p className="text-[10px] uppercase font-black text-gray-400 tracking-wider">{t.financeMargin}</p>
+                              <p className={`text-2xl font-black mt-1 break-words ${fin.margin >= 0 ? 'text-[#22C55E]' : 'text-red-400'}`}>
+                                {money(fin.margin)}
+                              </p>
+                              <p className="text-[10px] text-gray-500 mt-1 break-words">
+                                {fin.revenue > 0
+                                  ? fmt(t.financeMarginPct, { pct: fin.marginPct.toFixed(1) })
+                                  : t.financeMarginNoRevenue}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Live Team Monitor Dashboard Section */}
                     {motivationTeams.length > 0 && (
@@ -2201,14 +2377,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
                             const activeCount = activePunches.length;
                             
-                            const todayStr = new Date().toISOString().split('T')[0];
-                            const todaysSessions = punchSessions.filter(p => {
-                              const sessionDate = p.startTime.split('T')[0];
-                              return sessionDate === todayStr && team.memberIds.includes(p.employeeId);
-                            });
-                            
-                            const totalHrs = todaysSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
-                            const totalRev = todaysSessions.reduce((sum, p) => sum + (p.revenue || 0), 0);
+                            const todayStr = todayKey();
+                            // Un pointage de nuit compte sur les deux journées qu'il touche :
+                            // on additionne la part imputée à aujourd'hui plutôt que de
+                            // retenir la session entière selon son jour de départ.
+                            const todaysSessions = punchSessions.filter(p => team.memberIds.includes(p.employeeId));
+
+                            const totalHrs = todaysSessions.reduce((sum, p) => sum + punchHoursOnDay(p, todayStr), 0);
+                            const totalRev = todaysSessions.reduce((sum, p) => sum + punchRevenueOnDay(p, todayStr), 0);
                             
                             const activeChantiers = Array.from(new Set(activePunches.map(p => p.projectName)));
                             const chantierName = activeChantiers.length > 0 ? activeChantiers.join(', ') : t.noneLabel;
@@ -2225,22 +2401,22 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                                 <div className="pl-2 grid grid-cols-3 gap-2 text-center font-mono text-[10px] text-gray-400">
                                   <div className="bg-gray-950 p-2 rounded-lg border border-gray-800/80">
-                                    <span className="block text-[9px] text-gray-500 uppercase leading-none mb-1.5 font-bold tracking-wider">{t.membersLabel}</span>
+                                    <span className="block text-[9px] text-gray-500 uppercase leading-tight mb-1.5 font-bold tracking-wide break-words">{t.membersLabel}</span>
                                     <span className="text-white text-sm font-black">{activeCount}/{team.memberIds.length}</span>
                                   </div>
                                   <div className="bg-gray-950 p-2 rounded-lg border border-gray-800/80">
-                                    <span className="block text-[9px] text-gray-500 uppercase leading-none mb-1.5 font-bold tracking-wider">{t.hoursLabel}</span>
+                                    <span className="block text-[9px] text-gray-500 uppercase leading-tight mb-1.5 font-bold tracking-wide break-words">{t.hoursLabel}</span>
                                     <span className="text-white text-sm font-black">{totalHrs.toFixed(1)}h</span>
                                   </div>
                                   <div className="bg-gray-950 p-2 rounded-lg border border-gray-800/80">
-                                    <span className="block text-[9px] text-gray-500 uppercase leading-none mb-1.5 font-bold tracking-wider">{t.revenueLabel}</span>
+                                    <span className="block text-[9px] text-gray-500 uppercase leading-tight mb-1.5 font-bold tracking-wide break-words">{t.revenueLabel}</span>
                                     <span className="text-emerald-400 text-sm font-black">{totalRev.toFixed(0)}$</span>
                                   </div>
                                 </div>
 
                                 <div className="pl-2 flex justify-between items-center text-xs text-gray-400 pt-1 border-t border-gray-850">
                                   <span className="font-bold flex items-center gap-1">{t.siteShortLabel}</span>
-                                  <span className="text-white font-black truncate max-w-[150px]">{chantierName}</span>
+                                  <span className="text-white font-black break-words text-right min-w-0">{chantierName}</span>
                                 </div>
                               </div>
                             );
@@ -2318,7 +2494,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             >
                               <ShieldAlert className="w-5 h-5 flex-shrink-0 text-red-400 mt-0.5" />
                               <div className="flex-1 min-w-0">
-                                <h5 className="text-xs font-bold uppercase tracking-tight">{alert.title}</h5>
+                                <h5 className="text-xs font-bold uppercase tracking-tight break-words">{alert.title}</h5>
                                 <p className="text-[11px] text-gray-300 mt-1 leading-normal">{alert.message}</p>
                                 <span className="text-[9px] text-gray-400 mt-2 block font-mono">{new Date(alert.date).toLocaleDateString()}</span>
                               </div>
@@ -2334,6 +2510,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       </div>
 
                     </div>
+
+                    {/* Validation administrative des heures : corriger un
+                        pointage erroné et l'approuver avant qu'il alimente la
+                        paie et la facturation. */}
+                    <Suspense fallback={<LazySectionFallback />}>
+                      <PunchApprovalPanel
+                        punches={punchSessions}
+                        currentLanguage={currentLanguage}
+                        dateLocale={dateLocale}
+                        money={money}
+                        onCorrect={correctPunchSession}
+                        onApprove={approvePunchSession}
+                      />
+                    </Suspense>
 
                     {/* Historical Punches list */}
                     <div className="bg-[#16191F] border border-gray-800 rounded-xl p-5">
@@ -3201,7 +3391,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           const estTotal = validItems.reduce((acc, current) => acc + (current.quantity * current.price), 0);
                           addSupplierOrder({
                             supplierName: orderSupplier,
-                            date: new Date().toISOString().split('T')[0],
+                            date: todayKey(),
                             items: validItems,
                             status: 'ordered',
                             totalAmount: estTotal
@@ -3279,11 +3469,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               };
 
               const getMetricsForPeriod = (ym: string) => {
-                const ymSessions = punchSessions.filter(p => p.endTime !== null && p.startTime.startsWith(ym));
-                const revenue = ymSessions.reduce((sum, p) => sum + p.revenue, 0);
-                const hours = ymSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                // Une session est retenue dès qu'elle touche le mois local, même si
+                // elle a commencé le dernier soir du mois précédent. Heures et
+                // montants ne comptent que pour la part réellement dans le mois.
+                const ymSessions = punchSessions.filter(p => p.endTime !== null && punchHoursInMonth(p, ym) > 0);
+                const revenue = ymSessions.reduce((sum, p) => sum + punchRevenueInMonth(p, ym), 0);
+                const hours = ymSessions.reduce((sum, p) => sum + punchHoursInMonth(p, ym), 0);
                 const sessionsCount = ymSessions.length;
-                const uniqueDays = new Set(ymSessions.map(p => p.startTime.slice(0, 10))).size;
+                const uniqueDays = new Set(
+                  ymSessions.flatMap(p => punchDayKeys(p).filter(day => day.startsWith(ym)))
+                ).size;
                 return { revenue, hours, sessionsCount, uniqueDays, sessions: ymSessions };
               };
 
@@ -3436,7 +3631,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {/* Col 2: Streaks */}
                           <div className={`p-4 bg-gray-950 rounded-xl border border-gray-850 flex flex-col justify-between ${streakColor}`}>
                             <div className="flex justify-between items-center">
-                              <span className="text-xs font-bold uppercase tracking-tight">{t.punchStreakLabel}</span>
+                              <span className="text-xs font-bold uppercase tracking-tight break-words">{t.punchStreakLabel}</span>
                               <span className="text-xs font-mono font-black">{streak} {t.daysWord}</span>
                             </div>
                             <div className="mt-2 text-xs font-semibold">
@@ -3619,7 +3814,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           const empSess = currentMetrics.sessions.filter(p => p.employeeId === emp.id);
                           const empHours = empSess.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
                           const empRevenue = empSess.reduce((sum, p) => sum + p.revenue, 0);
-                          const empDays = new Set(empSess.map(p => p.startTime.slice(0, 10))).size;
+                          const empDays = new Set(empSess.flatMap(p => punchDayKeys(p).filter(day => day.startsWith(statsMonth)))).size;
                           const avgRate = empHours > 0 ? empRevenue / empHours : 0;
                           const projectCount = new Set(empSess.map(p => p.projectId)).size;
 
@@ -3726,7 +3921,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             const pHours = pSess.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
                             const pRev = pSess.reduce((sum, p) => sum + p.revenue, 0);
                             const pWorkers = new Set(pSess.map(p => p.employeeId)).size;
-                            const pDays = new Set(pSess.map(p => p.startTime.slice(0, 10))).size;
+                            const pDays = new Set(pSess.flatMap(p => punchDayKeys(p).filter(day => day.startsWith(statsMonth)))).size;
 
                             // compare
                             const pPrevSess = lastMonthMetrics.sessions.filter(p => p.projectId === proj.id);
@@ -3874,7 +4069,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 font-mono text-xs">
                           {/* Card A: Invoices */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.clientInvoicesCard}</span>
+                            <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.clientInvoicesCard}</span>
                             <p className="text-base text-white font-black">{totalInvoiceBilled.toFixed(2)} $ <span className="text-[10px] text-gray-500 font-normal">{t.ttcLabel}</span></p>
                             <p className="text-[11px] text-green-400">{t.recoveredColon} {totalInvoicePaid.toFixed(2)} $</p>
                             <p className="text-[11px] text-gray-500">{t.dueColon} {(totalInvoiceBilled - totalInvoicePaid).toFixed(2)} $</p>
@@ -3882,7 +4077,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                           {/* Card B: Expenses */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.supplierExpensesCard}</span>
+                            <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.supplierExpensesCard}</span>
                             <p className="text-base text-white font-black">{totalExpenseAmt.toFixed(2)} $</p>
                             <p className="text-[11px] text-amber-500">{t.materialsFuelColon} {filteredExpenses.length} {t.piecesWord}</p>
                             <p className="text-[10px] text-gray-500 font-sans">{t.recordedCAD}</p>
@@ -3890,7 +4085,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                           {/* Card C: Payroll Payments */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.payrollMass}</span>
+                            <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.payrollMass}</span>
                             <p className="text-base text-white font-black">{totalPayrollPaid.toFixed(2)} $</p>
                             <p className="text-[11px] text-cyan-400">Prov. {workersCompName} (5.5%) : {cnesstProvision.toFixed(2)} $</p>
                             <p className="text-[10px] text-gray-500 font-sans">{t.tradesPeople}</p>
@@ -3899,7 +4094,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {/* Card D: Prov Net Results */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1 flex flex-col justify-between">
                             <div>
-                              <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.provisionalNet}</span>
+                              <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.provisionalNet}</span>
                               <p className={`text-base font-black ${netIncome >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                 {netIncome.toFixed(2)} $
                               </p>
@@ -4010,9 +4205,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         );
                       }
 
-                      const empHours = punchSessions
-                        .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                        .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                      const empHours = getEmployeeHours(emp, statsMonth);
 
                       const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                       const isContractor = emp.workerType === 'contractor';
@@ -4052,8 +4245,24 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">{t.compiledFieldHours}</span>
-                                <p className="text-2xl font-black text-orange-500 font-mono">{empHours.toFixed(1)} h</p>
-                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth)).length })}</span>
+                                <p className="text-2xl font-black text-orange-500 font-mono">{empHours.totalHours.toFixed(1)} h</p>
+                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
+                                {/* Détail régulier / supplémentaire : un employé
+                                    doit pouvoir vérifier d'où vient son montant. */}
+                                {empHours.overtimeHours > 0 && (
+                                  <div className="pt-2 mt-1 border-t border-gray-800 space-y-0.5 text-left">
+                                    <div className="flex justify-between text-[10px]">
+                                      <span className="text-gray-400 font-sans">{t.otRegularHours}</span>
+                                      <span className="font-mono text-gray-200">{empHours.regularHours.toFixed(2)} h</span>
+                                    </div>
+                                    <div className="flex justify-between text-[10px]">
+                                      <span className="text-amber-400 font-sans">{t.otOvertimeHours}</span>
+                                      <span className="font-mono text-amber-400">
+                                        {empHours.overtimeHours.toFixed(2)} h × {resolveOvertimeRules(companyInfo, emp).multiplier}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               <div className="space-y-2.5 pt-2 font-mono text-xs text-left">
@@ -4212,9 +4421,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <span className="text-[9.5px] text-gray-400 uppercase font-mono block">{t.estPayrollMass} ({statsMonth})</span>
                             <p className="text-lg font-mono text-white font-black">
                               {employees.reduce((sum, e) => {
-                                const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                                  .reduce((s, p) => s + (p.totalWorkedHours || 0), 0);
+                                const hrs = getEmployeeHours(e, statsMonth);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).net;
                               }, 0).toFixed(2)} $
                             </p>
@@ -4226,9 +4433,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <p className="text-lg font-mono text-white font-black">
                               {(employees.reduce((sum, e) => {
                                 if (e.workerType === 'contractor') return sum;
-                                const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                                  .reduce((s, p) => s + (p.totalWorkedHours || 0), 0);
+                                const hrs = getEmployeeHours(e, statsMonth);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).gross;
                               }, 0) * 0.055).toFixed(2)} $
                             </p>
@@ -4264,9 +4469,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               </thead>
                               <tbody className="divide-y divide-gray-850">
                                 {employees.map(emp => {
-                                  const empHours = punchSessions
-                                    .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                                    .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                                  const empHours = getEmployeeHours(emp, statsMonth);
 
                                   const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                                   const isContractor = emp.workerType === 'contractor';
@@ -4290,7 +4493,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           )}
                                         </div>
                                       </td>
-                                      <td className="py-3 text-right text-orange-400 font-bold">{empHours.toFixed(1)} h</td>
+                                      <td className="py-3 text-right text-orange-400 font-bold">{empHours.totalHours.toFixed(1)} h</td>
                                       <td className="py-3 text-right text-gray-300">{emp.hourlyRate} $/h</td>
                                       <td className="py-3 text-right text-gray-300">{pay.gross.toFixed(2)} $</td>
                                       <td className="py-3 text-right">
@@ -4330,9 +4533,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           const emp = employees.find(e => e.id === payrollFocusEmployeeId);
                           if (!emp) return null;
 
-                          const empHours = punchSessions
-                            .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                            .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                          const empHours = getEmployeeHours(emp, statsMonth);
 
                           const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                           const isContractor = emp.workerType === 'contractor';
@@ -4373,7 +4574,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   <span className="text-[10px] text-gray-400 font-bold block uppercase font-sans">{t.provincialCalcGrid}</span>
                                   <div className="flex justify-between">
                                     <span className="text-gray-400 font-sans">{t.fieldHoursColon2}</span>
-                                    <span>{empHours.toFixed(1)} h</span>
+                                    <span>{empHours.totalHours.toFixed(1)} h</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-gray-405 font-sans">{t.baseGrossEarnings}</span>
@@ -4422,11 +4623,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   <button
                                     onClick={() => {
                                       addPayrollPayment({
-                                        date: new Date().toISOString().slice(0, 10),
+                                        date: todayKey(),
                                         employeeId: emp.id,
                                         employeeName: emp.name,
                                         amount: pay.net,
-                                        hours: empHours,
+                                        hours: empHours.totalHours,
                                         period: 'Mois ' + statsMonth,
                                         status: 'paid'
                                       });
@@ -4839,6 +5040,58 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">%</span>
                                   </div>
                                   <span className="text-[8px] text-gray-500 block italic leading-tight">{t.vacationHint}</span>
+                                </div>
+
+                                {/* Règle d'heures supplémentaires de la compagnie.
+                                    S'applique à tous les salariés ; chaque fiche
+                                    d'employé peut la surcharger. */}
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otDailyLabel}</label>
+                                  <input
+                                    type="number" min="0" step="0.5"
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
+                                    value={companyInfo.overtimeDailyHours ?? 8}
+                                    onChange={(e) => updateCompanyInfo({ overtimeDailyHours: Number(e.target.value) })}
+                                  />
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otDailyHint}</span>
+                                </div>
+
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otWeeklyLabel}</label>
+                                  <input
+                                    type="number" min="0" step="0.5"
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
+                                    value={companyInfo.overtimeWeeklyHours ?? 44}
+                                    onChange={(e) => updateCompanyInfo({ overtimeWeeklyHours: Number(e.target.value) })}
+                                  />
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otWeeklyHint}</span>
+                                </div>
+
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otMultiplierLabel}</label>
+                                  <input
+                                    type="number" min="1" step="0.1"
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
+                                    value={companyInfo.overtimeMultiplier ?? 1.5}
+                                    onChange={(e) => updateCompanyInfo({ overtimeMultiplier: Number(e.target.value) })}
+                                  />
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otMultiplierHint}</span>
+                                </div>
+
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otRoundingLabel}</label>
+                                  <select
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs"
+                                    value={companyInfo.hourRoundingMinutes ?? 15}
+                                    onChange={(e) => updateCompanyInfo({ hourRoundingMinutes: Number(e.target.value) })}
+                                  >
+                                    <option value={0}>{t.otRoundingNone}</option>
+                                    <option value={5}>5 min</option>
+                                    <option value={6}>6 min</option>
+                                    <option value={15}>15 min</option>
+                                    <option value={30}>30 min</option>
+                                  </select>
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otRoundingHint}</span>
                                 </div>
 
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
@@ -5900,6 +6153,58 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   {fmt(t.salariedNoFixedWarn, { rate: newEmployeeForm.hourlyRate })}
                                 </div>
                               )}
+
+                              {/* Surcharges d'heures supplémentaires propres à
+                                  cet employé. Vide ou 0 = règle de la compagnie. */}
+                              <div className="pt-3 border-t border-gray-800 space-y-3">
+                                <div>
+                                  <h6 className="text-[10px] text-orange-400 font-black uppercase tracking-wider">{t.otEmployeeSection}</h6>
+                                  <p className="text-[9px] text-gray-500 mt-0.5">{t.otEmployeeHint}</p>
+                                </div>
+                                <label className="flex items-center gap-2 min-h-11 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="w-5 h-5 accent-orange-600"
+                                    checked={newEmployeeForm.overtimeExempt}
+                                    onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeExempt: e.target.checked })}
+                                  />
+                                  <span className="text-[11px] text-gray-300">{t.otExemptLabel}</span>
+                                </label>
+                                {!newEmployeeForm.overtimeExempt && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div>
+                                      <label className="text-[9px] text-gray-400 uppercase font-mono block">{t.otOverrideDaily}</label>
+                                      <input
+                                        type="number" min="0" step="0.5"
+                                        placeholder={String(companyInfo.overtimeDailyHours ?? 8)}
+                                        className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
+                                        value={newEmployeeForm.overtimeDailyHoursOverride || ''}
+                                        onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeDailyHoursOverride: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] text-gray-400 uppercase font-mono block">{t.otOverrideWeekly}</label>
+                                      <input
+                                        type="number" min="0" step="0.5"
+                                        placeholder={String(companyInfo.overtimeWeeklyHours ?? 44)}
+                                        className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
+                                        value={newEmployeeForm.overtimeWeeklyHoursOverride || ''}
+                                        onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeWeeklyHoursOverride: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] text-gray-400 uppercase font-mono block">{t.otOverrideMultiplier}</label>
+                                      <input
+                                        type="number" min="1" step="0.1"
+                                        placeholder={String(companyInfo.overtimeMultiplier ?? 1.5)}
+                                        className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
+                                        value={newEmployeeForm.overtimeMultiplierOverride || ''}
+                                        onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeMultiplierOverride: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
 
@@ -6066,6 +6371,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 employeeProvince: newEmployeeForm.employeeProvince,
                                 payFrequency: newEmployeeForm.payFrequency,
                                 annualSalary: newEmployeeForm.annualSalary,
+                                overtimeExempt: newEmployeeForm.overtimeExempt,
+                                overtimeDailyHoursOverride: newEmployeeForm.overtimeDailyHoursOverride || undefined,
+                                overtimeWeeklyHoursOverride: newEmployeeForm.overtimeWeeklyHoursOverride || undefined,
+                                overtimeMultiplierOverride: newEmployeeForm.overtimeMultiplierOverride || undefined,
                                 credentials: newEmployeeForm.credentials
                               });
                               setNewEmployeeForm({ 
