@@ -23,14 +23,14 @@ import { apiFetch } from './runtimeConfig';
 import { COMPLIANCE_VERSION, USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
-  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax,
-  CA_PENSION_CAP, CA_EMPLOYMENT_INSURANCE_CAP, cappedAnnualContribution
+  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from './projectAccess';
 import { todayKey, currentMonthKey, localDayKey, isInLocalMonth } from './localTime';
 import { punchHoursOnDay, punchHoursInMonth, punchRevenueOnDay, punchRevenueInMonth, punchRevenueInPeriod, punchDayKeys } from './punchHours';
-import { resolveOvertimeRules, computeHoursBreakdown, grossFromBreakdown, type HoursBreakdown } from './overtime';
+import { resolveOvertimeRules, computeHoursBreakdown, type HoursBreakdown } from './overtime';
+import { calculateDetailedPayroll as computePayroll, type PayrollContext } from './payroll';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -1261,117 +1261,15 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     return computeHoursBreakdown(punches, rules, periodPrefix);
   };
 
-  const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number | HoursBreakdown) => {
-    // Les appels historiques passaient un simple total d'heures. On accepte les
-    // deux formes : un nombre est traité comme des heures toutes régulières.
-    const breakdown: HoursBreakdown = typeof hours === 'number'
-      ? { regularHours: hours, overtimeHours: 0, totalHours: hours, byDay: [] }
-      : hours;
-    const overtimeMultiplier = resolveOvertimeRules(company, emp).multiplier;
-    let gross = grossFromBreakdown(breakdown, emp.hourlyRate, overtimeMultiplier);
-    const isContractor = emp.workerType === 'contractor';
-
-    if (isContractor) {
-      // Contractors (no source deductions or benefits, add sales taxes of the company's region if registered)
-      const hasGst = !!emp.gstNumber;
-      const gst = hasGst ? gross * companyRegion.taxRate1 : 0;
-      const qst = hasGst ? gross * companyRegion.taxRate2 : 0;
-      const totalTaxes = gst + qst;
-      const net = gross + totalTaxes;
-
-      return {
-        gross,
-        vacationAmount: 0,
-        cpp: 0,
-        ei: 0,
-        fedTax: 0,
-        provTax: 0,
-        health: 0,
-        dental: 0,
-        life: 0,
-        ltd: 0,
-        rrsp: 0,
-        eap: 0,
-        custom1: 0,
-        custom2: 0,
-        gst,
-        qst,
-        totalTaxes,
-        totalDeductions: 0,
-        net
-      };
-    }
-
-    // Pay frequency periods
-    const frequency = emp.payFrequency || 'weekly';
-    let periods = 52;
-    if (frequency === 'biweekly') periods = 26;
-    else if (frequency === 'semi-monthly') periods = 24;
-    else if (frequency === 'monthly') periods = 12;
-
-    // Use annual base salary if defined
-    if (emp.annualSalary && emp.annualSalary > 0) {
-      gross = emp.annualSalary / periods;
-    }
-
-    // Vacation rate percentage
-    const vacRate = emp.vacationRateOverride !== undefined 
-      ? emp.vacationRateOverride 
-      : (company.payrollVacationRate !== undefined ? company.payrollVacationRate : 6);
-    const vacationAmount = gross * (vacRate / 100);
-
-    // Retenues à la source. Les taux suivent la province/l'État de la
-    // compagnie ; les cotisations RRQ/RPC et AE s'arrêtent une fois le maximum
-    // annuel atteint. Sans ce plafond, la paie surévaluait les retenues des
-    // meilleurs salaires toute l'année durant.
-    const annualGross = gross * periods;
-    const cpp = companyCountry === 'CA'
-      ? cappedAnnualContribution(annualGross, payrollMeta.pensionRate, CA_PENSION_CAP) / periods
-      : gross * payrollMeta.pensionRate;
-    const ei = companyCountry === 'CA'
-      ? cappedAnnualContribution(annualGross, payrollMeta.secondaryDeductionRate, CA_EMPLOYMENT_INSURANCE_CAP) / periods
-      : gross * payrollMeta.secondaryDeductionRate;
-    const fedTaxAnn = calculateProgressiveTax(annualGross, true);
-    const provTaxAnn = calculateProgressiveTax(annualGross, false);
-    
-    const fedTax = fedTaxAnn / periods;
-    const provTax = provTaxAnn / periods;
-
-    // Company benefits & deductions
-    const health = company.payrollHealthInsurance || 0;
-    const dental = company.payrollDentalInsurance || 0;
-    const life = company.payrollLifeInsurance || 0;
-    const ltd = company.payrollLTD || 0;
-    const rrsp = gross * ((company.payrollRRSP || 0) / 100);
-    const eap = company.payrollEAP || 0;
-    const custom1 = company.payrollCustom1Amount || 0;
-    const custom2 = company.payrollCustom2Amount || 0;
-
-    const totalDeductions = cpp + ei + fedTax + provTax + health + dental + life + ltd + rrsp + eap + custom1 + custom2;
-    const net = (gross + vacationAmount) - totalDeductions;
-
-    return {
-      gross,
-      vacationAmount,
-      cpp,
-      ei,
-      fedTax,
-      provTax,
-      health,
-      dental,
-      life,
-      ltd,
-      rrsp,
-      eap,
-      custom1,
-      custom2,
-      gst: 0,
-      qst: 0,
-      totalTaxes: 0,
-      totalDeductions,
-      net: Math.max(0, net)
-    };
+  // Contexte fiscal de la compagnie, passé explicitement au module de paie.
+  const payrollContext: PayrollContext = {
+    country: companyCountry,
+    region: companyRegion,
+    payrollMeta
   };
+
+  const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number | HoursBreakdown) =>
+    computePayroll(emp, company, hours, payrollContext);
 
   // Simule les déductions à la source pour un salaire brut ponctuel, avec les
   // taux et le régime de retraite adaptés à la province/état de la compagnie.
