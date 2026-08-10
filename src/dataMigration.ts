@@ -2,6 +2,7 @@ import type {
   CatalogueMaterial, Client, Employee, ExpenseRecord, GCPDocument, InventoryItem,
   PayrollPayment, Project, PunchSession, Supplier, ToolAsset
 } from './types';
+import { todayKey } from './localTime';
 
 export type MigrationDataType =
   | 'clients'
@@ -279,7 +280,7 @@ function mapped(row: Record<string, unknown>, mapping: Record<string, string>, k
 
 function convert(type: MigrationDataType, row: Record<string, unknown>, mapping: Record<string, string>): any | null {
   const get = (key: string) => mapped(row, mapping, key);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
   if (type === 'clients') {
     const name = text(get('name')); if (!name) return null;
     return { id: id(), name, company: text(get('company')), email: text(get('email')), phone: text(get('phone')), address: text(get('address')) } satisfies Client;

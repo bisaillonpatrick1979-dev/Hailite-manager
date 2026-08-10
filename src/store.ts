@@ -29,6 +29,8 @@ import type { DemoSandboxSummary } from './demoSandbox';
 import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import { resolveOnboardingState } from './onboardingState';
 import { resolveViewerProfile } from './viewerProfile';
+import { todayKey, localDayKey, setAppTimeZone } from './localTime';
+import { punchDayKeys } from './punchHours';
 
 interface AppState {
   // Data State
@@ -642,7 +644,10 @@ const getStartOfWeekISO = () => {
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   const monday = new Date(d.setDate(diff));
-  return monday.toISOString().split('T')[0];
+  // getDay/getDate travaillent déjà en heure locale : on garde la même journée
+  // en la formatant localement plutôt qu'en UTC, sinon le lundi calculé pouvait
+  // ressortir en dimanche pour les fuseaux à l'ouest de Greenwich.
+  return localDayKey(monday);
 };
 
 const initialMotivationTeams: MotivationTeam[] = [
@@ -790,6 +795,10 @@ export const getLevelFromXP = (xp: number): number => {
   }
   return level;
 };
+
+// Le fuseau des journées de travail est appliqué avant la création du store :
+// les totaux calculés au premier rendu doivent déjà utiliser le bon fuseau.
+setAppTimeZone(getSavedState<CompanyInfo>('gcp_companyInfo', initialCompanyInfo).timeZone);
 
 export const useAppStore = create<AppState>((set, get) => ({
   // En production, les données métier partent vides et sont hydratées depuis le
@@ -1163,7 +1172,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const newGoal: MotivationGoal = {
       ...goal,
       id: genId(),
-      startDate: new Date().toISOString().split('T')[0],
+      startDate: todayKey(),
       current: 0,
       status: 'active'
     };
@@ -1248,7 +1257,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Compute current week revenue
       const empPunchesThisWeek = punchSessions.filter(p => {
         if (p.employeeId !== emp.id) return false;
-        const punchDate = p.startTime.split('T')[0];
+        const punchDate = localDayKey(p.startTime);
         return punchDate >= currentMonday;
       });
       
@@ -1263,11 +1272,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       const empPunches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
       if (empPunches.length > 0) {
         const sortedPunches = [...empPunches].sort((a,b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
-        const uniqueDates = Array.from(new Set(sortedPunches.map(p => p.startTime.split('T')[0])));
-        
+        // Les journées viennent du fuseau local et incluent les deux journées
+        // d'un pointage de nuit : une série ne doit pas se briser parce qu'un
+        // quart s'est terminé après minuit.
+        const uniqueDates = Array.from(new Set(sortedPunches.flatMap(p => punchDayKeys(p))))
+          .sort((a, b) => b.localeCompare(a));
+
         let streak = 0;
-        let todayStr = new Date().toISOString().split('T')[0];
-        let yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        let todayStr = todayKey();
+        let yesterdayStr = localDayKey(Date.now() - 86400000);
         
         if (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr) {
           streak = 1;
@@ -1316,7 +1329,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         computedVal = relevantPunches.reduce((sum, p) => sum + (p.surfaceMaterials?.reduce((s, m) => s + m.quantity, 0) || 0), 0);
       } else if (goal.metric === 'safety_days') {
         const safePunches = relevantPunches.filter(p => !p.attemptedOutsideGeofence);
-        const uniqueSafeDates = new Set(safePunches.map(p => p.startTime.split('T')[0]));
+        const uniqueSafeDates = new Set(safePunches.flatMap(p => punchDayKeys(p)));
         computedVal = uniqueSafeDates.size;
       } else {
         computedVal = goal.current;
@@ -1637,6 +1650,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ companyInfo: updated });
     saveState('gcp_companyInfo', updated);
     setCloudSyncAllowed(updated.dataStorageMode !== 'local');
+    // Les journées de travail suivent le fuseau de la compagnie dès qu'il est
+    // défini; sinon celui de l'appareil continue de s'appliquer.
+    setAppTimeZone(updated.timeZone);
     const companyId = getCompanyId();
     if (companyId) syncUpdate('companies', companyId, companyInfoToRow(updated));
   },
@@ -1876,7 +1892,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       employeeId,
       employeeName: emp.name,
       invoiceNumber: nextSequentialNumber(invoices.map(i => i.invoiceNumber), 'INV'),
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
       sessionIds: unInvoicedPunches.map(p => p.id),
       totalHours: Number(totalHours.toFixed(2)),
       amount: Number(amount.toFixed(2)),
@@ -2032,8 +2048,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       number,
       status: 'draft',
       refQuote: quote.number,
-      date: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0],
+      date: todayKey(),
+      dueDate: localDayKey(Date.now() + 30 * 24 * 3600000),
       // Régénère les identifiants des lignes copiées du devis : elles gardaient sinon
       // les mêmes id que les lignes du devis, ce qui provoquait une collision de clé
       // primaire lors de la synchronisation cloud (document_items.id est unique).
@@ -2057,7 +2073,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const newPayment: GCPDocumentPaymentHistoryEntry = {
       id: genId(),
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
       amount,
       method,
       notes: notes || 'Paiement partiel enregistré'
@@ -2422,6 +2438,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (onboardingResolution) {
       saveState('gcp_companyInfo', onboardingResolution.companyInfo);
       saveState('gcp_isOnboarded', onboardingResolution.isOnboarded);
+      // La compagnie hydratée depuis le cloud peut imposer son propre fuseau.
+      setAppTimeZone((onboardingResolution.companyInfo as CompanyInfo).timeZone);
 
       // Au premier login, l'onboarding vient d'être terminé avant que la session
       // sécurisée existe. On le pousse maintenant, puis les appareils suivants

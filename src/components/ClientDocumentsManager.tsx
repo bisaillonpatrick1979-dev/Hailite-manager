@@ -16,6 +16,7 @@ import { getDefaultRegion, marketLabel, type MarketCode } from '../international
 import { translations, fmt } from '../translations';
 import SignaturePad from './SignaturePad';
 import { genId } from '../apiClient';
+import { todayKey, localDayKey } from '../localTime';
 
 export default function ClientDocumentsManager() {
   const {
@@ -112,7 +113,7 @@ export default function ClientDocumentsManager() {
     setNewDocType('quote');
     setNewClientId(clients[0]?.id || '');
     setNewIsSimple(true);
-    setNewDueDate(new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0]);
+    setNewDueDate(localDayKey(Date.now() + 30 * 24 * 3600000));
     setNewSiteAddress(clients[0]?.address || '');
     setRemarks('');
     setSimpleLines([{ desc: 'Fourniture et pose de revêtement extérieur', qty: 1, unit: 'forfait', price: 5000 }]);
@@ -151,7 +152,7 @@ export default function ClientDocumentsManager() {
     setSourceDocument(source);
     setNewClientId(source.clientId);
     setNewSiteAddress(source.siteAddress || source.clientAddress || '');
-    setNewDueDate(new Date(Date.now() + 30 * 24 * 3600000).toISOString().split('T')[0]);
+    setNewDueDate(localDayKey(Date.now() + 30 * 24 * 3600000));
     setNewIsSimple(source.isSimpleLayout);
     setSimpleLines(source.lineItems.map(line => ({
       desc: line.description,
@@ -351,7 +352,7 @@ export default function ClientDocumentsManager() {
 
     const commonDocument = {
       type: newDocType,
-      date: editingDocument?.date || new Date().toISOString().split('T')[0],
+      date: editingDocument?.date || todayKey(),
       dueDate: newDueDate,
       status: nextStatus as GCPDocument['status'],
       refQuote: editingDocument?.refQuote || (newDocType === 'contract' && sourceDocument?.type === 'quote' ? sourceDocument.number : newDocType === 'invoice' ? sourceDocument?.refQuote : undefined),
@@ -434,7 +435,7 @@ export default function ClientDocumentsManager() {
       // Re-trigger visual preview synchronicity
       const updatedHistory = [...(currentDoc.paymentsHistory || []), {
         id: genId(),
-        date: new Date().toISOString().split('T')[0],
+        date: todayKey(),
         amount,
         method: payMethod,
         notes: payNotes || t.cdmPartialPaymentNote

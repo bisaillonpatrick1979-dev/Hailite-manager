@@ -13,6 +13,7 @@ import useAppStore from '../store';
 import { translations } from '../translations';
 import type { Lead, LeadSource, LeadStatus } from '../types';
 import { Phone, Plus, Trash, TrendingUp, UserPlus, X } from 'lucide-react';
+import { todayKey } from '../localTime';
 
 const STATUSES: LeadStatus[] = ['new', 'contacted', 'inspection', 'quoted', 'won', 'lost'];
 const SOURCES: LeadSource[] = ['referral', 'phone', 'website', 'door', 'repeat', 'insurance', 'other'];
@@ -28,7 +29,7 @@ export default function LeadPipeline() {
   const t = translations[currentLanguage];
   const isFR = currentLanguage === 'FR';
   const dateLocale = isFR ? 'fr-CA' : 'en-CA';
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
 
   const [form, setForm] = useState(false);
   const [filter, setFilter] = useState<LeadStatus | 'all' | 'followup'>('all');

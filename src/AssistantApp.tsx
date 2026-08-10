@@ -19,6 +19,7 @@ import { authHeaders } from './apiClient';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { apiFetch } from './runtimeConfig';
 import { Camera, Check, Download, LogOut, Mic, Send, Volume2, VolumeX, X } from 'lucide-react';
+import { todayKey } from './localTime';
 
 interface ChatEntry {
   role: 'user' | 'assistant';
@@ -160,7 +161,7 @@ export default function AssistantApp() {
     const monthPunches = punchSessions.filter(p => inMonth(p.startTime) && p.endTime);
 
     const data = {
-      dateDuJour: now.toISOString().split('T')[0],
+      dateDuJour: todayKey(),
       moisCourant: monthPrefix,
       financesDuMois: {
         revenusClientsEncaisses: Number(documents.filter(d => d.type === 'invoice')
@@ -212,7 +213,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           hourlyRate: Math.max(0, Number(p.hourlyRate)),
           workerType: String(p.workerType || 'Ouvrier'),
           asNumber: String(p.asNumber || ''), phone: String(p.phone || ''), address: String(p.address || ''),
-          hireDate: new Date().toISOString().split('T')[0],
+          hireDate: todayKey(),
           avatar: makeIconAvatar('👷', '#F97316')
         });
         return isFR ? `✅ Employé ${p.name} créé (NIP : ${nip}).` : `✅ Employee ${p.name} created (PIN: ${nip}).`;
@@ -254,7 +255,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         const matchedProject = p.projectName
           ? projects.find(proj => proj.name.toLowerCase() === String(p.projectName).toLowerCase())
           : undefined;
-        const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(p.date || '')) ? String(p.date) : new Date().toISOString().split('T')[0];
+        const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(p.date || '')) ? String(p.date) : todayKey();
         const amount = Math.max(0, Number(p.amount));
         const tax = Math.max(0, Number(p.tax) || 0);
         addExpense({
@@ -270,7 +271,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         const items = p.items.filter((it: any) => it && it.name)
           .map((it: any) => ({ name: String(it.name), quantity: Math.max(0, Number(it.quantity) || 0), price: Math.max(0, Number(it.price) || 0) }));
         const totalAmount = Number(items.reduce((s: number, it: any) => s + it.quantity * it.price, 0).toFixed(2));
-        addSupplierOrder({ supplierName: String(p.supplierName), date: new Date().toISOString().split('T')[0], items, status: 'ordered', totalAmount });
+        addSupplierOrder({ supplierName: String(p.supplierName), date: todayKey(), items, status: 'ordered', totalAmount });
         return isFR ? `✅ Commande créée chez ${p.supplierName} (${items.length} articles, ${totalAmount.toFixed(2)} $).` : `✅ Order created at ${p.supplierName} (${items.length} items, $${totalAmount.toFixed(2)}).`;
       }
       default:

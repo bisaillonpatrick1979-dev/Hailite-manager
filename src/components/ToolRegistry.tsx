@@ -6,6 +6,7 @@ import {
 import useAppStore from '../store';
 import { compressImageFile } from '../imageUtils';
 import type { ToolAsset, ToolAssetStatus, ToolTheftReport, ToolTheftSnapshot } from '../types';
+import { todayKey } from '../localTime';
 
 const TOOL_CATEGORIES = [
   'Outil électrique', 'Outil pneumatique', 'Outil à main', 'Équipement de sécurité',
@@ -21,7 +22,7 @@ const EMPTY_TOOL: Omit<ToolAsset, 'id' | 'createdAt' | 'updatedAt'> = {
 };
 
 const EMPTY_REPORT = {
-  incidentDate: new Date().toISOString().slice(0, 10), incidentTime: '', incidentLocation: '',
+  incidentDate: todayKey(), incidentTime: '', incidentLocation: '',
   circumstances: '', discoveredBy: '', policeService: '', policeFileNumber: '',
   insurer: '', insuranceClaimNumber: '', contactName: '', contactPhone: '', contactEmail: ''
 };

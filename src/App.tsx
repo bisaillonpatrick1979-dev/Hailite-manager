@@ -27,6 +27,8 @@ import {
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from './projectAccess';
+import { todayKey, currentMonthKey, localDayKey, isInLocalMonth } from './localTime';
+import { punchHoursOnDay, punchHoursInMonth, punchRevenueOnDay, punchRevenueInMonth, punchDayKeys } from './punchHours';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -674,7 +676,7 @@ export default function App() {
       projectId: homePunchProject || '',
       amount: Number(amount.toFixed(2)),
       tax: 0,
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(),
       photoUrl: expensePhoto || undefined,
       submittedById: activeEmployee.id,
       submittedByName: activeEmployee.name
@@ -774,35 +776,37 @@ export default function App() {
   // agrégé des données de l'app (revenus, dépenses, équipes, inventaire, etc.)
   // suivi du protocole d'actions que l'IA peut déclencher dans l'application.
   const buildAiAppContext = (): string => {
-    const now = new Date();
-    const monthPrefix = now.toISOString().slice(0, 7); // "2026-07"
+    const monthPrefix = currentMonthKey(); // « AAAA-MM » dans le fuseau local
+    // Les champs `date` (dépenses, paies, paiements) sont déjà des journées
+    // civiles « AAAA-MM-JJ » : un préfixe suffit. Les pointages, eux, sont des
+    // instants absolus et passent par les utilitaires de mois local.
     const inMonth = (dateStr?: string | null) => !!dateStr && dateStr.startsWith(monthPrefix);
 
-    const monthPunches = punchSessions.filter(p => inMonth(p.startTime) && p.endTime);
+    const closedPunches = punchSessions.filter(p => p.endTime);
     const punchStatsByEmployee = employees.map(emp => {
-      const punches = monthPunches.filter(p => p.employeeId === emp.id);
+      const punches = closedPunches.filter(p => p.employeeId === emp.id);
       return {
         nom: emp.name, role: emp.role, tauxHoraire: emp.hourlyRate,
-        heuresCeMois: Number(punches.reduce((s, p) => s + (p.totalWorkedHours || 0), 0).toFixed(1)),
-        coutMainOeuvreCeMois: Number(punches.reduce((s, p) => s + (p.revenue || 0), 0).toFixed(2))
+        heuresCeMois: Number(punches.reduce((s, p) => s + punchHoursInMonth(p, monthPrefix), 0).toFixed(1)),
+        coutMainOeuvreCeMois: Number(punches.reduce((s, p) => s + punchRevenueInMonth(p, monthPrefix), 0).toFixed(2))
       };
     });
     const teamStats = motivationTeams.map(team => ({
       equipe: team.name,
       membres: team.memberIds.map(id => employees.find(e => e.id === id)?.name).filter(Boolean),
-      heuresCeMois: Number(monthPunches
+      heuresCeMois: Number(closedPunches
         .filter(p => team.memberIds.includes(p.employeeId))
-        .reduce((s, p) => s + (p.totalWorkedHours || 0), 0).toFixed(1))
+        .reduce((s, p) => s + punchHoursInMonth(p, monthPrefix), 0).toFixed(1))
     }));
     const revenusClientsCeMois = documents
       .filter(d => d.type === 'invoice')
       .reduce((s, d) => s + (d.paymentsHistory || []).filter(p => inMonth(p.date)).reduce((x, p) => x + p.amount, 0), 0);
     const depensesCeMois = expenses.filter(e => inMonth(e.date)).reduce((s, e) => s + e.amount + (e.tax || 0), 0);
     const paiesVerseesCeMois = payrollPayments.filter(p => inMonth(p.date) && p.status === 'paid').reduce((s, p) => s + p.amount, 0);
-    const coutMainOeuvreCeMois = monthPunches.reduce((s, p) => s + (p.revenue || 0), 0);
+    const coutMainOeuvreCeMois = closedPunches.reduce((s, p) => s + punchRevenueInMonth(p, monthPrefix), 0);
 
     const data = {
-      dateDuJour: now.toISOString().split('T')[0],
+      dateDuJour: todayKey(),
       moisCourant: monthPrefix,
       financesDuMois: {
         revenusClientsEncaisses: Number(revenusClientsCeMois.toFixed(2)),
@@ -819,7 +823,7 @@ export default function App() {
       equipes: teamStats,
       chantiers: projects.map(p => ({
         nom: p.name, client: p.clientName, statut: p.status,
-        heuresCeMois: Number(monthPunches.filter(x => x.projectId === p.id).reduce((s, x) => s + (x.totalWorkedHours || 0), 0).toFixed(1))
+        heuresCeMois: Number(closedPunches.filter(x => x.projectId === p.id).reduce((s, x) => s + punchHoursInMonth(x, monthPrefix), 0).toFixed(1))
       })),
       inventaire: inventory.map(i => ({
         nom: i.name, quantite: i.quantity, unite: i.unit, seuilMin: i.minThreshold,
@@ -863,7 +867,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           asNumber: String(params.asNumber || ''),
           phone: String(params.phone || ''),
           address: String(params.address || ''),
-          hireDate: new Date().toISOString().split('T')[0],
+          hireDate: todayKey(),
           avatar: makeIconAvatar('👷', '#F97316')
         });
         return fmt(t.aiActEmployeeCreated, { name: String(params.name), nip });
@@ -923,7 +927,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           : undefined;
         const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(params.date || ''))
           ? String(params.date)
-          : new Date().toISOString().split('T')[0];
+          : todayKey();
         const amount = Math.max(0, Number(params.amount));
         const tax = Math.max(0, Number(params.tax) || 0);
         addExpense({
@@ -953,7 +957,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         const totalAmount = Number(items.reduce((s: number, it: any) => s + it.quantity * it.price, 0).toFixed(2));
         addSupplierOrder({
           supplierName: String(params.supplierName),
-          date: new Date().toISOString().split('T')[0],
+          date: todayKey(),
           items,
           status: 'ordered',
           totalAmount
@@ -2008,8 +2012,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.hoursWorkedToday}</p>
                         <p className="text-lg font-bold text-white mt-1">
                           {punchSessions
-                            .filter(p => p.employeeId === activeEmployee.id && p.startTime.startsWith(new Date().toISOString().split('T')[0]))
-                            .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0).toFixed(2)}h
+                            .filter(p => p.employeeId === activeEmployee.id)
+                            .reduce((sum, p) => sum + punchHoursOnDay(p, todayKey()), 0).toFixed(2)}h
                         </p>
                       </div>
                       
@@ -2017,8 +2021,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.earningsToday}</p>
                         <p className="text-lg font-bold text-green-400 mt-1">
                           {punchSessions
-                            .filter(p => p.employeeId === activeEmployee.id && p.startTime.startsWith(new Date().toISOString().split('T')[0]))
-                            .reduce((sum, p) => sum + p.revenue, 0).toFixed(2)}$
+                            .filter(p => p.employeeId === activeEmployee.id)
+                            .reduce((sum, p) => sum + punchRevenueOnDay(p, todayKey()), 0).toFixed(2)}$
                         </p>
                       </div>
 
@@ -2201,14 +2205,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
                             const activeCount = activePunches.length;
                             
-                            const todayStr = new Date().toISOString().split('T')[0];
-                            const todaysSessions = punchSessions.filter(p => {
-                              const sessionDate = p.startTime.split('T')[0];
-                              return sessionDate === todayStr && team.memberIds.includes(p.employeeId);
-                            });
-                            
-                            const totalHrs = todaysSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
-                            const totalRev = todaysSessions.reduce((sum, p) => sum + (p.revenue || 0), 0);
+                            const todayStr = todayKey();
+                            // Un pointage de nuit compte sur les deux journées qu'il touche :
+                            // on additionne la part imputée à aujourd'hui plutôt que de
+                            // retenir la session entière selon son jour de départ.
+                            const todaysSessions = punchSessions.filter(p => team.memberIds.includes(p.employeeId));
+
+                            const totalHrs = todaysSessions.reduce((sum, p) => sum + punchHoursOnDay(p, todayStr), 0);
+                            const totalRev = todaysSessions.reduce((sum, p) => sum + punchRevenueOnDay(p, todayStr), 0);
                             
                             const activeChantiers = Array.from(new Set(activePunches.map(p => p.projectName)));
                             const chantierName = activeChantiers.length > 0 ? activeChantiers.join(', ') : t.noneLabel;
@@ -3201,7 +3205,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           const estTotal = validItems.reduce((acc, current) => acc + (current.quantity * current.price), 0);
                           addSupplierOrder({
                             supplierName: orderSupplier,
-                            date: new Date().toISOString().split('T')[0],
+                            date: todayKey(),
                             items: validItems,
                             status: 'ordered',
                             totalAmount: estTotal
@@ -3279,11 +3283,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               };
 
               const getMetricsForPeriod = (ym: string) => {
-                const ymSessions = punchSessions.filter(p => p.endTime !== null && p.startTime.startsWith(ym));
-                const revenue = ymSessions.reduce((sum, p) => sum + p.revenue, 0);
-                const hours = ymSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                // Une session est retenue dès qu'elle touche le mois local, même si
+                // elle a commencé le dernier soir du mois précédent. Heures et
+                // montants ne comptent que pour la part réellement dans le mois.
+                const ymSessions = punchSessions.filter(p => p.endTime !== null && punchHoursInMonth(p, ym) > 0);
+                const revenue = ymSessions.reduce((sum, p) => sum + punchRevenueInMonth(p, ym), 0);
+                const hours = ymSessions.reduce((sum, p) => sum + punchHoursInMonth(p, ym), 0);
                 const sessionsCount = ymSessions.length;
-                const uniqueDays = new Set(ymSessions.map(p => p.startTime.slice(0, 10))).size;
+                const uniqueDays = new Set(
+                  ymSessions.flatMap(p => punchDayKeys(p).filter(day => day.startsWith(ym)))
+                ).size;
                 return { revenue, hours, sessionsCount, uniqueDays, sessions: ymSessions };
               };
 
@@ -3619,7 +3628,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           const empSess = currentMetrics.sessions.filter(p => p.employeeId === emp.id);
                           const empHours = empSess.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
                           const empRevenue = empSess.reduce((sum, p) => sum + p.revenue, 0);
-                          const empDays = new Set(empSess.map(p => p.startTime.slice(0, 10))).size;
+                          const empDays = new Set(empSess.flatMap(p => punchDayKeys(p).filter(day => day.startsWith(statsMonth)))).size;
                           const avgRate = empHours > 0 ? empRevenue / empHours : 0;
                           const projectCount = new Set(empSess.map(p => p.projectId)).size;
 
@@ -3726,7 +3735,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             const pHours = pSess.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
                             const pRev = pSess.reduce((sum, p) => sum + p.revenue, 0);
                             const pWorkers = new Set(pSess.map(p => p.employeeId)).size;
-                            const pDays = new Set(pSess.map(p => p.startTime.slice(0, 10))).size;
+                            const pDays = new Set(pSess.flatMap(p => punchDayKeys(p).filter(day => day.startsWith(statsMonth)))).size;
 
                             // compare
                             const pPrevSess = lastMonthMetrics.sessions.filter(p => p.projectId === proj.id);
@@ -4011,8 +4020,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       }
 
                       const empHours = punchSessions
-                        .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                        .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                        .filter(p => p.employeeId === emp.id && p.endTime !== null)
+                        .reduce((sum, p) => sum + punchHoursInMonth(p, statsMonth), 0);
 
                       const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                       const isContractor = emp.workerType === 'contractor';
@@ -4053,7 +4062,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">{t.compiledFieldHours}</span>
                                 <p className="text-2xl font-black text-orange-500 font-mono">{empHours.toFixed(1)} h</p>
-                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth)).length })}</span>
+                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
                               </div>
 
                               <div className="space-y-2.5 pt-2 font-mono text-xs text-left">
@@ -4213,8 +4222,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <p className="text-lg font-mono text-white font-black">
                               {employees.reduce((sum, e) => {
                                 const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                                  .reduce((s, p) => s + (p.totalWorkedHours || 0), 0);
+                                  .filter(p => p.employeeId === e.id && p.endTime !== null)
+                                  .reduce((s, p) => s + punchHoursInMonth(p, statsMonth), 0);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).net;
                               }, 0).toFixed(2)} $
                             </p>
@@ -4227,8 +4236,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               {(employees.reduce((sum, e) => {
                                 if (e.workerType === 'contractor') return sum;
                                 const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                                  .reduce((s, p) => s + (p.totalWorkedHours || 0), 0);
+                                  .filter(p => p.employeeId === e.id && p.endTime !== null)
+                                  .reduce((s, p) => s + punchHoursInMonth(p, statsMonth), 0);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).gross;
                               }, 0) * 0.055).toFixed(2)} $
                             </p>
@@ -4265,8 +4274,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               <tbody className="divide-y divide-gray-850">
                                 {employees.map(emp => {
                                   const empHours = punchSessions
-                                    .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                                    .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                                    .filter(p => p.employeeId === emp.id && p.endTime !== null)
+                                    .reduce((sum, p) => sum + punchHoursInMonth(p, statsMonth), 0);
 
                                   const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                                   const isContractor = emp.workerType === 'contractor';
@@ -4331,8 +4340,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           if (!emp) return null;
 
                           const empHours = punchSessions
-                            .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
-                            .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
+                            .filter(p => p.employeeId === emp.id && p.endTime !== null)
+                            .reduce((sum, p) => sum + punchHoursInMonth(p, statsMonth), 0);
 
                           const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                           const isContractor = emp.workerType === 'contractor';
@@ -4422,7 +4431,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   <button
                                     onClick={() => {
                                       addPayrollPayment({
-                                        date: new Date().toISOString().slice(0, 10),
+                                        date: todayKey(),
                                         employeeId: emp.id,
                                         employeeName: emp.name,
                                         amount: pay.net,

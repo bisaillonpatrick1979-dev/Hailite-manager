@@ -358,6 +358,11 @@ export interface CompanyInfo {
   currency?: string;
   unitSystem?: 'imperial' | 'metric';
   dateLocale?: string;
+  // Fuseau horaire des journées de travail (ex. « America/Edmonton »). Laissé
+  // vide, l'application utilise celui de l'appareil : le téléphone du
+  // travailleur et le bureau sont normalement dans la même province. À définir
+  // seulement si les chantiers ou le personnel se trouvent dans un autre fuseau.
+  timeZone?: string;
   localTaxRate?: number;
   taxConfirmedAt?: string;
   taxDisclaimerAcceptedAt?: string;
