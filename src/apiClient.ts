@@ -10,7 +10,16 @@ import type {
   ShiftAssignment, SafetyRecord, EmployeeCredential
 } from './types';
 import { normalizeToolAssetStatus } from './types';
-import type { SubmissionInput } from '../credentialVerification';
+import type {
+  SubmissionInput, CredentialReading, CredentialDiscrepancy, InspectionVerdict
+} from '../credentialVerification';
+
+export interface CredentialInspection {
+  reading: CredentialReading;
+  discrepancies: CredentialDiscrepancy[];
+  verdict: InspectionVerdict;
+  provider: string;
+}
 import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
 import { apiFetch, isNativeRuntime } from './runtimeConfig';
 
@@ -283,6 +292,40 @@ export async function submitCredential(submission: SubmissionInput): Promise<Emp
     throw error;
   } finally {
     noteMutation();
+  }
+}
+
+// Lecture assistée des deux faces par le modèle, déclenchée par une personne
+// du bureau. Les photos ne quittent pas le serveur : elles y sont relues depuis
+// la base, jamais renvoyées par le navigateur.
+export async function inspectCredential(
+  employeeId: string,
+  credentialId: string,
+  provider?: string
+): Promise<CredentialInspection> {
+  const label = 'analyse de carte';
+  if (demoSandboxIsolation) throw new Error('Analyse indisponible dans le bac à sable de démonstration');
+  if (!cloudSyncAllowed) throw new Error('La sauvegarde infonuagique est désactivée');
+  notifySync({ status: 'pending', label });
+  try {
+    const res = await apiFetch(
+      `/api/credentials/${encodeURIComponent(employeeId)}/${encodeURIComponent(credentialId)}/inspect`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(provider ? { provider } : {})
+      }
+    );
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`);
+    }
+    notifySync({ status: 'synced', label });
+    return payload as CredentialInspection;
+  } catch (error: any) {
+    notifySync({ status: 'error', label, message: String(error?.message || 'Erreur d’analyse') });
+    throw error;
   }
 }
 

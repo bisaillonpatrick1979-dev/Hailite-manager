@@ -142,6 +142,69 @@ assert.ok(
   'Aucun registre ne doit être interrogé automatiquement : ce sont des formulaires destinés à un humain.'
 );
 
+// -- Lecture assistée : une aide, jamais une preuve -----------------------
+const inspectRoute = routes.slice(
+  routes.indexOf("app.post('/api/credentials/:employeeId/:credentialId/inspect'"),
+  routes.indexOf("// Annuaire minimal pour l'écran de connexion")
+);
+assert.ok(inspectRoute.length > 200, 'La route d’analyse est introuvable.');
+assert.ok(inspectRoute.includes('canReviewCredential(auth)'), 'L’analyse doit être réservée à la gestion.');
+assert.ok(
+  inspectRoute.includes('credential_inspect_denied'),
+  'Une tentative d’analyse refusée doit laisser une trace.'
+);
+
+// Les photos analysées viennent de la base, pas du corps de la requête : on
+// analyse la carte réellement soumise, pas une image glissée à côté.
+assert.ok(
+  inspectRoute.includes('decodeImageDataUrl(credential.photoFront)') &&
+  inspectRoute.includes('decodeImageDataUrl(credential.photoBack)'),
+  'Les deux faces analysées doivent être relues depuis la base.'
+);
+assert.ok(
+  !/req\.body\??\.(photo|image)/.test(inspectRoute),
+  'Aucune image du corps de la requête ne doit être analysée.'
+);
+
+// La clé du fournisseur ne quitte jamais le serveur.
+assert.ok(
+  inspectRoute.includes('resolveProviderApiKey(selectedProvider)'),
+  'La clé du fournisseur doit être résolue côté serveur.'
+);
+assert.ok(
+  !/apiKey.*req\.body/.test(inspectRoute),
+  'Aucune clé fournie par le navigateur ne doit être utilisée.'
+);
+
+// Le modèle lit, il ne juge pas.
+assert.ok(
+  model.includes('Tu ne dis JAMAIS si la carte est authentique ou fausse'),
+  'La consigne doit interdire au modèle de se prononcer sur l’authenticité.'
+);
+const verdicts = model.match(/export type InspectionVerdict = ([^;]+);/);
+assert.ok(verdicts, 'Le type de verdict doit être déclaré.');
+for (const forbidden of ['authentic', 'genuine', 'valide', 'fake', 'fausse']) {
+  assert.ok(
+    !verdicts![1].includes(forbidden),
+    `Le verdict ne doit pas pouvoir affirmer « ${forbidden} » : l’analyse ne peut pas le savoir.`
+  );
+}
+assert.ok(
+  queue.includes('ne prouve pas qu’une carte est authentique'),
+  'L’écran doit dire clairement ce que la lecture ne prouve pas.'
+);
+assert.ok(
+  queue.includes('registriesForCredential('),
+  'Le registre doit rester proposé à côté de l’analyse : c’est lui qui tranche.'
+);
+
+// L'audit consigne le verdict, jamais ce qui a été lu sur la carte.
+assert.ok(routes.includes("'credential_inspected'"), 'L’analyse doit être auditée.');
+assert.ok(
+  !/logAudit\([^)]*reading/.test(routes),
+  'Le journal d’audit ne doit pas transporter le contenu lu sur la carte.'
+);
+
 console.log('Cartes de compétence en libre-service validées', {
   tableAppUsersToujoursFermee: true,
   ecritureBorneeALaPropreLigne: true,
@@ -151,5 +214,9 @@ console.log('Cartes de compétence en libre-service validées', {
   auditSansPhoto: true,
   rectoEtVersoExiges: true,
   cameraDirecte: true,
-  registresSansPromesseAutomatique: true
+  registresSansPromesseAutomatique: true,
+  lectureReserveeAuBureau: true,
+  photosReluesDepuisLaBase: true,
+  cleJamaisDansLeNavigateur: true,
+  verdictNePretendPasAuthentifier: true
 });

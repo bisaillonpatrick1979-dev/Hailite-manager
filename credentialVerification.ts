@@ -318,3 +318,188 @@ export function applyReview(
     verificationNote: String(decision.note || '').trim() || undefined
   };
 }
+
+// ---------------------------------------------------------------------------
+// Lecture assistée des photos de la carte
+// ---------------------------------------------------------------------------
+// Ce que le modèle fait : lire ce qui est écrit sur les deux faces et le
+// comparer à ce que le travailleur a saisi. Ce que ça révèle : une carte
+// bricolée où le numéro tapé ne correspond pas à celui imprimé, une date
+// d'expiration rallongée à la main, un organisme qui n'est pas celui de la
+// carte, un verso illisible. Ce sont exactement les traces que laisse une
+// fausse carte faite à la va-vite.
+//
+// Ce que ça ne fait PAS : dire que la carte est authentique. Une contrefaçon
+// soignée est parfaitement cohérente avec elle-même — seul le registre de
+// l'organisme peut confirmer que ce numéro a bien été délivré à cette
+// personne. L'analyse sert donc à décider où regarder de plus près, et la
+// vérification au registre reste la réponse à « est-ce une fausse carte ».
+
+export interface CredentialReading {
+  name?: string;
+  issuer?: string;
+  credentialNumber?: string;
+  issuedDate?: string;
+  expiryDate?: string;
+  holderName?: string;
+  /** Ce que le modèle n'a pas réussi à lire, dans ses mots. */
+  unreadable?: string[];
+  /** Signes matériels attendus et absents : hologramme, code QR, signature. */
+  missingFeatures?: string[];
+}
+
+export type DiscrepancySeverity = 'mismatch' | 'missing' | 'inconsistent';
+
+export interface CredentialDiscrepancy {
+  field: string;
+  severity: DiscrepancySeverity;
+  declared?: string;
+  read?: string;
+  messageFR: string;
+  messageEN: string;
+}
+
+function normalizeForCompare(value: string | undefined): string {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Recoupe ce qui est déclaré et ce qui est lu. Les écarts sont décrits, jamais
+ * corrigés en silence : c'est la personne qui vérifie qui tranche, en ayant les
+ * deux versions sous les yeux.
+ */
+export function compareReadingToDeclared(
+  declared: Partial<Pick<EmployeeCredential, 'issuer' | 'credentialNumber' | 'issuedDate' | 'expiryDate' | 'doesNotExpire'>>,
+  reading: CredentialReading
+): CredentialDiscrepancy[] {
+  const found: CredentialDiscrepancy[] = [];
+
+  const compare = (
+    field: string,
+    declaredValue: string | undefined,
+    readValue: string | undefined,
+    labelFR: string,
+    labelEN: string
+  ) => {
+    if (!readValue) return;
+    if (!declaredValue) {
+      found.push({
+        field, severity: 'missing', read: readValue,
+        messageFR: `${labelFR} lu sur la carte mais non saisi : « ${readValue} ».`,
+        messageEN: `${labelEN} read on the card but not entered: “${readValue}”.`
+      });
+      return;
+    }
+    if (normalizeForCompare(declaredValue) !== normalizeForCompare(readValue)) {
+      found.push({
+        field, severity: 'mismatch', declared: declaredValue, read: readValue,
+        messageFR: `${labelFR} : « ${declaredValue} » saisi, « ${readValue} » sur la carte.`,
+        messageEN: `${labelEN}: “${declaredValue}” entered, “${readValue}” on the card.`
+      });
+    }
+  };
+
+  compare('credentialNumber', declared.credentialNumber, reading.credentialNumber, 'Numéro de carte', 'Card number');
+  compare('issuer', declared.issuer, reading.issuer, 'Organisme', 'Issuer');
+  compare('issuedDate', declared.issuedDate, reading.issuedDate, 'Date d’obtention', 'Issue date');
+  if (!declared.doesNotExpire) {
+    compare('expiryDate', declared.expiryDate, reading.expiryDate, 'Date d’expiration', 'Expiry date');
+  }
+
+  // Cohérence interne : une carte qui expire avant d'avoir été délivrée n'a
+  // jamais été délivrée par personne.
+  const issued = reading.issuedDate || declared.issuedDate;
+  const expiry = reading.expiryDate || declared.expiryDate;
+  if (issued && expiry && expiry < issued) {
+    found.push({
+      field: 'expiryDate', severity: 'inconsistent', declared: issued, read: expiry,
+      messageFR: `La date d’expiration (${expiry}) précède la date d’obtention (${issued}).`,
+      messageEN: `The expiry date (${expiry}) comes before the issue date (${issued}).`
+    });
+  }
+
+  for (const missing of reading.missingFeatures || []) {
+    found.push({
+      field: 'features', severity: 'missing',
+      messageFR: `Élément attendu absent de la carte : ${missing}.`,
+      messageEN: `Expected feature missing from the card: ${missing}.`
+    });
+  }
+  for (const unreadable of reading.unreadable || []) {
+    found.push({
+      field: 'readability', severity: 'missing',
+      messageFR: `Illisible sur la photo : ${unreadable}.`,
+      messageEN: `Unreadable on the photo: ${unreadable}.`
+    });
+  }
+
+  return found;
+}
+
+/**
+ * Verdict de l'analyse. Volontairement borné à trois états, dont aucun ne dit
+ * « authentique » : l'analyse ne peut pas le savoir.
+ */
+export type InspectionVerdict = 'consistent' | 'needs_attention' | 'unreadable';
+
+export function inspectionVerdict(reading: CredentialReading, discrepancies: CredentialDiscrepancy[]): InspectionVerdict {
+  const nothingRead = !reading.credentialNumber && !reading.issuer && !reading.expiryDate;
+  if (nothingRead) return 'unreadable';
+  if (discrepancies.some(item => item.severity === 'mismatch' || item.severity === 'inconsistent')) return 'needs_attention';
+  if (discrepancies.length > 0) return 'needs_attention';
+  return 'consistent';
+}
+
+/** Consigne envoyée au modèle. Il lit, il ne juge pas. */
+export const CREDENTIAL_READING_INSTRUCTION = [
+  'Tu examines les photos du recto et du verso d’une carte de compétence de la construction.',
+  'Ta seule tâche est de LIRE ce qui est imprimé et de le rapporter fidèlement.',
+  'Tu ne dis JAMAIS si la carte est authentique ou fausse : tu n’as aucun moyen de le savoir.',
+  'Si un champ est illisible ou absent, tu le déclares illisible plutôt que de le deviner.',
+  'Réponds uniquement par un objet JSON, sans texte autour, avec ces clés :',
+  '{"name":string,"issuer":string,"credentialNumber":string,"issuedDate":"AAAA-MM-JJ",',
+  '"expiryDate":"AAAA-MM-JJ","holderName":string,"unreadable":string[],"missingFeatures":string[]}',
+  'Laisse une chaîne vide pour ce que tu ne lis pas. Dans missingFeatures, signale',
+  'seulement l’absence d’un élément que ce type de carte porte normalement',
+  '(code QR, hologramme, signature, numéro).'
+].join(' ');
+
+/** Extrait l'objet JSON d'une réponse de modèle, même entourée de texte. */
+export function parseCredentialReading(raw: string): CredentialReading | null {
+  const text = String(raw || '');
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    if (!parsed || typeof parsed !== 'object') return null;
+    const asString = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
+    // Une liste qui ne contient rien d'utilisable vaut une absence de lecture :
+    // sans quoi un tableau vide compterait comme « le modèle a répondu », et le
+    // verdict s'appuierait sur du vide.
+    const asList = (value: unknown) => {
+      if (!Array.isArray(value)) return undefined;
+      const cleaned = value
+        .filter(item => typeof item === 'string' && item.trim())
+        .map(item => String(item).trim())
+        .slice(0, 10);
+      return cleaned.length > 0 ? cleaned : undefined;
+    };
+    return {
+      name: asString(parsed.name),
+      issuer: asString(parsed.issuer),
+      credentialNumber: asString(parsed.credentialNumber),
+      issuedDate: asString(parsed.issuedDate),
+      expiryDate: asString(parsed.expiryDate),
+      holderName: asString(parsed.holderName),
+      unreadable: asList(parsed.unreadable),
+      missingFeatures: asList(parsed.missingFeatures)
+    };
+  } catch {
+    return null;
+  }
+}

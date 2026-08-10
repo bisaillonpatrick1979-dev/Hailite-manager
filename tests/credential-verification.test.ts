@@ -12,7 +12,11 @@ import {
   registriesForCredential,
   validateSubmission,
   verificationStatus,
-  MAX_CREDENTIAL_PHOTO_BYTES
+  compareReadingToDeclared,
+  inspectionVerdict,
+  parseCredentialReading,
+  MAX_CREDENTIAL_PHOTO_BYTES,
+  CREDENTIAL_READING_INSTRUCTION
 } from '../credentialVerification';
 import type { EmployeeCredential } from '../src/types';
 
@@ -180,4 +184,101 @@ test('chaque registre dit ce qu’il exige et où il s’arrête', () => {
     assert.ok(registry.requiresFR && registry.requiresEN, `${registry.id} doit dire ce qu’il demande`);
     assert.ok(registry.cautionFR && registry.cautionEN, `${registry.id} doit dire ce qu’il ne couvre pas`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Lecture assistée des deux faces et recoupement avec ce qui a été saisi
+// ---------------------------------------------------------------------------
+
+test('une carte dont tout concorde ne soulève aucun écart', () => {
+  const declared = { issuer: 'IVES', credentialNumber: 'AB-77120', issuedDate: '2026-07-02', expiryDate: '2029-07-02' };
+  const reading = { issuer: 'IVES', credentialNumber: 'AB-77120', issuedDate: '2026-07-02', expiryDate: '2029-07-02' };
+  const found = compareReadingToDeclared(declared, reading);
+  assert.deepEqual(found, []);
+  assert.equal(inspectionVerdict(reading, found), 'consistent');
+});
+
+test('un numéro saisi qui ne correspond pas à celui imprimé est signalé', () => {
+  const found = compareReadingToDeclared(
+    { credentialNumber: 'AB-77120', issuer: 'IVES' },
+    { credentialNumber: 'AB-99999', issuer: 'IVES' }
+  );
+  assert.equal(found.length, 1);
+  assert.equal(found[0].field, 'credentialNumber');
+  assert.equal(found[0].severity, 'mismatch');
+  assert.match(found[0].messageFR, /AB-77120/);
+  assert.match(found[0].messageFR, /AB-99999/);
+  assert.equal(inspectionVerdict({ credentialNumber: 'AB-99999' }, found), 'needs_attention');
+});
+
+test('une date d’expiration rallongée à la saisie est signalée', () => {
+  const found = compareReadingToDeclared(
+    { credentialNumber: 'AB-77120', expiryDate: '2031-07-02' },
+    { credentialNumber: 'AB-77120', expiryDate: '2027-07-02' }
+  );
+  assert.ok(found.some(item => item.field === 'expiryDate' && item.severity === 'mismatch'));
+});
+
+test('la comparaison ignore la ponctuation et les accents, pas le contenu', () => {
+  const found = compareReadingToDeclared(
+    { credentialNumber: 'ab 77120', issuer: 'Énergie Sécurité' },
+    { credentialNumber: 'AB-77120', issuer: 'Energie Securite' }
+  );
+  assert.deepEqual(found, [], 'une différence de forme n’est pas une différence de fond');
+});
+
+test('une carte qui expire avant d’avoir été délivrée est incohérente', () => {
+  const found = compareReadingToDeclared(
+    { issuedDate: '2026-07-02', expiryDate: '2025-01-01' },
+    { issuedDate: '2026-07-02', expiryDate: '2025-01-01' }
+  );
+  assert.ok(found.some(item => item.severity === 'inconsistent'));
+});
+
+test('un élément matériel absent et un champ illisible remontent', () => {
+  const reading = { credentialNumber: 'AB-77120', missingFeatures: ['code QR'], unreadable: ['date d’expiration'] };
+  const found = compareReadingToDeclared({ credentialNumber: 'AB-77120' }, reading);
+  assert.ok(found.some(item => item.field === 'features'));
+  assert.ok(found.some(item => item.field === 'readability'));
+  assert.equal(inspectionVerdict(reading, found), 'needs_attention');
+});
+
+test('des photos dont rien ne se lit donnent « illisible », pas « concorde »', () => {
+  assert.equal(inspectionVerdict({}, []), 'unreadable');
+  assert.equal(inspectionVerdict({ unreadable: ['tout'] }, []), 'unreadable');
+});
+
+test('le verdict ne peut jamais affirmer qu’une carte est authentique', () => {
+  const verdicts = new Set<string>();
+  for (const reading of [{}, { credentialNumber: 'A' }, { issuer: 'B', expiryDate: '2030-01-01' }]) {
+    verdicts.add(inspectionVerdict(reading, compareReadingToDeclared({ credentialNumber: 'A' }, reading)));
+  }
+  for (const verdict of verdicts) {
+    assert.ok(['consistent', 'needs_attention', 'unreadable'].includes(verdict),
+      `verdict inattendu : ${verdict}`);
+  }
+  assert.ok(!CREDENTIAL_READING_INSTRUCTION.includes('authentique') || CREDENTIAL_READING_INSTRUCTION.includes('JAMAIS'),
+    'la consigne doit interdire au modèle de se prononcer sur l’authenticité');
+});
+
+test('la réponse du modèle est extraite même entourée de texte', () => {
+  const parsed = parseCredentialReading('Voici ce que je lis :\n```json\n{"issuer":"IVES","credentialNumber":"AB-77120","unreadable":["verso"]}\n```\nVoilà.');
+  assert.equal(parsed?.issuer, 'IVES');
+  assert.equal(parsed?.credentialNumber, 'AB-77120');
+  assert.deepEqual(parsed?.unreadable, ['verso']);
+});
+
+test('une réponse illisible ou vide ne fabrique pas de lecture', () => {
+  assert.equal(parseCredentialReading('je ne peux pas lire cette carte'), null);
+  assert.equal(parseCredentialReading(''), null);
+  const empty = parseCredentialReading('{"issuer":"","credentialNumber":"   "}');
+  assert.equal(empty?.issuer, undefined, 'une chaîne vide n’est pas une lecture');
+  assert.equal(empty?.credentialNumber, undefined);
+});
+
+test('une réponse hostile ne peut pas injecter de champs inattendus', () => {
+  const parsed = parseCredentialReading('{"issuer":"IVES","verificationStatus":"verified","verifiedBy":"moi","unreadable":[1,2,{"x":1}]}');
+  assert.equal((parsed as any)?.verificationStatus, undefined);
+  assert.equal((parsed as any)?.verifiedBy, undefined);
+  assert.deepEqual(parsed?.unreadable, undefined, 'une liste sans texte utilisable est ignorée');
 });

@@ -12,13 +12,21 @@
 // confirmer quoi que ce soit à un employeur. La décision est donc humaine, et
 // l'application se contente de consigner qui l'a prise, quand, et par quel
 // moyen.
+//
+// Un bouton d'analyse fait toutefois lire les deux faces par le modèle et
+// compare ce qui y est imprimé à ce que le travailleur a saisi. Un numéro qui
+// ne concorde pas ou une date rallongée sautent alors aux yeux — ce sont les
+// traces d'une carte bricolée. Le résultat dit « à regarder de plus près », il
+// ne dit jamais « authentique » : une contrefaçon soignée est cohérente avec
+// elle-même, et seul le registre peut trancher.
 
 import React, { useState } from 'react';
-import { AlertTriangle, Check, ExternalLink, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, Check, ExternalLink, ScanLine, ShieldCheck, X } from 'lucide-react';
 import type { EmployeeCredential } from '../types';
 import {
   registriesForCredential, type CredentialVerificationMethod
 } from '../../credentialVerification';
+import { inspectCredential, type CredentialInspection } from '../apiClient';
 
 type Language = 'FR' | 'EN';
 
@@ -49,6 +57,9 @@ export default function CredentialVerificationQueue({
   const isFrench = currentLanguage === 'FR';
   const t = (fr: string, en: string) => (isFrench ? fr : en);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [inspecting, setInspecting] = useState<string | null>(null);
+  const [inspections, setInspections] = useState<Record<string, CredentialInspection>>({});
+  const [inspectionError, setInspectionError] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [methods, setMethods] = useState<Record<string, CredentialVerificationMethod>>({});
   const [failure, setFailure] = useState('');
@@ -76,6 +87,23 @@ export default function CredentialVerificationQueue({
       setFailure(String(error?.message || t('La décision n’a pas pu être enregistrée.', 'The decision could not be saved.')));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const inspect = async (item: PendingCredential) => {
+    const key = item.credential.id;
+    setInspecting(key);
+    setInspectionError(current => ({ ...current, [key]: '' }));
+    try {
+      const result = await inspectCredential(item.employeeId, key);
+      setInspections(current => ({ ...current, [key]: result }));
+    } catch (error: any) {
+      setInspectionError(current => ({
+        ...current,
+        [key]: String(error?.message || t('L’analyse a échoué.', 'The analysis failed.'))
+      }));
+    } finally {
+      setInspecting(null);
     }
   };
 
@@ -206,6 +234,85 @@ export default function CredentialVerificationQueue({
                 ))}
               </div>
             )}
+
+            {/* Lecture assistée des deux faces */}
+            <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+                  {t('Comparer la carte à ce qui a été saisi', 'Compare the card with what was entered')}
+                </p>
+                <button
+                  type="button"
+                  disabled={inspecting === key}
+                  onClick={() => { void inspect(item); }}
+                  className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-[10px] font-black uppercase text-violet-300 disabled:opacity-40"
+                >
+                  <ScanLine className="mr-1 inline h-3.5 w-3.5" />
+                  {inspecting === key ? t('Lecture…', 'Reading…') : t('Analyser la carte', 'Analyse card')}
+                </button>
+              </div>
+
+              {inspectionError[key] && (
+                <p className="text-[11px] font-bold text-red-300" role="alert">{inspectionError[key]}</p>
+              )}
+
+              {inspections[key] && (() => {
+                const inspection = inspections[key];
+                const tone = inspection.verdict === 'needs_attention'
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                  : inspection.verdict === 'unreadable'
+                    ? 'border-gray-700 bg-gray-900 text-gray-300'
+                    : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
+                return (
+                  <div className="space-y-2">
+                    <p className={`rounded-lg border p-2.5 text-[11px] font-bold ${tone}`}>
+                      {inspection.verdict === 'needs_attention'
+                        ? t('À regarder de plus près : la carte et la saisie ne concordent pas partout.',
+                            'Look closer: the card and the entry do not fully match.')
+                        : inspection.verdict === 'unreadable'
+                          ? t('Rien n’a pu être lu sur les photos. Reprenez-les ou vérifiez directement au registre.',
+                              'Nothing could be read from the photos. Retake them or check the registry directly.')
+                          : t('Ce qui est imprimé concorde avec ce qui a été saisi.',
+                              'What is printed matches what was entered.')}
+                    </p>
+
+                    {inspection.discrepancies.length > 0 && (
+                      <ul className="space-y-1">
+                        {inspection.discrepancies.map((item2, index) => (
+                          <li key={`${item2.field}-${index}`} className="flex items-start gap-1.5 rounded-lg bg-gray-950 p-2 text-[11px] text-gray-300">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" aria-hidden="true" />
+                            {isFrench ? item2.messageFR : item2.messageEN}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {/* Ce que le modèle a lu, tel quel : la personne qui vérifie
+                        doit pouvoir juger la lecture, pas seulement le verdict. */}
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      {[
+                        [t('Titulaire lu', 'Holder read'), inspection.reading.holderName],
+                        [t('Organisme lu', 'Issuer read'), inspection.reading.issuer],
+                        [t('Numéro lu', 'Number read'), inspection.reading.credentialNumber],
+                        [t('Expiration lue', 'Expiry read'), inspection.reading.expiryDate]
+                      ].filter(([, value]) => value).map(([label, value]) => (
+                        <div key={String(label)} className="rounded-lg bg-gray-950 p-2">
+                          <span className="block font-bold uppercase text-gray-500">{label}</span>
+                          <span className="break-words font-bold text-white">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <p className="text-[10px] italic leading-relaxed text-gray-500">
+                      {t(
+                        'Cette lecture ne prouve pas qu’une carte est authentique — une contrefaçon soignée concorde avec elle-même. Seul le registre de l’organisme peut confirmer que ce numéro a été délivré à cette personne.',
+                        'This reading does not prove a card is genuine — a careful forgery matches itself. Only the issuer’s registry can confirm this number was issued to this person.'
+                      )}
+                    </p>
+                  </div>
+                );
+              })()}
+            </div>
 
             {/* La décision */}
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
