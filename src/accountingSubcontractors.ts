@@ -119,7 +119,11 @@ export function summarizeSubcontractorPayments(
     count: number; total: number;
     contractorTotal: number; contractorCount: number;
     inferredTotal: number; inferredCount: number;
-    seenType: boolean;
+    // Versements dont la nature reste inconnue : ni instantané, ni type sur la
+    // fiche. Comptés séparément, et non par un simple drapeau « au moins un
+    // versement était classable » : une personne peut avoir les deux, et les
+    // montants inconnus doivent rester visibles même dans ce cas.
+    unknownTotal: number; unknownCount: number;
   }>();
 
   for (const payment of payments) {
@@ -128,20 +132,20 @@ export function summarizeSubcontractorPayments(
     const { type, inferred } = classificationOfPayment(payment, employee);
     const current = totals.get(payment.employeeId) || {
       count: 0, total: 0, contractorTotal: 0, contractorCount: 0,
-      inferredTotal: 0, inferredCount: 0, seenType: false
+      inferredTotal: 0, inferredCount: 0, unknownTotal: 0, unknownCount: 0
     };
     const amount = Number(payment.amount || 0);
     current.count += 1;
     current.total += amount;
-    if (type) {
-      current.seenType = true;
-      if (type === 'contractor') {
-        current.contractorCount += 1;
-        current.contractorTotal += amount;
-        if (inferred) {
-          current.inferredCount += 1;
-          current.inferredTotal += amount;
-        }
+    if (!type) {
+      current.unknownCount += 1;
+      current.unknownTotal += amount;
+    } else if (type === 'contractor') {
+      current.contractorCount += 1;
+      current.contractorTotal += amount;
+      if (inferred) {
+        current.inferredCount += 1;
+        current.inferredTotal += amount;
       }
     }
     totals.set(payment.employeeId, current);
@@ -154,10 +158,15 @@ export function summarizeSubcontractorPayments(
   for (const [employeeId, sums] of totals) {
     const employee = byId.get(employeeId);
     const name = employee?.name || '';
-    if (!sums.seenType) {
-      // Aucun versement n'a de nature connue : on ne devine pas, on le signale.
-      unclassified.push({ employeeId, name, total: sums.total });
-      continue;
+    // Versements de nature inconnue : signalés, on ne devine pas. Ce
+    // signalement ne dépend PAS des autres versements de la personne. Le tester
+    // globalement (« aucun versement n'a de nature connue ») faisait disparaître
+    // les montants inconnus dès qu'un seul autre versement était classable :
+    // ils sortaient du feuillet sans apparaître nulle part, sur un document
+    // fiscal. Le cas devient courant pendant la transition, puisque les
+    // versements antérieurs à l'instantané n'en ont pas.
+    if (sums.unknownCount > 0) {
+      unclassified.push({ employeeId, name, total: sums.unknownTotal });
     }
     if (sums.contractorCount === 0) continue;
 

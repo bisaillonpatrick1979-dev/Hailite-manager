@@ -152,3 +152,37 @@ test('le seuil s’applique au total de sous-traitance, pas au total versé', ()
   assert.equal(rows[0].total, 400);
   assert.equal(rows[0].meetsThreshold, false);
 });
+
+test('aucun dollar versé ne disparaît quand une personne mélange les natures', () => {
+  // Le cas devient courant pendant la transition : les versements antérieurs à
+  // l'instantané n'en ont pas, les suivants oui. Si la fiche n'a pas de type de
+  // travailleur, les montants sans nature connue doivent rester visibles —
+  // sinon ils sortent du feuillet sans apparaître nulle part.
+  const employees = [emp('x1', 'Stephane Roy', '')];
+  const payments = [
+    pay('x1', 4000, 'paid', 'contractor'), // nature connue
+    pay('x1', 800)                         // nature inconnue
+  ];
+  const { rows, unclassified } = summarizeSubcontractorPayments(employees, payments, CA);
+
+  assert.equal(rows.length, 1, 'la part de sous-traitance est déclarée');
+  assert.equal(rows[0].total, 4000);
+  assert.deepEqual(unclassified, [{ employeeId: 'x1', name: 'Stephane Roy', total: 800 }],
+    'la part de nature inconnue est signalée, pas escamotée');
+
+  const declare = rows.reduce((sum, row) => sum + row.total, 0);
+  const signale = unclassified.reduce((sum, entry) => sum + entry.total, 0);
+  assert.equal(declare + signale, 4800, 'tout ce qui a été versé est soit déclaré, soit signalé');
+});
+
+test('un sous-traitant confirmé n’est pas signalé pour ses versements classés', () => {
+  // Contrôle inverse : sans versement de nature inconnue, rien ne doit tomber
+  // dans les signalements.
+  const { rows, unclassified } = summarizeSubcontractorPayments(
+    [emp('s1', 'Roy', 'contractor')],
+    [pay('s1', 900, 'paid', 'contractor'), pay('s1', 100, 'paid', 'salaried')],
+    CA
+  );
+  assert.equal(rows[0].total, 900);
+  assert.deepEqual(unclassified, []);
+});
