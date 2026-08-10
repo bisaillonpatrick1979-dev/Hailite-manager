@@ -7,9 +7,19 @@ import type {
   Employee, Project, PunchSession, Invoice, Supplier, CatalogueMaterial, InventoryItem, ToolAsset, ToolTheftReport,
   SupplierOrder, Client, CompanyInfo, WeeklyGoal, MotivationTeam, MotivationGoal, HRAlert,
   GCPDocument, ExpenseRecord, PayrollPayment, ProjectPhoto, ChangeOrder, InsuranceClaim, Lead,
-  ShiftAssignment, SafetyRecord
+  ShiftAssignment, SafetyRecord, EmployeeCredential
 } from './types';
 import { normalizeToolAssetStatus } from './types';
+import type {
+  SubmissionInput, CredentialReading, CredentialDiscrepancy, InspectionVerdict
+} from '../credentialVerification';
+
+export interface CredentialInspection {
+  reading: CredentialReading;
+  discrepancies: CredentialDiscrepancy[];
+  verdict: InspectionVerdict;
+  provider: string;
+}
 import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
 import { apiFetch, isNativeRuntime } from './runtimeConfig';
 
@@ -248,6 +258,114 @@ export interface PrivacyNoticeAcknowledgement {
   privacyNoticeVersion: string;
   privacyNoticeAcknowledgedAt: string;
   locationNoticeAcknowledgedAt: string;
+}
+
+// Cartes de compétence soumises par le travailleur lui-même. Comme pour l'avis
+// de confidentialité, rien n'est « best effort » ici : tant que le serveur n'a
+// pas confirmé, la carte n'existe pas. Le travailleur doit savoir si sa carte
+// est réellement partie, il est peut-être en train de la montrer à un
+// contremaître.
+export async function submitCredential(submission: SubmissionInput): Promise<EmployeeCredential> {
+  const label = 'carte de compétence';
+  if (demoSandboxIsolation) throw new Error('Soumission indisponible dans le bac à sable de démonstration');
+  if (!cloudSyncAllowed) throw new Error('La sauvegarde infonuagique est désactivée');
+  noteMutation();
+  notifySync({ status: 'pending', label });
+  try {
+    const res = await apiFetch('/api/credentials', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(submission)
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`);
+    }
+    if (!payload.credential || typeof payload.credential.id !== 'string') {
+      throw new Error('Réponse de soumission invalide');
+    }
+    notifySync({ status: 'synced', label });
+    return payload.credential as EmployeeCredential;
+  } catch (error: any) {
+    notifySync({ status: 'error', label, message: String(error?.message || 'Erreur de synchronisation') });
+    throw error;
+  } finally {
+    noteMutation();
+  }
+}
+
+// Lecture assistée des deux faces par le modèle, déclenchée par une personne
+// du bureau. Les photos ne quittent pas le serveur : elles y sont relues depuis
+// la base, jamais renvoyées par le navigateur.
+export async function inspectCredential(
+  employeeId: string,
+  credentialId: string,
+  provider?: string
+): Promise<CredentialInspection> {
+  const label = 'analyse de carte';
+  if (demoSandboxIsolation) throw new Error('Analyse indisponible dans le bac à sable de démonstration');
+  if (!cloudSyncAllowed) throw new Error('La sauvegarde infonuagique est désactivée');
+  notifySync({ status: 'pending', label });
+  try {
+    const res = await apiFetch(
+      `/api/credentials/${encodeURIComponent(employeeId)}/${encodeURIComponent(credentialId)}/inspect`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(provider ? { provider } : {})
+      }
+    );
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`);
+    }
+    notifySync({ status: 'synced', label });
+    return payload as CredentialInspection;
+  } catch (error: any) {
+    notifySync({ status: 'error', label, message: String(error?.message || 'Erreur d’analyse') });
+    throw error;
+  }
+}
+
+// Décision du bureau sur une carte soumise. Le serveur revérifie le rôle : cet
+// appel ne fait qu'exprimer l'intention.
+export async function reviewCredential(
+  employeeId: string,
+  credentialId: string,
+  decision: { approved: boolean; method?: string; note?: string }
+): Promise<EmployeeCredential> {
+  const label = 'vérification de carte';
+  if (demoSandboxIsolation) throw new Error('Vérification indisponible dans le bac à sable de démonstration');
+  if (!cloudSyncAllowed) throw new Error('La sauvegarde infonuagique est désactivée');
+  noteMutation();
+  notifySync({ status: 'pending', label });
+  try {
+    const res = await apiFetch(
+      `/api/credentials/${encodeURIComponent(employeeId)}/${encodeURIComponent(credentialId)}/review`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(decision)
+      }
+    );
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`);
+    }
+    if (!payload.credential || typeof payload.credential.id !== 'string') {
+      throw new Error('Réponse de vérification invalide');
+    }
+    notifySync({ status: 'synced', label });
+    return payload.credential as EmployeeCredential;
+  } catch (error: any) {
+    notifySync({ status: 'error', label, message: String(error?.message || 'Erreur de synchronisation') });
+    throw error;
+  } finally {
+    noteMutation();
+  }
 }
 
 // Contrairement aux écritures métier "best effort", l'avis ne disparaît pas

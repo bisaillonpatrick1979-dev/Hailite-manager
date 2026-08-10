@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { Employee, Project, PunchSession } from '../types';
+// Une seule définition des heures travaillées pour toute l'application : le
+// calendrier et le dossier d'un employé doivent afficher le même chiffre.
+import { punchSessionHours as sessionHours } from '../employeeDossier';
 
 type Language = 'FR' | 'EN';
 
@@ -48,16 +51,6 @@ function monthKey(date: Date): string {
 function localDateKey(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value);
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function sessionHours(session: PunchSession): number {
-  if (typeof session.totalWorkedHours === 'number' && Number.isFinite(session.totalWorkedHours)) {
-    return Math.max(0, session.totalWorkedHours);
-  }
-  const start = new Date(session.startTime).getTime();
-  const end = session.endTime ? new Date(session.endTime).getTime() : Date.now();
-  const pauseMs = Math.max(0, Number(session.totalPauseMinutes || 0)) * 60_000;
-  return Math.max(0, end - start - pauseMs) / 3_600_000;
 }
 
 function categoryForHours(hours: number): DayCategory {

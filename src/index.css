@@ -116,6 +116,31 @@ textarea:focus-visible {
   .overflow-y-auto,
   .overflow-auto {
     -webkit-overflow-scrolling: touch;
+  }
+
+  /* « overscroll-behavior: contain » appliqué à tout conteneur défilant coupait
+     la propagation du geste : un doigt posé sur le tableau de l'historique de
+     l'équipe — qui ne défile qu'horizontalement — retenait aussi le glissement
+     vertical, et la page restait figée. Il fallait viser la marge de l'écran
+     pour descendre. On ne retient donc plus que l'axe réellement défilable. */
+  .overflow-x-auto {
+    overscroll-behavior-x: contain;
+    overscroll-behavior-y: auto;
+    touch-action: pan-x pan-y;
+  }
+
+  .overflow-y-auto {
+    overscroll-behavior-x: auto;
+    overscroll-behavior-y: auto;
+  }
+
+  /* Une liste courte à l'intérieur de la page doit rendre la main dès qu'elle
+     touche sa propre fin. Seules les fenêtres modales — posées par-dessus tout
+     l'écran — retiennent le geste, sans quoi c'est la page derrière elles qui
+     défile pendant qu'on lit la fenêtre. */
+  .fixed.inset-0.overflow-y-auto,
+  .fixed.inset-0 .overflow-y-auto,
+  .fixed.inset-0 .overflow-auto {
     overscroll-behavior: contain;
   }
 }

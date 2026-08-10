@@ -20,6 +20,20 @@ import {
   createLoginHandle, hashPin, SESSION_COOKIE_NAME
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
+import {
+  applyReview, buildSubmittedCredential, canReviewCredential, compareReadingToDeclared,
+  inspectionVerdict, parseCredentialReading, validateSubmission,
+  CREDENTIAL_READING_INSTRUCTION, type SubmissionInput
+} from './credentialVerification.js';
+
+// Une carte soumise par un travailleur ne peut pas se déclarer vérifiée : la
+// méthode est bornée ici, côté serveur, et non lue telle quelle depuis la
+// requête.
+const ALLOWED_VERIFICATION_METHODS = new Set(['registry', 'issuer', 'document', 'other']);
+
+// Garde-fou contre une fiche qui gonflerait indéfiniment : chaque carte porte
+// deux photos, et app_users est relu à chaque hydratation.
+const MAX_CREDENTIALS_PER_USER = 40;
 
 // Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
 const KNOWN_TABLES = [
@@ -581,13 +595,17 @@ const isPdf = (a: ChatImage) => a.mimeType === 'application/pdf';
 
 interface ProviderResult { text: string; actions: AiAction[] }
 
-async function callGemini(message: string, apiKey: string, systemInstruction: string, image?: ChatImage, withTools?: boolean): Promise<ProviderResult> {
+async function callGemini(message: string, apiKey: string, systemInstruction: string, image?: ChatImage, withTools?: boolean, extraImages?: ChatImage[]): Promise<ProviderResult> {
   const ai = new GoogleGenAI({
     apiKey,
     httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
   });
   const parts: any[] = [];
   if (image) parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } });
+  // Une carte de compétence se lit sur ses deux faces : le numéro au recto, les
+  // dates et mentions au verso. Le modèle doit les voir ensemble pour dire si
+  // elles se contredisent.
+  for (const extra of extraImages || []) parts.push({ inlineData: { mimeType: extra.mimeType, data: extra.data } });
   parts.push({ text: `Système: ${systemInstruction}\n\nClient message: ${message}` });
   // Gemini n'accepte pas additionalProperties dans les schémas de fonction
   const geminiTools = withTools ? [{
@@ -620,12 +638,15 @@ async function parseJsonSafely(res: Response, providerLabel: string): Promise<an
   }
 }
 
-async function callAnthropic(message: string, apiKey: string, systemInstruction: string, image?: ChatImage, withTools?: boolean): Promise<ProviderResult> {
+async function callAnthropic(message: string, apiKey: string, systemInstruction: string, image?: ChatImage, withTools?: boolean, extraImages?: ChatImage[]): Promise<ProviderResult> {
   const content: any = image
     ? [
         isPdf(image)
           ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: image.data } }
           : { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+        ...(extraImages || []).map(extra => ({
+          type: 'image', source: { type: 'base64', media_type: extra.mimeType, data: extra.data }
+        })),
         { type: 'text', text: message }
       ]
     : message;
@@ -660,13 +681,16 @@ async function callAnthropic(message: string, apiKey: string, systemInstruction:
   return { text, actions };
 }
 
-async function callOpenAI(message: string, apiKey: string, systemInstruction: string, image?: ChatImage, withTools?: boolean): Promise<ProviderResult> {
+async function callOpenAI(message: string, apiKey: string, systemInstruction: string, image?: ChatImage, withTools?: boolean, extraImages?: ChatImage[]): Promise<ProviderResult> {
   const userContent: any = image
     ? [
         { type: 'text', text: message },
         isPdf(image)
           ? { type: 'file', file: { filename: image.name || 'document.pdf', file_data: `data:application/pdf;base64,${image.data}` } }
-          : { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+          : { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } },
+        ...(extraImages || []).map(extra => ({
+          type: 'image_url', image_url: { url: `data:${extra.mimeType};base64,${extra.data}` }
+        }))
       ]
     : message;
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -894,6 +918,215 @@ export function registerApiRoutes(app: express.Express): void {
     } catch (error: any) {
       console.error('Error on /api/auth/privacy-notice:', error);
       return res.status(500).json({ error: 'Les confirmations n’ont pas pu être enregistrées' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Cartes de compétence soumises par le travailleur lui-même
+  // -------------------------------------------------------------------------
+  // La table app_users reste interdite en écriture à tout le monde sauf
+  // l'administration. On n'ouvre donc pas la table : on ouvre un geste précis.
+  // Cette route n'écrit que la colonne « credentials », uniquement sur la ligne
+  // de la personne authentifiée, et impose le statut « soumise » — le corps de
+  // la requête ne peut pas prétendre le contraire. Les cartes déjà présentes
+  // sont relues côté serveur puis réécrites avec la nouvelle en fin de liste :
+  // un client ne peut ni en effacer, ni en modifier une autre.
+  app.post('/api/credentials', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.status(503).json({ error: 'Base de données non configurée' });
+    }
+    const auth = req.auth as AuthContext;
+    const input = (req.body || {}) as Record<string, any>;
+
+    const problems = validateSubmission(input as SubmissionInput);
+    if (problems.length > 0) {
+      return res.status(400).json({
+        error: 'Soumission incomplète',
+        problems: problems.map(problem => ({ field: problem.field, messageFR: problem.messageFR, messageEN: problem.messageEN }))
+      });
+    }
+
+    try {
+      const { data: current, error: readError } = await supabase
+        .from('app_users')
+        .select('credentials')
+        .eq('id', auth.userId)
+        .eq('company_id', auth.companyId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!current) return res.status(404).json({ error: 'Compte actif introuvable' });
+
+      const existing = Array.isArray(current.credentials) ? current.credentials : [];
+      if (existing.length >= MAX_CREDENTIALS_PER_USER) {
+        return res.status(409).json({ error: 'Trop de cartes enregistrées pour ce compte' });
+      }
+
+      const submitted = buildSubmittedCredential(input as SubmissionInput, auth.userId, crypto.randomUUID());
+      const credentials = [...existing, submitted];
+
+      const { error: writeError } = await supabase
+        .from('app_users')
+        .update({ credentials })
+        .eq('id', auth.userId)
+        .eq('company_id', auth.companyId)
+        .eq('is_active', true);
+      if (writeError) throw writeError;
+
+      // La photo n'entre pas dans le journal : on note qu'une carte a été
+      // soumise, pas ce qu'elle montre.
+      logAudit(auth, 'credential_submitted', 'app_users', auth.userId, {
+        credentialId: submitted.id, type: submitted.type
+      });
+      return res.json({ success: true, credential: submitted });
+    } catch (error: any) {
+      console.error('Error on /api/credentials:', error);
+      return res.status(500).json({ error: 'La carte n’a pas pu être enregistrée' });
+    }
+  });
+
+  // Examen d'une carte soumise. Réservé au bureau : c'est la décision qui
+  // engage l'employeur devant l'organisme émetteur et devant la loi.
+  app.post('/api/credentials/:employeeId/:credentialId/review', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.status(503).json({ error: 'Base de données non configurée' });
+    }
+    const auth = req.auth as AuthContext;
+    if (!canReviewCredential(auth)) {
+      logAudit(auth, 'credential_review_denied', 'app_users', String(req.params.employeeId));
+      return res.status(403).json({ error: 'Vérification réservée à la gestion' });
+    }
+
+    const { employeeId, credentialId } = req.params;
+    const approved = req.body?.approved === true;
+    const method = String(req.body?.method || '');
+    const note = String(req.body?.note || '').slice(0, 500);
+
+    try {
+      const { data: target, error: readError } = await supabase
+        .from('app_users')
+        .select('credentials')
+        .eq('id', employeeId)
+        .eq('company_id', auth.companyId)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!target) return res.status(404).json({ error: 'Employé introuvable' });
+
+      const existing = Array.isArray(target.credentials) ? target.credentials : [];
+      const found = existing.find((item: any) => item?.id === credentialId);
+      if (!found) return res.status(404).json({ error: 'Carte introuvable' });
+
+      const decided = applyReview(found, {
+        approved,
+        reviewerId: auth.userId,
+        method: ALLOWED_VERIFICATION_METHODS.has(method) ? (method as any) : undefined,
+        note
+      });
+      const credentials = existing.map((item: any) => item?.id === credentialId ? decided : item);
+
+      const { error: writeError } = await supabase
+        .from('app_users')
+        .update({ credentials })
+        .eq('id', employeeId)
+        .eq('company_id', auth.companyId);
+      if (writeError) throw writeError;
+
+      logAudit(auth, approved ? 'credential_verified' : 'credential_rejected', 'app_users', String(employeeId), {
+        credentialId, method: decided.verificationMethod
+      });
+      return res.json({ success: true, credential: decided });
+    } catch (error: any) {
+      console.error('Error on /api/credentials/review:', error);
+      return res.status(500).json({ error: 'La décision n’a pas pu être enregistrée' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Lecture assistée d'une carte soumise
+  // -------------------------------------------------------------------------
+  // Le modèle lit les deux faces et rapporte ce qui y est imprimé ; le serveur
+  // recoupe ensuite cette lecture avec ce que le travailleur a saisi. Un numéro
+  // qui ne concorde pas, une date d'expiration rallongée, un verso illisible :
+  // voilà ce que ça révèle, et c'est déjà beaucoup pour repérer une carte
+  // bricolée.
+  //
+  // Ce que la route ne prétend jamais : dire qu'une carte est authentique. Une
+  // contrefaçon soignée est cohérente avec elle-même. Le verdict est donc borné
+  // à « concorde », « à regarder de plus près » ou « illisible », et la
+  // vérification au registre reste la réponse à « est-ce une fausse carte ».
+  //
+  // Réservée à la gestion : les photos d'une carte ne partent chez le
+  // fournisseur d'IA que sur le geste délibéré d'une personne du bureau.
+  app.post('/api/credentials/:employeeId/:credentialId/inspect', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.status(503).json({ error: 'Base de données non configurée' });
+    }
+    const auth = req.auth as AuthContext;
+    if (!canReviewCredential(auth)) {
+      logAudit(auth, 'credential_inspect_denied', 'app_users', String(req.params.employeeId));
+      return res.status(403).json({ error: 'Analyse réservée à la gestion' });
+    }
+
+    const selectedProvider: string = req.body?.provider && PROVIDER_ENV_KEYS[req.body.provider] ? req.body.provider : 'gemini';
+    const apiKey = resolveProviderApiKey(selectedProvider);
+    if (!apiKey) {
+      return res.status(503).json({ error: 'Aucun fournisseur d’IA configuré sur le serveur' });
+    }
+
+    const { employeeId, credentialId } = req.params;
+    try {
+      const { data: target, error: readError } = await supabase
+        .from('app_users')
+        .select('credentials')
+        .eq('id', employeeId)
+        .eq('company_id', auth.companyId)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!target) return res.status(404).json({ error: 'Employé introuvable' });
+
+      const existing = Array.isArray(target.credentials) ? target.credentials : [];
+      const credential = existing.find((item: any) => item?.id === credentialId);
+      if (!credential) return res.status(404).json({ error: 'Carte introuvable' });
+
+      // Les photos viennent de la base, jamais du corps de la requête : on
+      // analyse la carte réellement soumise, pas une image fournie à côté.
+      const front = decodeImageDataUrl(credential.photoFront);
+      const back = decodeImageDataUrl(credential.photoBack);
+      if (!front || !back) {
+        return res.status(422).json({ error: 'Les deux photos de la carte sont nécessaires à l’analyse' });
+      }
+
+      const toChatImage = (decoded: { bytes: Buffer; mimeType: string }) => ({
+        mimeType: decoded.mimeType,
+        data: decoded.bytes.toString('base64')
+      });
+
+      const prompt = [
+        'Première image : recto. Deuxième image : verso.',
+        `Type de carte déclaré : ${String(credential.name || '')}.`
+      ].join(' ');
+
+      const call = selectedProvider === 'anthropic' ? callAnthropic
+        : selectedProvider === 'openai' ? callOpenAI
+        : callGemini;
+      const result = await call(prompt, apiKey, CREDENTIAL_READING_INSTRUCTION, toChatImage(front), false, [toChatImage(back)]);
+
+      const reading = parseCredentialReading(result.text);
+      if (!reading) {
+        return res.status(502).json({ error: 'Lecture illisible retournée par le modèle' });
+      }
+      const discrepancies = compareReadingToDeclared(credential, reading);
+      const verdict = inspectionVerdict(reading, discrepancies);
+
+      // On note qu'une analyse a eu lieu et ce qu'elle a conclu, jamais le
+      // contenu lu sur la carte.
+      logAudit(auth, 'credential_inspected', 'app_users', String(employeeId), {
+        credentialId, provider: selectedProvider, verdict, discrepancies: discrepancies.length
+      });
+      return res.json({ reading, discrepancies, verdict, provider: selectedProvider });
+    } catch (error: any) {
+      console.error('Error on /api/credentials/inspect:', error);
+      return res.status(500).json({ error: 'L’analyse n’a pas pu être effectuée' });
     }
   });
 

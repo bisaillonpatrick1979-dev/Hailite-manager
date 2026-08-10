@@ -29,6 +29,18 @@ export interface EmployeeCredential {
   photoBack?: string;
   notes?: string;
   notifiedAt?: string;
+
+  // Vérification. Une carte sans « verificationStatus » a été saisie par le
+  // bureau lui-même et compte donc comme vérifiée — voir verificationStatus()
+  // dans credentialVerification.ts. Les cartes soumises par le travailleur
+  // attendent l'examen d'une personne du bureau.
+  verificationStatus?: 'submitted' | 'verified' | 'rejected';
+  submittedBy?: string;
+  submittedAt?: string;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  verificationMethod?: 'registry' | 'issuer' | 'document' | 'other';
+  verificationNote?: string;
 }
 
 export interface Employee {

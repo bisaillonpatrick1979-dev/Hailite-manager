@@ -11,6 +11,7 @@ import {
 import {
   genId, syncInsert, syncUpsert, syncUpdate, syncDelete, syncDocumentLines, syncDocumentInsert, syncOrderItems, hydrateFromCloud, getCompanyId, msSinceLastMutation,
   authLogin, authLogout, fetchLoginDirectory, normalizeAppRole, setCloudSyncAllowed, savePrivacyNoticeAcknowledgement,
+  submitCredential, reviewCredential,
   isDemoSandboxIsolationActive, setDemoSandboxIsolation,
   syncProjectInsert, syncProjectChildren,
   employeeToRow, projectToRow, punchToRow, invoiceToRow, supplierToRow, catalogueToRow, inventoryToRow, toolAssetToRow, toolTheftReportToRow,
@@ -27,6 +28,7 @@ import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
 import { browserStorageValue } from './securityStorage';
 import type { DemoSandboxSummary } from './demoSandbox';
 import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
+import { applyReview, buildSubmittedCredential, type SubmissionInput } from '../credentialVerification';
 import { resolveOnboardingState } from './onboardingState';
 import { resolveViewerProfile } from './viewerProfile';
 import { todayKey, localDayKey, setAppTimeZone } from './localTime';
@@ -87,6 +89,12 @@ interface AppState {
   addEmployee: (emp: Omit<Employee, 'id' | 'level' | 'xp'>) => void;
   updateEmployee: (emp: Employee) => void;
   acknowledgePrivacyNotice: () => Promise<void>;
+  submitOwnCredential: (submission: SubmissionInput) => Promise<void>;
+  reviewEmployeeCredential: (
+    employeeId: string,
+    credentialId: string,
+    decision: { approved: boolean; method?: string; note?: string }
+  ) => Promise<void>;
   deleteEmployee: (id: string) => void;
   addXP: (employeeId: string, amount: number) => void;
   
@@ -1143,6 +1151,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeEmployee: updated,
       employees: state.employees.map(item => item.id === updated.id ? updated : item)
     }));
+  },
+
+  // Le travailleur soumet sa propre carte. C'est le serveur qui décide de la
+  // ligne écrite et impose le statut « soumise » : le navigateur n'envoie que
+  // le contenu de la carte, jamais son identifiant d'employé ni son verdict.
+  submitOwnCredential: async (submission) => {
+    const employee = get().activeEmployee;
+    if (!employee) throw new Error('Aucun employé connecté');
+
+    const credential = LOCAL_TEST_MODE
+      ? buildSubmittedCredential(submission, employee.id, `local-${Date.now()}`)
+      : await submitCredential(submission);
+
+    // La session a pu se fermer pendant l'envoi : on ne fait pas réapparaître
+    // un utilisateur déconnecté.
+    const current = get().activeEmployee;
+    if (!current || current.id !== employee.id) return;
+    const updated = { ...current, credentials: [...(current.credentials || []), credential] };
+    set(state => ({
+      activeEmployee: updated,
+      employees: state.employees.map(item => item.id === updated.id ? updated : item)
+    }));
+    saveState('gcp_employees', get().employees);
+  },
+
+  reviewEmployeeCredential: async (employeeId, credentialId, decision) => {
+    const reviewer = get().activeEmployee;
+    if (!reviewer) throw new Error('Aucun employé connecté');
+
+    const target = get().employees.find(item => item.id === employeeId);
+    const existing = (target?.credentials || []).find(item => item.id === credentialId);
+    if (!existing) throw new Error('Carte introuvable');
+
+    const decided = LOCAL_TEST_MODE
+      ? applyReview(existing, {
+          approved: decision.approved,
+          reviewerId: reviewer.id,
+          method: decision.method as any,
+          note: decision.note
+        })
+      : await reviewCredential(employeeId, credentialId, decision);
+
+    set(state => ({
+      employees: state.employees.map(item => item.id === employeeId
+        ? { ...item, credentials: (item.credentials || []).map(c => c.id === credentialId ? decided : c) }
+        : item),
+      activeEmployee: state.activeEmployee?.id === employeeId
+        ? { ...state.activeEmployee, credentials: (state.activeEmployee.credentials || []).map(c => c.id === credentialId ? decided : c) }
+        : state.activeEmployee
+    }));
+    saveState('gcp_employees', get().employees);
   },
 
   deleteEmployee: (id) => {

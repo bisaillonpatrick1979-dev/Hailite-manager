@@ -861,7 +861,7 @@ export default function ClientDocumentsManager() {
             {/* 📜 ACTUAL DOCUMENT SHEET PREVIEW (WHITE SHEET LOOK FOR LEGIBILITY) */}
             <div 
               id="gcp-pdf-canvas" 
-              className="bg-white text-slate-900 rounded-xl p-8 shadow-2xl relative overflow-hidden font-sans border border-gray-200 select-all print:shadow-none print:border-none"
+              className="bg-white text-slate-900 rounded-xl p-4 sm:p-8 shadow-2xl relative overflow-hidden font-sans border border-gray-200 select-all print:p-8 print:shadow-none print:border-none"
             >
               {/* Filigrane professionnel imprimable : logo, type et numéro */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0 overflow-hidden">
@@ -886,7 +886,7 @@ export default function ClientDocumentsManager() {
               <div className="relative z-10 space-y-6">
                 
                 {/* Header row */}
-                <div className="flex justify-between items-start gap-4 border-b border-slate-250 pb-5">
+                <div className="flex flex-col gap-4 border-b border-slate-250 pb-5 sm:flex-row sm:items-start sm:justify-between print:flex-row print:items-start print:justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <CompanyLogo logo={companyInfo.logo} companyName={companyInfo.name} className="w-12 h-12 rounded-lg border border-slate-200 bg-white p-1" imageClassName="w-full h-full object-contain rounded-md" fallbackClassName="rounded-lg bg-slate-900 text-white text-lg" />
@@ -895,7 +895,7 @@ export default function ClientDocumentsManager() {
                         <span className="text-[9px] uppercase tracking-wider font-mono text-gray-500">{t.cdmTagline}</span>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-600 mt-2 font-mono">
+                    <p className="text-xs text-slate-600 mt-2 font-mono break-words">
                       {companyInfo.address || "1980 Boul. du Chantier, Montréal, QC"}<br />
                       {t.cdmTelColon} {companyInfo.phone || "(514) 876-0000"} | {t.cdmEmailColon} {companyInfo.email || "info@hailitexteriors.ca"}
                     </p>
@@ -905,7 +905,7 @@ export default function ClientDocumentsManager() {
                     </div>
                   </div>
 
-                  <div className="text-right space-y-1">
+                  <div className="space-y-1 text-left sm:text-right print:text-right">
                     <span className="text-3xl font-black uppercase tracking-tight block text-slate-800">
                       {selectedDocForView.type === 'invoice' ? t.cdmDocInvoice : selectedDocForView.type === 'quote' ? t.cdmDocQuote : t.cdmDocContract}
                     </span>
@@ -922,7 +922,7 @@ export default function ClientDocumentsManager() {
                 </div>
 
                 {/* Client info segment */}
-                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-100">
+                <div className="grid grid-cols-1 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-100 sm:grid-cols-2 print:grid-cols-2">
                   <div className="space-y-1">
                     <span className="text-[9px] uppercase font-mono text-gray-400 block tracking-wider">{t.cdmBilledTo}</span>
                     <p className="font-bold text-sm text-slate-900 flex items-center gap-1">
@@ -933,8 +933,8 @@ export default function ClientDocumentsManager() {
                       <MapPin className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" />
                       <span>{selectedDocForView.clientAddress}</span>
                     </p>
-                    <p className="text-xs text-slate-600">{t.cdmEmailColon} {selectedDocForView.clientEmail}</p>
-                    <p className="text-xs text-slate-600">{t.cdmTelColon} {selectedDocForView.clientPhone}</p>
+                    <p className="text-xs text-slate-600 break-words">{t.cdmEmailColon} {selectedDocForView.clientEmail}</p>
+                    <p className="text-xs text-slate-600 break-words">{t.cdmTelColon} {selectedDocForView.clientPhone}</p>
                   </div>
 
                   <div className="space-y-1">
@@ -958,9 +958,19 @@ export default function ClientDocumentsManager() {
                 {/* Items loop list table */}
                 <div className="space-y-3">
                   <span className="text-[10px] uppercase font-mono font-black text-slate-400 tracking-wide block">{t.cdmWorkDescription}</span>
-                  
+                  {/* Le geste n'est pas devinable : sur un écran étroit les
+                      colonnes de montants sont hors champ tant qu'on n'a pas
+                      fait glisser le tableau. On le dit. */}
+                  <span className="block text-[9px] italic text-slate-400 sm:hidden print:hidden">{t.cdmTableScrollHint}</span>
+
                   {selectedDocForView.isSimpleLayout ? (
-                    <table className="w-full text-left text-xs border-collapse">
+                    /* Un tableau de prix ne se comprime pas : ses colonnes de
+                       montants ont une largeur minimale. Sur un téléphone il
+                       débordait de la feuille, qui le rognait sans permettre de
+                       défiler — la moitié droite du document était perdue. Il
+                       défile maintenant horizontalement dans sa propre boîte. */
+                    <div className="overflow-x-auto print:overflow-visible">
+                    <table className="w-full min-w-[560px] text-left text-xs border-collapse sm:min-w-0">
                       <thead>
                         <tr className="border-b-2 border-slate-200 text-gray-500">
                           <th className="py-2">{t.cdmThWorkMaterials}</th>
@@ -982,6 +992,7 @@ export default function ClientDocumentsManager() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   ) : (
                     /* Rich Layout categories block */
                     <div className="space-y-4">
@@ -990,7 +1001,8 @@ export default function ClientDocumentsManager() {
                       {selectedDocForView.materialLines && selectedDocForView.materialLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
                           <h5 className="text-[10px] font-black text-indigo-900 uppercase font-mono tracking-wider">{t.cdmCatA}</h5>
-                          <table className="w-full text-left text-[11px] border-collapse">
+                          <div className="overflow-x-auto print:overflow-visible">
+                          <table className="w-full min-w-[520px] text-left text-[11px] border-collapse sm:min-w-0">
                             <thead>
                               <tr className="border-b border-indigo-100 text-slate-400 font-mono">
                                 <th className="py-1">{t.cdmThCladding}</th>
@@ -1012,6 +1024,7 @@ export default function ClientDocumentsManager() {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         </div>
                       )}
 
@@ -1019,7 +1032,8 @@ export default function ClientDocumentsManager() {
                       {selectedDocForView.labourLines && selectedDocForView.labourLines.length > 0 && (
                         <div className="space-y-1.5 border border-slate-100 rounded-lg p-3">
                           <h5 className="text-[10px] font-black text-amber-950 uppercase font-mono tracking-wider">{t.cdmCatB}{isQuebec ? ' CCQ' : ''}</h5>
-                          <table className="w-full text-left text-[11px] border-collapse">
+                          <div className="overflow-x-auto print:overflow-visible">
+                          <table className="w-full min-w-[520px] text-left text-[11px] border-collapse sm:min-w-0">
                             <thead>
                               <tr className="border-b border-amber-100 text-slate-400 font-mono">
                                 <th className="py-1">{t.cdmThTaskDesc}</th>
@@ -1039,6 +1053,7 @@ export default function ClientDocumentsManager() {
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         </div>
                       )}
 
@@ -1085,7 +1100,7 @@ export default function ClientDocumentsManager() {
                 )}
 
                 {/* Totals summation card */}
-                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200">
+                <div className="grid grid-cols-1 gap-4 pt-4 border-t border-slate-200 sm:grid-cols-2 print:grid-cols-2">
                   
                   {/* Payment Terms Info */}
                   <div className="text-xs text-slate-500 space-y-2 self-start max-w-sm">
@@ -1139,7 +1154,7 @@ export default function ClientDocumentsManager() {
                   <div className="border-t border-slate-200 pt-4 space-y-3">
                     <h5 className="text-[10px] font-black text-slate-700 uppercase font-mono tracking-wider">{t.cdmAnnexA}</h5>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[10px] text-slate-500">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[10px] text-slate-500 print:grid-cols-3">
                       <div className="p-2.5 bg-slate-50 border border-slate-100 rounded">
                         <strong className="text-slate-800 block mb-1">{t.cdmWorkAmendments}</strong>
                         <p className="leading-normal">{selectedDocForView.clauseChangeOrder || clausePresets.changeOrder}</p>
@@ -1157,7 +1172,7 @@ export default function ClientDocumentsManager() {
                 )}
 
                 {/* Signatures block */}
-                <div className="grid grid-cols-2 gap-8 pt-6 border-t border-slate-200 text-xs">
+                <div className="grid grid-cols-1 gap-8 pt-6 border-t border-slate-200 text-xs sm:grid-cols-2 print:grid-cols-2">
                   
                   {/* Signature Entrepreneur */}
                   <div className="space-y-2">
@@ -1374,7 +1389,11 @@ export default function ClientDocumentsManager() {
                     </button>
                   </div>
                   {simpleLines.map((l, idx) => (
-                    <div key={idx} className="grid grid-cols-8 gap-2 items-center">
+                    /* Huit colonnes sur un téléphone donnaient des champs de
+                       28 px : impossible de lire la quantité qu'on venait de
+                       saisir. La ligne se déplie donc sur trois rangées sous
+                       « sm » et retrouve sa rangée unique au-delà. */
+                    <div key={idx} className="grid grid-cols-4 gap-2 items-center sm:grid-cols-8">
                       <input
                         type="text"
                         value={l.desc}
@@ -1384,7 +1403,7 @@ export default function ClientDocumentsManager() {
                           setSimpleLines(dup);
                         }}
                         placeholder={t.cdmWorkDescPh}
-                        className="col-span-3 bg-gray-900 border border-gray-800 text-white rounded p-1.5 text-xs"
+                        className="col-span-4 sm:col-span-3 bg-gray-900 border border-gray-800 text-white rounded p-1.5 text-xs"
                       />
                       <input
                         type="number"
@@ -1424,7 +1443,7 @@ export default function ClientDocumentsManager() {
                       <button
                         type="button"
                         onClick={() => setSimpleLines(simpleLines.filter((_, lineIndex) => lineIndex !== idx))}
-                        className="col-span-1 flex h-9 items-center justify-center rounded border border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                        className="col-span-4 sm:col-span-1 flex h-9 items-center justify-center rounded border border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/20"
                         aria-label={currentLanguage === 'FR' ? 'Supprimer la ligne' : 'Delete line'}
                       >
                         <Trash2 className="h-4 w-4" />
