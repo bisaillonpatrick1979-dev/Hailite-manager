@@ -48,6 +48,7 @@ const ProjectDirectoryManager = lazy(() => import('./components/ProjectDirectory
 const ToolRegistry = lazy(() => import('./components/ToolRegistry'));
 const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
 const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
+const EmployeeDossier = lazy(() => import('./components/EmployeeDossier'));
 const UserHelpCenter = lazy(() => import('./components/UserHelpCenter'));
 const UserPrivacyNotice = lazy(() => import('./components/UserPrivacyNotice'));
 const BusinessLogoField = lazy(() => import('./components/BusinessLogoField'));
@@ -365,6 +366,11 @@ export default function App() {
   const [orderItems, setOrderItems] = useState<Array<{ name: string; quantity: number; price: number }>>([{ name: '', quantity: 20, price: 5.5 }]);
   const [helpCenterOpen, setHelpCenterOpen] = useState<boolean>(false);
 
+  // Dossier d'un employé ouvert depuis une liste. On retient l'identifiant et
+  // non l'objet : si la fiche change pendant que le dossier est ouvert — un
+  // pointage qui se termine, une carte de compétence ajoutée — l'écran suit.
+  const [dossierEmployeeId, setDossierEmployeeId] = useState<string | null>(null);
+
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
   const [aiMessage, setAiMessage] = useState<string>('');
@@ -439,18 +445,25 @@ export default function App() {
   }, [geofencingBypassAllowed, geofencingBypass]);
 
 
+  // Le centre d'aide ne s'ouvre plus jamais tout seul. Il s'ouvrait à chaque
+  // connexion parce que la marque de passage vivait dans sessionStorage, vidé
+  // par toute déconnexion : on se reconnectait, la marque avait disparu, la
+  // fenêtre revenait. Une aide qu'on doit refermer à chaque fois n'aide plus.
+  // Le parcours de démarrage reste accessible en tout temps par le bouton
+  // « Aide et formation », et un nouvel employé est déjà guidé par l'écran
+  // d'accueil initial. On conserve seulement la trace de la première ouverture,
+  // durable cette fois, pour distinguer un compte jamais formé.
   useEffect(() => {
-    if (!activeEmployee) return;
+    if (!activeEmployee || !helpCenterOpen) return;
     const welcomeKey = `gcp_help_welcome_${activeEmployee.id}_v1`;
     try {
-      if (!sessionStorage.getItem(welcomeKey)) {
-        sessionStorage.setItem(welcomeKey, new Date().toISOString());
-        setHelpCenterOpen(true);
+      if (!localStorage.getItem(welcomeKey)) {
+        localStorage.setItem(welcomeKey, new Date().toISOString());
       }
     } catch {
       // L’aide demeure accessible manuellement si le stockage local est bloqué.
     }
-  }, [activeEmployee]);
+  }, [activeEmployee, helpCenterOpen]);
 
   // Chronomètre de travail et compteur de rémunération, actualisés à la
   // seconde. Une pause en cours est retranchée immédiatement et le compteur
@@ -2342,7 +2355,22 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <p className="text-sm text-gray-400 text-center py-6 font-semibold">{t.noActiveWorkers}</p>
                           ) : (
                             punchSessions.filter(p => p.endTime === null).map(p => (
-                              <div key={p.id} className="flex items-center justify-between pt-3 first:pt-0">
+                              /* Toucher la ligne ouvre le dossier complet de la
+                                 personne : sa journée, son mois, ses années. */
+                              <div
+                                key={p.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => setDossierEmployeeId(p.employeeId)}
+                                onKeyDown={event => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    setDossierEmployeeId(p.employeeId);
+                                  }
+                                }}
+                                title={fmt(t.openEmployeeDossier, { name: p.employeeName })}
+                                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg pt-3 transition first:pt-0 hover:bg-gray-800/25"
+                              >
                                 <div className="flex items-center gap-2.5">
                                   <EmployeeAvatar
                                     src={employees.find(e => e.id === p.employeeId)?.avatar}
@@ -2442,7 +2470,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           </thead>
                           <tbody className="divide-y divide-gray-850 text-xs">
                             {punchSessions.slice(0, 8).map(punch => (
-                              <tr key={punch.id} className="hover:bg-gray-800/10">
+                              <tr
+                                key={punch.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => setDossierEmployeeId(punch.employeeId)}
+                                onKeyDown={event => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    setDossierEmployeeId(punch.employeeId);
+                                  }
+                                }}
+                                title={fmt(t.openEmployeeDossier, { name: punch.employeeName })}
+                                className="cursor-pointer hover:bg-gray-800/25"
+                              >
                                 <td className="py-3 font-semibold text-white flex items-center gap-2">
                                   <EmployeeAvatar
                                     src={employees.find(e => e.id === punch.employeeId)?.avatar}
@@ -7947,6 +7988,28 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           />
         </Suspense>
       )}
+
+      {/* Dossier d'un employé, ouvert en touchant son nom dans une liste.
+          Réservé à l'administration : un employé n'a pas à consulter les
+          heures et la paie de ses collègues. */}
+      {dossierEmployeeId && activeEmployee?.role === 'admin' && (() => {
+        const target = employees.find(employee => employee.id === dossierEmployeeId);
+        if (!target) return null;
+        return (
+          <Suspense fallback={<LazySectionFallback />}>
+            <EmployeeDossier
+              employee={target}
+              punchSessions={punchSessions}
+              projects={projects}
+              payrollPayments={payrollPayments}
+              currentLanguage={currentLanguage}
+              dateLocale={dateLocale}
+              currency={companyInfo.currency}
+              onClose={() => setDossierEmployeeId(null)}
+            />
+          </Suspense>
+        );
+      })()}
 
     </div>
   );

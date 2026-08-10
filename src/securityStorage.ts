@@ -19,7 +19,11 @@ const SAFE_KEYS = new Set([
 // cochées : aucune donnée personnelle, aucune donnée d'entreprise. Elle doit
 // survivre à une déconnexion, sinon la formation redemande à chaque
 // reconnexion de refaire ce qui a déjà été fait.
-const SAFE_KEY_PREFIXES = ['gcp_help_progress_'];
+// Deux marques par employé, sans aucune donnée personnelle : la progression du
+// parcours de formation et la date de la première ouverture du centre d'aide.
+// Elles doivent survivre à une déconnexion, sinon la formation recommence à
+// zéro et la fenêtre d'aide se rouvre à chaque reconnexion.
+const SAFE_KEY_PREFIXES = ['gcp_help_progress_', 'gcp_help_welcome_'];
 
 export function isSafeStorageKey(key: string): boolean {
   return SAFE_KEYS.has(key) || SAFE_KEY_PREFIXES.some(prefix => key.startsWith(prefix));
