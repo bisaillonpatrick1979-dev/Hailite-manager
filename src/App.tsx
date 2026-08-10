@@ -14,6 +14,7 @@ const genLocalId = (): string =>
       });
 import { translations, fmt } from './translations';
 import { pendingVerifications, registriesForCredential, type SubmissionInput } from '../credentialVerification';
+import { checkInvoiceCompliance, complianceSummary } from './invoiceCompliance';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
 import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
@@ -51,6 +52,7 @@ const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalenda
 const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
 const EmployeeDossier = lazy(() => import('./components/EmployeeDossier'));
 const CredentialVerificationQueue = lazy(() => import('./components/CredentialVerificationQueue'));
+const InvoiceComplianceNotice = lazy(() => import('./components/InvoiceComplianceNotice'));
 const UserHelpCenter = lazy(() => import('./components/UserHelpCenter'));
 const UserPrivacyNotice = lazy(() => import('./components/UserPrivacyNotice'));
 const BusinessLogoField = lazy(() => import('./components/BusinessLogoField'));
@@ -380,6 +382,21 @@ export default function App() {
   // chantier, personne n'a envie de le refaire pour rien.
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
   const credentialsToVerify = useMemo(() => pendingVerifications(employees), [employees]);
+
+  // Conformité avant facturation : tant qu'une tâche du chantier reste ouverte,
+  // la facture ne part pas. C'est la dernière occasion de la cocher — une fois
+  // la facture envoyée, plus personne n'y retourne et le chantier ne peut pas
+  // être fermé.
+  const invoiceComplianceFor = useMemo(() => {
+    const cache = new Map<string, ReturnType<typeof checkInvoiceCompliance>>();
+    return (invoice: Invoice) => {
+      const cached = cache.get(invoice.id);
+      if (cached) return cached;
+      const computed = checkInvoiceCompliance(invoice, punchSessions, projects);
+      cache.set(invoice.id, computed);
+      return computed;
+    };
+  }, [punchSessions, projects]);
   const submitCredentialForSelf = async (submission: SubmissionInput): Promise<boolean> => {
     setCredentialSubmitting(true);
     try {
@@ -2646,19 +2663,39 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             )}
 
                             {/* Envoi de la facture à la compagnie par l'employé/sous-traitant lui-même (signature tactile requise) */}
-                            {activeEmployee.role !== 'admin' && inv.employeeId === activeEmployee.id && inv.status === 'draft' && (
-                              <div className="flex items-center justify-end gap-2">
-                                <button
-                                  onClick={() => {
-                                    setInvoiceToSign(inv);
-                                    setInvoiceSignatureData(null);
-                                  }}
-                                  className="px-2.5 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 text-[9px] font-bold uppercase rounded border border-orange-500/30 cursor-pointer"
-                                >
-                                  {t.sendToCompanyBtn}
-                                </button>
-                              </div>
-                            )}
+                            {activeEmployee.role !== 'admin' && inv.employeeId === activeEmployee.id && inv.status === 'draft' && (() => {
+                              const compliance = invoiceComplianceFor(inv);
+                              return (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      disabled={!compliance.ready}
+                                      title={compliance.ready ? undefined : complianceSummary(compliance, currentLanguage)}
+                                      onClick={() => {
+                                        setInvoiceToSign(inv);
+                                        setInvoiceSignatureData(null);
+                                      }}
+                                      className={`px-2.5 py-1 text-[9px] font-bold uppercase rounded border ${
+                                        compliance.ready
+                                          ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30 cursor-pointer'
+                                          : 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed'
+                                      }`}
+                                    >
+                                      {t.sendToCompanyBtn}
+                                    </button>
+                                  </div>
+                                  {!compliance.ready && (
+                                    <Suspense fallback={null}>
+                                      <InvoiceComplianceNotice
+                                        compliance={compliance}
+                                        currentLanguage={currentLanguage}
+                                        onOpenProject={() => setActiveTab('projects')}
+                                      />
+                                    </Suspense>
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                             {/* Aperçu de la signature tactile une fois la facture envoyée */}
                             {inv.employeeSignature && (
@@ -7975,6 +8012,21 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 {fmt(t.signSendBody, { num: invoiceToSign.invoiceNumber, amt: invoiceToSign.totalWithTaxes.toFixed(2), company: companyInfo.name || 'Hailite Xteriors Inc.' })}
               </p>
 
+              {/* Deuxième barrière : la fenêtre peut rester ouverte pendant
+                  qu'une tâche est rouverte ailleurs, et rien n'empêche
+                  d'atteindre ce bouton autrement. On revérifie ici. */}
+              <Suspense fallback={null}>
+                <InvoiceComplianceNotice
+                  compliance={invoiceComplianceFor(invoiceToSign)}
+                  currentLanguage={currentLanguage}
+                  onOpenProject={() => {
+                    setInvoiceToSign(null);
+                    setInvoiceSignatureData(null);
+                    setActiveTab('projects');
+                  }}
+                />
+              </Suspense>
+
               <SignaturePad
                 label={fmt(t.signatureOf, { name: activeEmployee.name })}
                 value={invoiceSignatureData}
@@ -7992,7 +8044,13 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 {t.modalCancelBtn}
               </button>
               <button
+                disabled={!invoiceComplianceFor(invoiceToSign).ready}
                 onClick={() => {
+                  const compliance = invoiceComplianceFor(invoiceToSign);
+                  if (!compliance.ready) {
+                    alert(complianceSummary(compliance, currentLanguage));
+                    return;
+                  }
                   if (!invoiceSignatureData) {
                     alert(t.signBeforeSend);
                     return;
@@ -8006,7 +8064,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   setInvoiceToSign(null);
                   setInvoiceSignatureData(null);
                 }}
-                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-orange-950/25"
+                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer shadow-lg shadow-orange-950/25 disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-500 disabled:shadow-none"
               >
                 {t.signAndSendBtn}
               </button>
