@@ -50,6 +50,12 @@ export interface Employee {
   workMode?: 'sqft' | 'hour' | 'flat';
   contractRenewalDate?: string;
   vacationRateOverride?: number;
+  // Surcharges d'heures supplémentaires pour cet employé. Laissées vides, les
+  // règles de la compagnie s'appliquent.
+  overtimeExempt?: boolean;                // non admissible aux heures supp.
+  overtimeDailyHoursOverride?: number;
+  overtimeWeeklyHoursOverride?: number;
+  overtimeMultiplierOverride?: number;
   email?: string;
   city?: string;
   province?: string;
@@ -362,6 +368,14 @@ export interface CompanyInfo {
 
   // Salaried Payroll Settings
   payrollVacationRate?: number;
+  // Heures supplémentaires : règle par défaut de la compagnie, applicable à
+  // tous les salariés. Chaque employé peut la surcharger (voir Employee).
+  overtimeDailyHours?: number;    // seuil quotidien, défaut 8
+  overtimeWeeklyHours?: number;   // seuil hebdomadaire, défaut 44
+  overtimeMultiplier?: number;    // défaut 1,5
+  // Arrondi appliqué au total de chaque journée travaillée, en minutes.
+  // 15 = au quart d'heure le plus proche. 0 = aucun arrondi.
+  hourRoundingMinutes?: number;
   payrollHealthInsurance?: number;
   payrollDentalInsurance?: number;
   payrollLifeInsurance?: number;

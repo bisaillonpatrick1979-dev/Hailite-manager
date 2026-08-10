@@ -139,6 +139,43 @@ export interface TaxBracket {
   rate: number;
 }
 
+// ---------------------------------------------------------------------------
+// Plafonds annuels des retenues à la source (Canada)
+// ---------------------------------------------------------------------------
+// APPROXIMATION ASSUMÉE — À VALIDER CHAQUE ANNÉE.
+// Les cotisations RRQ/RPC et AE cessent une fois le maximum annuel atteint.
+// Sans ces plafonds, la paie surévaluait les retenues des meilleurs salaires
+// pendant toute l'année. Les montants ci-dessous sont des ordres de grandeur
+// destinés à l'estimation : ils doivent être confrontés aux tables officielles
+// de l'ARC et de Retraite Québec avant toute production de feuillets fiscaux.
+export interface ContributionCap {
+  maxEarnings: number;   // maximum des gains cotisables/assurables
+  basicExemption: number; // exemption de base annuelle (0 si aucune)
+}
+
+export const CA_PENSION_CAP: ContributionCap = {
+  maxEarnings: 71300,
+  basicExemption: 3500
+};
+
+export const CA_EMPLOYMENT_INSURANCE_CAP: ContributionCap = {
+  maxEarnings: 65700,
+  basicExemption: 0
+};
+
+/**
+ * Cotisation annuelle plafonnée.
+ * On raisonne sur le gain annualisé : au-delà du maximum, la cotisation cesse.
+ * C'est une approximation lissée — dans la réalité les retenues s'arrêtent en
+ * cours d'année plutôt que d'être réparties — mais elle donne le bon total
+ * annuel, ce que l'ancien calcul sans plafond ne faisait pas.
+ */
+export function cappedAnnualContribution(annualGross: number, rate: number, cap: ContributionCap): number {
+  if (!Number.isFinite(annualGross) || annualGross <= 0 || rate <= 0) return 0;
+  const contributory = Math.max(0, Math.min(annualGross, cap.maxEarnings) - cap.basicExemption);
+  return contributory * rate;
+}
+
 export const CA_FEDERAL_BRACKETS: TaxBracket[] = [
   { upTo: 55867, rate: 0.15 },
   { upTo: 111733, rate: 0.205 },

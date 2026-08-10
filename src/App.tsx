@@ -23,12 +23,14 @@ import { apiFetch } from './runtimeConfig';
 import { COMPLIANCE_VERSION, USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
-  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
+  getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax,
+  CA_PENSION_CAP, CA_EMPLOYMENT_INSURANCE_CAP, cappedAnnualContribution
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from './projectAccess';
 import { todayKey, currentMonthKey, localDayKey, isInLocalMonth } from './localTime';
 import { punchHoursOnDay, punchHoursInMonth, punchRevenueOnDay, punchRevenueInMonth, punchRevenueInPeriod, punchDayKeys } from './punchHours';
+import { resolveOvertimeRules, computeHoursBreakdown, grossFromBreakdown, type HoursBreakdown } from './overtime';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -297,6 +299,11 @@ export default function App() {
     employeeProvince: string;
     payFrequency: 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';
     annualSalary: number;
+    // Surcharges d'heures supplémentaires. 0 = suivre la règle de la compagnie.
+    overtimeExempt: boolean;
+    overtimeDailyHoursOverride: number;
+    overtimeWeeklyHoursOverride: number;
+    overtimeMultiplierOverride: number;
     credentials: EmployeeCredential[];
   }>({
     name: '',
@@ -316,6 +323,10 @@ export default function App() {
     employeeProvince: companyInfo.region || 'AB',
     payFrequency: 'weekly',
     annualSalary: 0,
+    overtimeExempt: false,
+    overtimeDailyHoursOverride: 0,
+    overtimeWeeklyHoursOverride: 0,
+    overtimeMultiplierOverride: 0,
     credentials: []
   });
   const [newProjectForm, setNewProjectForm] = useState({
@@ -1242,8 +1253,22 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
     return brackets ? computeBracketTax(annualGross, brackets) : annualGross * CA_PROVINCIAL_FALLBACK_RATE;
   };
 
-  const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number) => {
-    let gross = hours * emp.hourlyRate;
+  // Répartition régulier / supplémentaire d'un employé sur une période, selon
+  // les règles de la compagnie et les éventuelles surcharges de sa fiche.
+  const getEmployeeHours = (emp: Employee, periodPrefix: string): HoursBreakdown => {
+    const rules = resolveOvertimeRules(companyInfo, emp);
+    const punches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
+    return computeHoursBreakdown(punches, rules, periodPrefix);
+  };
+
+  const calculateDetailedPayroll = (emp: Employee, company: CompanyInfo, hours: number | HoursBreakdown) => {
+    // Les appels historiques passaient un simple total d'heures. On accepte les
+    // deux formes : un nombre est traité comme des heures toutes régulières.
+    const breakdown: HoursBreakdown = typeof hours === 'number'
+      ? { regularHours: hours, overtimeHours: 0, totalHours: hours, byDay: [] }
+      : hours;
+    const overtimeMultiplier = resolveOvertimeRules(company, emp).multiplier;
+    let gross = grossFromBreakdown(breakdown, emp.hourlyRate, overtimeMultiplier);
     const isContractor = emp.workerType === 'contractor';
 
     if (isContractor) {
@@ -1295,12 +1320,17 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       : (company.payrollVacationRate !== undefined ? company.payrollVacationRate : 6);
     const vacationAmount = gross * (vacRate / 100);
 
-    // Source deductions (pension + secondary deduction rates adapt to the company's province/state)
-    const cpp = gross * payrollMeta.pensionRate;
-    const ei = gross * payrollMeta.secondaryDeductionRate;
-    
-    // Income taxes
+    // Retenues à la source. Les taux suivent la province/l'État de la
+    // compagnie ; les cotisations RRQ/RPC et AE s'arrêtent une fois le maximum
+    // annuel atteint. Sans ce plafond, la paie surévaluait les retenues des
+    // meilleurs salaires toute l'année durant.
     const annualGross = gross * periods;
+    const cpp = companyCountry === 'CA'
+      ? cappedAnnualContribution(annualGross, payrollMeta.pensionRate, CA_PENSION_CAP) / periods
+      : gross * payrollMeta.pensionRate;
+    const ei = companyCountry === 'CA'
+      ? cappedAnnualContribution(annualGross, payrollMeta.secondaryDeductionRate, CA_EMPLOYMENT_INSURANCE_CAP) / periods
+      : gross * payrollMeta.secondaryDeductionRate;
     const fedTaxAnn = calculateProgressiveTax(annualGross, true);
     const provTaxAnn = calculateProgressiveTax(annualGross, false);
     
@@ -4173,9 +4203,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         );
                       }
 
-                      const empHours = punchSessions
-                        .filter(p => p.employeeId === emp.id && p.endTime !== null)
-                        .reduce((sum, p) => sum + punchHoursInMonth(p, statsMonth), 0);
+                      const empHours = getEmployeeHours(emp, statsMonth);
 
                       const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                       const isContractor = emp.workerType === 'contractor';
@@ -4215,8 +4243,24 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">{t.compiledFieldHours}</span>
-                                <p className="text-2xl font-black text-orange-500 font-mono">{empHours.toFixed(1)} h</p>
+                                <p className="text-2xl font-black text-orange-500 font-mono">{empHours.totalHours.toFixed(1)} h</p>
                                 <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
+                                {/* Détail régulier / supplémentaire : un employé
+                                    doit pouvoir vérifier d'où vient son montant. */}
+                                {empHours.overtimeHours > 0 && (
+                                  <div className="pt-2 mt-1 border-t border-gray-800 space-y-0.5 text-left">
+                                    <div className="flex justify-between text-[10px]">
+                                      <span className="text-gray-400 font-sans">{t.otRegularHours}</span>
+                                      <span className="font-mono text-gray-200">{empHours.regularHours.toFixed(2)} h</span>
+                                    </div>
+                                    <div className="flex justify-between text-[10px]">
+                                      <span className="text-amber-400 font-sans">{t.otOvertimeHours}</span>
+                                      <span className="font-mono text-amber-400">
+                                        {empHours.overtimeHours.toFixed(2)} h × {resolveOvertimeRules(companyInfo, emp).multiplier}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               <div className="space-y-2.5 pt-2 font-mono text-xs text-left">
@@ -4375,9 +4419,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <span className="text-[9.5px] text-gray-400 uppercase font-mono block">{t.estPayrollMass} ({statsMonth})</span>
                             <p className="text-lg font-mono text-white font-black">
                               {employees.reduce((sum, e) => {
-                                const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null)
-                                  .reduce((s, p) => s + punchHoursInMonth(p, statsMonth), 0);
+                                const hrs = getEmployeeHours(e, statsMonth);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).net;
                               }, 0).toFixed(2)} $
                             </p>
@@ -4389,9 +4431,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <p className="text-lg font-mono text-white font-black">
                               {(employees.reduce((sum, e) => {
                                 if (e.workerType === 'contractor') return sum;
-                                const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null)
-                                  .reduce((s, p) => s + punchHoursInMonth(p, statsMonth), 0);
+                                const hrs = getEmployeeHours(e, statsMonth);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).gross;
                               }, 0) * 0.055).toFixed(2)} $
                             </p>
@@ -4427,9 +4467,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               </thead>
                               <tbody className="divide-y divide-gray-850">
                                 {employees.map(emp => {
-                                  const empHours = punchSessions
-                                    .filter(p => p.employeeId === emp.id && p.endTime !== null)
-                                    .reduce((sum, p) => sum + punchHoursInMonth(p, statsMonth), 0);
+                                  const empHours = getEmployeeHours(emp, statsMonth);
 
                                   const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                                   const isContractor = emp.workerType === 'contractor';
@@ -4453,7 +4491,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           )}
                                         </div>
                                       </td>
-                                      <td className="py-3 text-right text-orange-400 font-bold">{empHours.toFixed(1)} h</td>
+                                      <td className="py-3 text-right text-orange-400 font-bold">{empHours.totalHours.toFixed(1)} h</td>
                                       <td className="py-3 text-right text-gray-300">{emp.hourlyRate} $/h</td>
                                       <td className="py-3 text-right text-gray-300">{pay.gross.toFixed(2)} $</td>
                                       <td className="py-3 text-right">
@@ -4493,9 +4531,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           const emp = employees.find(e => e.id === payrollFocusEmployeeId);
                           if (!emp) return null;
 
-                          const empHours = punchSessions
-                            .filter(p => p.employeeId === emp.id && p.endTime !== null)
-                            .reduce((sum, p) => sum + punchHoursInMonth(p, statsMonth), 0);
+                          const empHours = getEmployeeHours(emp, statsMonth);
 
                           const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                           const isContractor = emp.workerType === 'contractor';
@@ -4536,7 +4572,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   <span className="text-[10px] text-gray-400 font-bold block uppercase font-sans">{t.provincialCalcGrid}</span>
                                   <div className="flex justify-between">
                                     <span className="text-gray-400 font-sans">{t.fieldHoursColon2}</span>
-                                    <span>{empHours.toFixed(1)} h</span>
+                                    <span>{empHours.totalHours.toFixed(1)} h</span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-gray-405 font-sans">{t.baseGrossEarnings}</span>
@@ -4589,7 +4625,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                         employeeId: emp.id,
                                         employeeName: emp.name,
                                         amount: pay.net,
-                                        hours: empHours,
+                                        hours: empHours.totalHours,
                                         period: 'Mois ' + statsMonth,
                                         status: 'paid'
                                       });
@@ -5002,6 +5038,58 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     <span className="absolute right-2 top-2 text-[10px] text-gray-500 font-bold">%</span>
                                   </div>
                                   <span className="text-[8px] text-gray-500 block italic leading-tight">{t.vacationHint}</span>
+                                </div>
+
+                                {/* Règle d'heures supplémentaires de la compagnie.
+                                    S'applique à tous les salariés ; chaque fiche
+                                    d'employé peut la surcharger. */}
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otDailyLabel}</label>
+                                  <input
+                                    type="number" min="0" step="0.5"
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
+                                    value={companyInfo.overtimeDailyHours ?? 8}
+                                    onChange={(e) => updateCompanyInfo({ overtimeDailyHours: Number(e.target.value) })}
+                                  />
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otDailyHint}</span>
+                                </div>
+
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otWeeklyLabel}</label>
+                                  <input
+                                    type="number" min="0" step="0.5"
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
+                                    value={companyInfo.overtimeWeeklyHours ?? 44}
+                                    onChange={(e) => updateCompanyInfo({ overtimeWeeklyHours: Number(e.target.value) })}
+                                  />
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otWeeklyHint}</span>
+                                </div>
+
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otMultiplierLabel}</label>
+                                  <input
+                                    type="number" min="1" step="0.1"
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs text-right"
+                                    value={companyInfo.overtimeMultiplier ?? 1.5}
+                                    onChange={(e) => updateCompanyInfo({ overtimeMultiplier: Number(e.target.value) })}
+                                  />
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otMultiplierHint}</span>
+                                </div>
+
+                                <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
+                                  <label className="text-[9.5px] text-gray-400 font-bold block uppercase font-mono">{t.otRoundingLabel}</label>
+                                  <select
+                                    className="w-full p-2 bg-gray-950 border border-gray-800 rounded font-mono text-white text-xs"
+                                    value={companyInfo.hourRoundingMinutes ?? 15}
+                                    onChange={(e) => updateCompanyInfo({ hourRoundingMinutes: Number(e.target.value) })}
+                                  >
+                                    <option value={0}>{t.otRoundingNone}</option>
+                                    <option value={5}>5 min</option>
+                                    <option value={6}>6 min</option>
+                                    <option value={15}>15 min</option>
+                                    <option value={30}>30 min</option>
+                                  </select>
+                                  <span className="text-[8px] text-gray-500 block italic leading-tight">{t.otRoundingHint}</span>
                                 </div>
 
                                 <div className="p-3 bg-[#12141C] border border-gray-850 rounded-xl space-y-1.5 focus-within:border-orange-500/40 transition">
@@ -6063,6 +6151,58 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   {fmt(t.salariedNoFixedWarn, { rate: newEmployeeForm.hourlyRate })}
                                 </div>
                               )}
+
+                              {/* Surcharges d'heures supplémentaires propres à
+                                  cet employé. Vide ou 0 = règle de la compagnie. */}
+                              <div className="pt-3 border-t border-gray-800 space-y-3">
+                                <div>
+                                  <h6 className="text-[10px] text-orange-400 font-black uppercase tracking-wider">{t.otEmployeeSection}</h6>
+                                  <p className="text-[9px] text-gray-500 mt-0.5">{t.otEmployeeHint}</p>
+                                </div>
+                                <label className="flex items-center gap-2 min-h-11 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="w-5 h-5 accent-orange-600"
+                                    checked={newEmployeeForm.overtimeExempt}
+                                    onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeExempt: e.target.checked })}
+                                  />
+                                  <span className="text-[11px] text-gray-300">{t.otExemptLabel}</span>
+                                </label>
+                                {!newEmployeeForm.overtimeExempt && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div>
+                                      <label className="text-[9px] text-gray-400 uppercase font-mono block">{t.otOverrideDaily}</label>
+                                      <input
+                                        type="number" min="0" step="0.5"
+                                        placeholder={String(companyInfo.overtimeDailyHours ?? 8)}
+                                        className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
+                                        value={newEmployeeForm.overtimeDailyHoursOverride || ''}
+                                        onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeDailyHoursOverride: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] text-gray-400 uppercase font-mono block">{t.otOverrideWeekly}</label>
+                                      <input
+                                        type="number" min="0" step="0.5"
+                                        placeholder={String(companyInfo.overtimeWeeklyHours ?? 44)}
+                                        className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
+                                        value={newEmployeeForm.overtimeWeeklyHoursOverride || ''}
+                                        onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeWeeklyHoursOverride: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[9px] text-gray-400 uppercase font-mono block">{t.otOverrideMultiplier}</label>
+                                      <input
+                                        type="number" min="1" step="0.1"
+                                        placeholder={String(companyInfo.overtimeMultiplier ?? 1.5)}
+                                        className="w-full mt-1 p-2 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800"
+                                        value={newEmployeeForm.overtimeMultiplierOverride || ''}
+                                        onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, overtimeMultiplierOverride: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
 
@@ -6229,6 +6369,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 employeeProvince: newEmployeeForm.employeeProvince,
                                 payFrequency: newEmployeeForm.payFrequency,
                                 annualSalary: newEmployeeForm.annualSalary,
+                                overtimeExempt: newEmployeeForm.overtimeExempt,
+                                overtimeDailyHoursOverride: newEmployeeForm.overtimeDailyHoursOverride || undefined,
+                                overtimeWeeklyHoursOverride: newEmployeeForm.overtimeWeeklyHoursOverride || undefined,
+                                overtimeMultiplierOverride: newEmployeeForm.overtimeMultiplierOverride || undefined,
                                 credentials: newEmployeeForm.credentials
                               });
                               setNewEmployeeForm({ 
