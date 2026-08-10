@@ -649,6 +649,11 @@ export interface PayrollPayment {
   status: 'draft' | 'approved' | 'paid' | 'held' | 'refused';
   date: string;
   hours?: number;
+  // Nature du travailleur au moment du versement, figée à l'enregistrement.
+  // Sans elle, l'export fiscal reclasse l'historique d'après la fiche actuelle :
+  // un sous-traitant devenu salarié verrait ses anciens paiements disparaître
+  // d'un T5018 déjà produit. Absente sur les versements antérieurs à ce champ.
+  workerTypeAtPayment?: string;
 }
 
 

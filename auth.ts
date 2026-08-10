@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import type express from 'express';
 import { resolveCompanyId, supabase, supabaseEnabled } from './db.js';
+import { MAX_COMPANY_USERS } from './companyLimits.js';
 
 export type AppRole = 'admin' | 'secretary' | 'accountant' | 'employee';
 
@@ -239,17 +240,34 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
   if (!LOGIN_HANDLE_RE.test(loginHandle) || !PIN_RE.test(nip)) return { ok: false, reason: 'invalid' };
 
   const companyId = await resolveCompanyId();
+  // On demande une ligne de plus que le plafond : si elle revient, c'est que la
+  // compagnie dépasse ce que cette recherche sait couvrir, et un employé
+  // pourrait être hors de portée sans qu'on le sache.
   const { data: users, error } = await supabase
     .from('app_users')
     .select('id, full_name, role, company_id, access_code_hash, is_active')
     .eq('company_id', companyId)
     .eq('is_active', true)
-    .limit(250);
+    .limit(MAX_COMPANY_USERS + 1);
   const submittedHandle = Buffer.from(loginHandle);
   const user = (users || []).find(candidate => {
     const expectedHandle = Buffer.from(createLoginHandle(companyId, String(candidate.id)));
     return expectedHandle.length === submittedHandle.length && crypto.timingSafeEqual(expectedHandle, submittedHandle);
   });
+
+  // Compte introuvable ET liste tronquée : on ne sait pas si le NIP est faux ou
+  // si la personne était simplement hors de portée. Répondre « NIP incorrect »
+  // serait une accusation sans preuve — et enverrait l'employé refaire son NIP
+  // pour rien. On déclare l'authentification indisponible, ce que le client
+  // affiche comme un problème de service et non comme une faute de l'employé.
+  if (!user && (users || []).length > MAX_COMPANY_USERS) {
+    console.error(
+      `[auth] Compagnie ${companyId} : plus de ${MAX_COMPANY_USERS} comptes actifs. ` +
+      'La recherche de connexion est tronquée; relevez MAX_COMPANY_USERS.'
+    );
+    return { ok: false, reason: 'unavailable' };
+  }
+
   if (error || !user) return { ok: false, reason: 'invalid' };
   if (user.is_active === false) return { ok: false, reason: 'inactive' };
 
