@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import useAppStore from '../store';
 import type { Project, ProjectTask, ProjectTool } from '../types';
+import { checkProjectClosure } from '../invoiceCompliance';
 
 const ProjectTasksAndTools = lazy(() => import('./ProjectTasksAndTools'));
 const ProjectPhotoGallery = lazy(() => import('./ProjectPhotoGallery'));
@@ -38,6 +39,8 @@ export default function ProjectDirectoryManager() {
     employees,
     activeEmployee,
     currentLanguage,
+    punchSessions,
+    invoices,
     updateProject,
     deleteProject
   } = useAppStore();
@@ -309,7 +312,17 @@ export default function ProjectDirectoryManager() {
         </div>
       )}
 
-      {editingProjectId && editForm && (
+      {editingProjectId && editForm && (() => {
+        const editedProject = projects.find(item => item.id === editingProjectId);
+        // On mesure sur le chantier enregistré, pas sur le brouillon du
+        // formulaire : cocher une tâche ne se fait pas ici, et l'état affiché
+        // doit refléter la réalité du chantier.
+        const closure = checkProjectClosure(
+          editedProject || { ...editForm, id: editingProjectId, tasks: [], tools: [] } as unknown as Project,
+          punchSessions,
+          invoices
+        );
+        return (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black/85 p-2 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label={isFR ? 'Modifier le chantier' : 'Edit project'}>
           <div className="my-4 max-h-[94dvh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-orange-500/30 bg-[#151820] shadow-2xl">
             <header className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-800 bg-[#151820]/95 px-4 py-4 backdrop-blur sm:px-6">
@@ -351,9 +364,46 @@ export default function ProjectDirectoryManager() {
                 <select value={editForm.status} onChange={event => setEditForm({ ...editForm, status: event.target.value as Project['status'] })} className="min-h-11 w-full rounded-xl border border-gray-700 bg-gray-950 px-3 text-base text-white outline-none focus:border-orange-500">
                   <option value="active">{isFR ? 'Actif' : 'Active'}</option>
                   <option value="on-hold">{isFR ? 'En attente' : 'On hold'}</option>
-                  <option value="completed">{isFR ? 'Terminé' : 'Completed'}</option>
+                  <option value="completed" disabled={!closure.ready}>
+                    {isFR ? 'Terminé' : 'Completed'}
+                    {closure.ready ? '' : (isFR ? ' — chantier pas prêt' : ' — site not ready')}
+                  </option>
                 </select>
               </label>
+
+              {/* Un chantier ne se ferme pas tant qu'il reste du travail
+                  déclaré : les tâches non cochées empêchent aussi la
+                  facturation, et un pointage encore ouvert signifie que
+                  quelqu'un est peut-être toujours sur place. */}
+              {!closure.ready && (
+                <div className="space-y-1.5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 md:col-span-2" role="status">
+                  <p className="text-xs font-black text-amber-200">
+                    {isFR ? 'Ce chantier ne peut pas encore être terminé' : 'This site cannot be completed yet'}
+                  </p>
+                  {closure.openTasks.length > 0 && (
+                    <p className="text-[11px] text-amber-200/85">
+                      {isFR
+                        ? `${closure.openTasks.length} tâche${closure.openTasks.length > 1 ? 's' : ''} encore ouverte${closure.openTasks.length > 1 ? 's' : ''} : ${closure.openTasks.map(task => task.text).join(' · ')}`
+                        : `${closure.openTasks.length} task${closure.openTasks.length > 1 ? 's' : ''} still open: ${closure.openTasks.map(task => task.text).join(' · ')}`}
+                    </p>
+                  )}
+                  {closure.openPunches.length > 0 && (
+                    <p className="text-[11px] text-amber-200/85">
+                      {isFR
+                        ? `Pointage encore en cours : ${closure.openPunches.map(punch => punch.employeeName).join(', ')}`
+                        : `Punch still running: ${closure.openPunches.map(punch => punch.employeeName).join(', ')}`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {closure.ready && closure.draftInvoices.length > 0 && (
+                <p className="rounded-xl border border-gray-700 bg-gray-950 p-3 text-[11px] text-gray-300 md:col-span-2">
+                  {isFR
+                    ? `${closure.draftInvoices.length} facture(s) encore au brouillon sur ce chantier. La fermeture reste possible, mais le travail n'aura pas été facturé.`
+                    : `${closure.draftInvoices.length} invoice(s) still in draft on this site. Closing stays possible, but the work will not have been invoiced.`}
+                </p>
+              )}
 
               <div className="flex flex-wrap gap-2 md:col-span-2">
                 <button type="button" onClick={capturePosition} className="min-h-11 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 text-sm font-black text-cyan-200 hover:bg-cyan-500/20">{isFR ? 'Utiliser ma position actuelle' : 'Use my current location'}</button>
@@ -401,7 +451,8 @@ export default function ProjectDirectoryManager() {
             </footer>
           </div>
         </div>
-      )}
+        );
+      })()}
     </section>
   );
 }
