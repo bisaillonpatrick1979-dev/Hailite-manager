@@ -37,6 +37,7 @@ const ClientDocumentsManager = lazy(() => import('./components/ClientDocumentsMa
 const CatalogueManager = lazy(() => import('./components/CatalogueManager'));
 const AccountingExport = lazy(() => import('./components/AccountingExport'));
 const CrewScheduleCalendar = lazy(() => import('./components/CrewScheduleCalendar'));
+const PunchApprovalPanel = lazy(() => import('./components/PunchApprovalPanel'));
 const MyScheduleStrip = lazy(() => import('./components/MyScheduleStrip'));
 const LeadPipeline = lazy(() => import('./components/LeadPipeline'));
 const ProjectPhotoGallery = lazy(() => import('./components/ProjectPhotoGallery'));
@@ -121,7 +122,8 @@ export default function App() {
     addInventoryItem, updateInventoryItem,
     deleteInventoryItem, addSupplierOrder, updateSupplierOrder, addClient, updateClient,
     deleteClient, updateCompanyInfo, resolveHRAlert, startPunchSession, pausePunchSession,
-    resumePunchSession, stopPunchSession, generateDraftInvoiceForEmployee, updateInvoice,
+    resumePunchSession, stopPunchSession, correctPunchSession, approvePunchSession,
+    generateDraftInvoiceForEmployee, updateInvoice,
     isOnboarded, weeklyGoals, motivationTeams, updateMotivationTeam,
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
     personalExpenses, addPersonalExpense, deletePersonalExpense,
@@ -2459,6 +2461,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       </div>
 
                     </div>
+
+                    {/* Validation administrative des heures : corriger un
+                        pointage erroné et l'approuver avant qu'il alimente la
+                        paie et la facturation. */}
+                    <Suspense fallback={<LazySectionFallback />}>
+                      <PunchApprovalPanel
+                        punches={punchSessions}
+                        currentLanguage={currentLanguage}
+                        dateLocale={dateLocale}
+                        money={money}
+                        onCorrect={correctPunchSession}
+                        onApprove={approvePunchSession}
+                      />
+                    </Suspense>
 
                     {/* Historical Punches list */}
                     <div className="bg-[#16191F] border border-gray-800 rounded-xl p-5">

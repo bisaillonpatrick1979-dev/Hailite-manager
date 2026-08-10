@@ -416,7 +416,11 @@ export function punchToRow(p: PunchSession, companyId?: string) {
     start_time: p.startTime, end_time: p.endTime, paused_at: p.pausedAt, total_pause_minutes: p.totalPauseMinutes,
     within_geofence: p.withinGeofence, attempted_outside_geofence: p.attemptedOutsideGeofence || false,
     outside_details: p.outsideDetails, revenue: p.revenue, total_worked_hours: p.totalWorkedHours,
-    surface_materials: p.surfaceMaterials || null
+    surface_materials: p.surfaceMaterials || null,
+    // Validation administrative et piste d'audit des corrections d'heures
+    approval_status: p.approvalStatus || 'pending',
+    approved_by: p.approvedById || null, approved_by_name: p.approvedByName || null,
+    approved_at: p.approvedAt || null, corrections: p.corrections || null
   };
 }
 
@@ -427,7 +431,11 @@ export function rowToPunch(r: any): PunchSession {
     endTime: r.end_time, pausedAt: r.paused_at, totalPauseMinutes: r.total_pause_minutes || 0,
     withinGeofence: r.within_geofence ?? true, attemptedOutsideGeofence: r.attempted_outside_geofence || false,
     outsideDetails: r.outside_details || undefined, surfaceMaterials: r.surface_materials || undefined,
-    revenue: r.revenue || 0, totalWorkedHours: r.total_worked_hours ?? undefined
+    revenue: r.revenue || 0, totalWorkedHours: r.total_worked_hours ?? undefined,
+    approvalStatus: r.approval_status || 'pending',
+    approvedById: r.approved_by || undefined, approvedByName: r.approved_by_name || undefined,
+    approvedAt: r.approved_at || undefined,
+    corrections: Array.isArray(r.corrections) ? r.corrections : undefined
   };
 }
 

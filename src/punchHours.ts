@@ -19,6 +19,34 @@ export interface PunchDaySlice {
   hours: number;    // heures travaillées imputées à cette journée
 }
 
+/**
+ * Heures travaillées et montant d'un pointage fermé.
+ * Source unique de la formule : l'arrêt du pointage et la correction
+ * administrative doivent produire exactement le même résultat, sinon corriger
+ * une minute pourrait changer le montant pour une autre raison.
+ */
+export function recomputePunchTotals(punch: PunchSession): { totalWorkedHours: number; revenue: number } {
+  if (!punch.endTime) return { totalWorkedHours: 0, revenue: 0 };
+  const start = new Date(punch.startTime).getTime();
+  const end = new Date(punch.endTime).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return { totalWorkedHours: 0, revenue: 0 };
+
+  const elapsedHours = Math.max(0, (end - start) / 3600000);
+  const pauseHours = Math.max(0, (punch.totalPauseMinutes || 0) / 60);
+  const totalWorkedHours = Number(Math.max(0, elapsedHours - pauseHours).toFixed(2));
+
+  let revenue = 0;
+  if (punch.payMode === 'horaire') {
+    revenue = Number((totalWorkedHours * punch.rate).toFixed(2));
+  } else if (punch.payMode === 'forfait') {
+    revenue = punch.rate;
+  } else if (punch.payMode === 'surface') {
+    revenue = Number(((punch.surfaceMaterials || [])
+      .reduce((sum, material) => sum + material.quantity * material.unitPrice, 0)).toFixed(2));
+  }
+  return { totalWorkedHours, revenue };
+}
+
 /** Instant de fin retenu : la fin réelle, ou maintenant si le pointage est ouvert. */
 function effectiveEnd(punch: PunchSession, now: Date): Date {
   return punch.endTime ? new Date(punch.endTime) : now;

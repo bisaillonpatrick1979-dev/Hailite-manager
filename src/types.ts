@@ -106,6 +106,25 @@ export interface SurfaceMaterialInput {
   emoji: string;
 }
 
+// Étape de validation administrative d'un pointage.
+// « pending »   : fermé par le travailleur, pas encore vérifié par le bureau.
+// « corrected » : les heures ont été rectifiées par la gestion.
+// « approved »  : vérifié, sert de base à la paie et à la facturation.
+export type PunchApprovalStatus = 'pending' | 'corrected' | 'approved';
+
+// Piste d'audit : chaque modification d'heures ou d'état est horodatée avec
+// son auteur. Indispensable pour vendre l'application à d'autres entrepreneurs
+// — et pour qu'un employé puisse contester une correction.
+export interface PunchCorrection {
+  at: string;        // ISO
+  byId: string;
+  byName: string;
+  field: 'startTime' | 'endTime' | 'pauseMinutes' | 'approval';
+  before: string;
+  after: string;
+  note?: string;
+}
+
 export interface PunchSession {
   id: string;
   employeeId: string;
@@ -124,6 +143,13 @@ export interface PunchSession {
   surfaceMaterials?: SurfaceMaterialInput[];
   revenue: number;
   totalWorkedHours?: number;
+  // Validation administrative. Absent = « pending » (pointages d'avant la
+  // mise en place de la validation, traités comme non encore vérifiés).
+  approvalStatus?: PunchApprovalStatus;
+  approvedById?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  corrections?: PunchCorrection[];
 }
 
 export interface Invoice {
