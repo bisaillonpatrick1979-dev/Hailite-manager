@@ -18,6 +18,7 @@ import useAppStore from './store';
 import { authHeaders } from './apiClient';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { apiFetch } from './runtimeConfig';
+import { isInLocalMonth, localDateKey, localMonthKey } from './dateKeys';
 import { Camera, Check, Download, LogOut, Mic, Send, Volume2, VolumeX, X } from 'lucide-react';
 
 interface ChatEntry {
@@ -155,12 +156,12 @@ export default function AssistantApp() {
   // ---- de NIP, NAS/SIN, clés API ni coordonnées bancaires) -------------------
   const buildAppContext = (): string => {
     const now = new Date();
-    const monthPrefix = now.toISOString().slice(0, 7);
-    const inMonth = (dateStr?: string | null) => !!dateStr && dateStr.startsWith(monthPrefix);
+    const monthPrefix = localMonthKey(now);
+    const inMonth = (dateStr?: string | null) => isInLocalMonth(dateStr, monthPrefix);
     const monthPunches = punchSessions.filter(p => inMonth(p.startTime) && p.endTime);
 
     const data = {
-      dateDuJour: now.toISOString().split('T')[0],
+      dateDuJour: localDateKey(now),
       moisCourant: monthPrefix,
       financesDuMois: {
         revenusClientsEncaisses: Number(documents.filter(d => d.type === 'invoice')

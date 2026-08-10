@@ -20,8 +20,8 @@ test('la progression de formation survit, sans ouvrir la porte aux données mét
   // Des étapes de tutoriel cochées ne contiennent ni donnée personnelle ni
   // donnée d'entreprise : elles doivent tenir d'une session à l'autre, sinon la
   // formation redemande de tout refaire à chaque reconnexion.
-  assert.equal(browserStorageValue('gcp_help_progress_28dedef5', ['first-login']).allowed, true);
-  assert.equal(isSafeStorageKey('gcp_help_progress_abc'), true);
+  assert.equal(browserStorageValue('gcp_help_progress_28dedef5_employee_v2', ['first-login']).allowed, true);
+  assert.equal(isSafeStorageKey('gcp_help_progress_abc_admin_v2'), true);
 
   // Le préfixe ne doit pas devenir une échappatoire pour le reste.
   assert.equal(isSafeStorageKey('gcp_help_progress'), false);

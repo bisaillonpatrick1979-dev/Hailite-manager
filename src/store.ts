@@ -310,8 +310,8 @@ const initialExpenses: ExpenseRecord[] = [
 ];
 
 const initialPayrollPayments: PayrollPayment[] = [
-  { id: 'pay-1', employeeId: 'emp-2', employeeName: 'Mathieu Côté', period: '2026-06', amount: 2280.00, status: 'paid', date: '2026-06-01' },
-  { id: 'pay-2', employeeId: 'emp-1', employeeName: 'Patrick Bisaillon', period: '2026-06', amount: 3600.00, status: 'approved', date: '2026-06-02' }
+  { id: 'pay-1', employeeId: 'emp-2', employeeName: 'Mathieu Côté', period: '2026-06', amount: 2280.00, status: 'paid', date: '2026-06-01', workerTypeAtPayment: 'salaried' },
+  { id: 'pay-2', employeeId: 'emp-1', employeeName: 'Patrick Bisaillon', period: '2026-06', amount: 3600.00, status: 'approved', date: '2026-06-02', workerTypeAtPayment: 'salaried' }
 ];
 
 const demoCompanyInfo: CompanyInfo = {

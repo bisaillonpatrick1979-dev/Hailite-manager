@@ -13,8 +13,7 @@ import useAppStore from '../store';
 import { translations } from '../translations';
 import type { ShiftAssignment } from '../types';
 import { CalendarDays, ChevronLeft, ChevronRight, Plus, UserMinus, X } from 'lucide-react';
-
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+import { localDateKey } from '../dateKeys';
 
 // Lundi de la semaine contenant la date donnée
 function mondayOf(date: Date): Date {
@@ -37,7 +36,7 @@ export default function CrewScheduleCalendar() {
   const isManager = activeEmployee?.role === 'admin' || activeEmployee?.role === 'secretary';
 
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
-  const [selectedDay, setSelectedDay] = useState(() => isoDay(new Date()));
+  const [selectedDay, setSelectedDay] = useState(() => localDateKey());
   const [assignFor, setAssignFor] = useState<string | null>(null); // projectId
 
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => {
@@ -91,7 +90,7 @@ export default function CrewScheduleCalendar() {
     const next = new Date(weekStart);
     next.setDate(next.getDate() + delta * 7);
     setWeekStart(next);
-    setSelectedDay(isoDay(next));
+    setSelectedDay(localDateKey(next));
   };
 
   return (
@@ -115,7 +114,7 @@ export default function CrewScheduleCalendar() {
             {weekDays[0].toLocaleDateString(dateLocale, { day: 'numeric', month: 'short' })} —{' '}
             {weekDays[6].toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', year: 'numeric' })}
           </p>
-          <button type="button" onClick={() => { const m = mondayOf(new Date()); setWeekStart(m); setSelectedDay(isoDay(new Date())); }}
+          <button type="button" onClick={() => { const m = mondayOf(new Date()); setWeekStart(m); setSelectedDay(localDateKey()); }}
             className="text-[10px] font-mono uppercase text-orange-400 mt-0.5">
             {t.schedThisWeek}
           </button>
@@ -130,9 +129,9 @@ export default function CrewScheduleCalendar() {
           les journées encore vides. */}
       <div className="grid grid-cols-7 gap-1.5">
         {weekDays.map(d => {
-          const iso = isoDay(d);
+          const iso = localDateKey(d);
           const count = countFor(iso);
-          const isToday = iso === isoDay(new Date());
+          const isToday = iso === localDateKey();
           const selected = iso === selectedDay;
           return (
             <button key={iso} type="button" onClick={() => setSelectedDay(iso)}

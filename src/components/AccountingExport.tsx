@@ -13,7 +13,12 @@ import { useCallback, useMemo, useState } from 'react';
 import useAppStore from '../store';
 import { fmt, translations } from '../translations';
 import { AlertTriangle, Download, FileSpreadsheet } from 'lucide-react';
-import { reportingThreshold, summarizeSubcontractorPayments } from '../accountingSubcontractors';
+import {
+  reportingThreshold,
+  reportingYearForPeriod,
+  summarizeSubcontractorPayments
+} from '../accountingSubcontractors';
+import { localDateKey, localMonthKey } from '../dateKeys';
 
 type Period = 'thisMonth' | 'lastMonth' | 'thisYear' | 'lastYear' | 'all' | 'custom';
 
@@ -63,7 +68,7 @@ export default function AccountingExport() {
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth();
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const iso = (d: Date) => localDateKey(d);
     switch (period) {
       case 'thisMonth': return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
       case 'lastMonth': return { from: iso(new Date(y, m - 1, 1)), to: iso(new Date(y, m, 0)) };
@@ -76,7 +81,7 @@ export default function AccountingExport() {
 
   const inRange = useCallback((date?: string | null) => {
     if (!date) return false;
-    const d = String(date).slice(0, 10);
+    const d = localDateKey(date);
     return d >= range.from && d <= range.to;
   }, [range.from, range.to]);
 
@@ -84,6 +89,7 @@ export default function AccountingExport() {
   const num = (v: unknown) => Number(v || 0).toFixed(2);
   const stamp = `${range.from}_${range.to}`;
   const slug = (companyInfo.name || 'hailite').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const exportCurrency = String(companyInfo.currency || (companyInfo.country === 'US' ? 'USD' : 'CAD')).toUpperCase();
 
   // ---------------------------------------------------------------------------
   // Jeux de données
@@ -110,21 +116,38 @@ export default function AccountingExport() {
   // Cumul des versements par sous-traitant : la pièce que le comptable réclame
   // pour le T5018 (Canada) ou le 1099-NEC (États-Unis), et la seule qui
   // manquait à cet export.
-  const threshold = useMemo(
-    () => reportingThreshold(companyInfo.country, Number(range.to.slice(0, 4)) || new Date().getFullYear()),
-    [companyInfo.country, range.to]
+  const reportingYear = useMemo(
+    () => reportingYearForPeriod(companyInfo.country, range.from, range.to),
+    [companyInfo.country, range.from, range.to]
   );
+  const threshold = useMemo(() => reportingThreshold(
+    companyInfo.country,
+    reportingYear ?? Number(localMonthKey().slice(0, 4))
+  ), [companyInfo.country, reportingYear]);
+  const thresholdIssue = !threshold
+    ? null
+    : reportingYear === null
+      ? 'period'
+      : threshold.amount === null
+        ? 'unknown'
+        : exportCurrency !== threshold.currency
+          ? 'currency'
+          : null;
+  const assessedThreshold = thresholdIssue === null ? threshold : null;
   const subcontractors = useMemo(
-    () => summarizeSubcontractorPayments(employees, periodPayroll, threshold ? threshold.amount : null),
-    [employees, periodPayroll, threshold]
+    () => summarizeSubcontractorPayments(employees, periodPayroll, assessedThreshold),
+    [employees, periodPayroll, assessedThreshold]
   );
 
   const exportSubcontractors = () => download(`${slug}_sous-traitants_${stamp}.csv`, buildCsv(
     [t.accColSubName, t.accColSubBusiness, t.accColSubTaxNumber, t.accColSubAddress,
-     t.accColSubPhone, t.accColSubPayments, t.accColSubTotal, t.accColSubThreshold],
+     t.accColSubPhone, t.accColSubPayments, t.accColSubTotal, t.accColCurrency,
+     t.accColSubThreshold, t.accColClassificationSource],
     subcontractors.rows.map(r => [
       r.name, r.businessName, r.taxNumber, r.address, r.phone,
-      r.paymentCount, num(r.total), r.meetsThreshold ? t.wordYes : t.wordNo
+      r.paymentCount, num(r.total), exportCurrency,
+      r.meetsThreshold === null ? t.accThresholdReview : r.meetsThreshold ? t.wordYes : t.wordNo,
+      r.classificationInferred ? t.accClassificationInferred : t.accClassificationSnapshot
     ]), sep));
 
   const exportSales = () => download(`${slug}_ventes_${stamp}.csv`, buildCsv(
@@ -154,7 +177,7 @@ export default function AccountingExport() {
   const exportHours = () => download(`${slug}_heures_${stamp}.csv`, buildCsv(
     [t.accColDate, t.accColEmployee, t.accColProject, t.accColHours, t.accColPayMode, t.accColLabourCost],
     periodPunches.map(p => [
-      String(p.startTime).slice(0, 10), p.employeeName, p.projectName || projectName(p.projectId),
+      localDateKey(p.startTime), p.employeeName, p.projectName || projectName(p.projectId),
       (p.totalWorkedHours || 0).toFixed(2), p.payMode, num(p.revenue)
     ]), sep));
 
@@ -173,7 +196,7 @@ export default function AccountingExport() {
     periodExpenses.forEach(e => { bucket(String(e.date).slice(0, 7)).expenses += (e.amount || 0) + (e.tax || 0); });
     periodPayroll.filter(p => p.status === 'paid')
       .forEach(p => { bucket(String(p.date).slice(0, 7)).payroll += p.amount || 0; });
-    periodPunches.forEach(p => { bucket(String(p.startTime).slice(0, 7)).hours += p.totalWorkedHours || 0; });
+    periodPunches.forEach(p => { bucket(localMonthKey(p.startTime)).hours += p.totalWorkedHours || 0; });
 
     const rows = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0]))
       .map(([month, v]) => [
@@ -269,6 +292,37 @@ export default function AccountingExport() {
                 count: subcontractors.unclassified.length,
                 names: subcontractors.unclassified.map(u => u.name || u.employeeId).join(', ')
               })}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {subcontractors.inferred.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-sky-500/40 bg-sky-500/10 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+          <div className="text-[11px] leading-relaxed text-sky-100">
+            <p className="font-black uppercase tracking-wide">{t.accInferredTitle}</p>
+            <p className="mt-1 font-bold">
+              {fmt(t.accInferredBody, {
+                count: subcontractors.inferred.reduce((sum, item) => sum + item.paymentCount, 0),
+                names: subcontractors.inferred.map(item => item.name || item.employeeId).join(', ')
+              })}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {thresholdIssue && threshold && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-violet-500/40 bg-violet-500/10 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-violet-300" />
+          <div className="text-[11px] leading-relaxed text-violet-100">
+            <p className="font-black uppercase tracking-wide">{t.accThresholdReviewTitle}</p>
+            <p className="mt-1 font-bold">
+              {thresholdIssue === 'period'
+                ? t.accThresholdPeriodBody
+                : thresholdIssue === 'currency'
+                  ? fmt(t.accThresholdCurrencyBody, { current: exportCurrency, required: threshold.currency })
+                  : fmt(t.accThresholdUnknownBody, { year: reportingYear || localMonthKey().slice(0, 4) })}
             </p>
           </div>
         </div>

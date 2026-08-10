@@ -148,7 +148,8 @@ function buildPayrollPayments(): PayrollPayment[] {
       amount: round2(group.amount * (contractor ? 1 : 1.06)),
       status: paymentDate > '2026-06-26' ? 'approved' : 'paid',
       date: paymentDate,
-      hours: round2(group.hours)
+      hours: round2(group.hours),
+      workerTypeAtPayment: contractor ? 'contractor' : 'salaried'
     });
   });
 
@@ -169,7 +170,8 @@ function buildPayrollPayments(): PayrollPayment[] {
         amount: round2(hours * employee.hourlyRate),
         status: payDate > '2026-06-26' ? 'approved' : 'paid',
         date: minDate(payDate, '2026-07-04'),
-        hours
+        hours,
+        workerTypeAtPayment: 'salaried'
       });
       start = addDays(start, step);
     }

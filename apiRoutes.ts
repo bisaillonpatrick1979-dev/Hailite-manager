@@ -20,6 +20,7 @@ import {
   createLoginHandle, hashPin, SESSION_COOKIE_NAME
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
+import { MAX_COMPANY_USERS, MAX_PROJECT_ASSIGNMENTS } from './src/projectLimits.js';
 
 // Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
 const KNOWN_TABLES = [
@@ -792,7 +793,7 @@ export function registerApiRoutes(app: express.Express): void {
         .from('app_users')
         .select('id, full_name, avatar, is_active')
         .eq('company_id', companyId)
-        .limit(250);
+        .limit(MAX_COMPANY_USERS);
       if (error) throw error;
       return res.json({
         enabled: true,
@@ -1027,7 +1028,7 @@ export function registerApiRoutes(app: express.Express): void {
     const tasks = Array.isArray(req.body?.tasks) ? req.body.tasks : [];
     const tools = Array.isArray(req.body?.tools) ? req.body.tools : [];
     const assignments = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
-    if (tasks.length > 500 || tools.length > 500 || assignments.length > 250) {
+    if (tasks.length > 500 || tools.length > 500 || assignments.length > MAX_PROJECT_ASSIGNMENTS) {
       return res.status(413).json({ error: 'Trop d’éléments à synchroniser' });
     }
     if (tasks.some((item: any) => typeof item?.title !== 'string' || item.title.length > 500) ||

@@ -62,7 +62,7 @@ jobs:
           result = {
               'testedAt': datetime.now(timezone.utc).isoformat(),
               'productionUrl': base,
-              'credentialsConfigured': bool(user_name and len(pin) == 4),
+              'credentialsConfigured': bool(user_name and len(pin) == 4 and pin.isdigit()),
               'providers': {}
           }
 
@@ -106,6 +106,15 @@ jobs:
           login_code_name = login.get('code') if isinstance(login, dict) else None
           if login_code == 200:
               diagnostic = 'Connexion réussie.'
+          elif not result['credentialsConfigured']:
+              missing = []
+              if not user_name:
+                  missing.append('AI_TEST_USER_NAME est vide')
+              if len(pin) != 4 or not pin.isdigit():
+                  missing.append('AI_TEST_PIN doit contenir exactement quatre chiffres')
+              diagnostic = 'Secrets GitHub incomplets ou invalides : ' + '; '.join(missing) + '.'
+          elif directory_code != 200:
+              diagnostic = f'Impossible de charger l’annuaire de production (HTTP {directory_code}).'
           elif not selected:
               diagnostic = (
                   'Aucun profil ne porte le nom AI_TEST_USER_NAME dans l’annuaire. '

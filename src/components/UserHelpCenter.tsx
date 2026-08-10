@@ -591,6 +591,11 @@ function localize(value: LocalizedText, language: 'FR' | 'EN'): string {
   return language === 'FR' ? value.fr : value.en;
 }
 
+// Incrémenter lorsque les étapes de démarrage changent. Le rôle fait partie de
+// la clé afin qu'un changement de permissions ne réutilise pas une formation
+// complétée pour un autre poste.
+const HELP_CHECKLIST_VERSION = 2;
+
 export default function UserHelpCenter({
   open,
   onClose,
@@ -610,7 +615,7 @@ export default function UserHelpCenter({
   // Conservée dans localStorage (préfixe autorisé par la politique de stockage,
   // voir securityStorage.ts) : la formation ne doit être suivie qu'une fois, pas
   // à chaque reconnexion.
-  const progressKey = `gcp_help_progress_${employeeId}`;
+  const progressKey = `gcp_help_progress_${employeeId}_${role}_v${HELP_CHECKLIST_VERSION}`;
 
   useEffect(() => {
     if (!open) return;

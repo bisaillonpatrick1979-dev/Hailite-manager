@@ -48,6 +48,18 @@ test('une lecture partie avant l’enregistrement n’efface pas l’accusé de 
   assert.equal(profile?.privacyNoticeVersion, ACCEPTED);
 });
 
+test('une lecture ancienne non vide ne remplace pas une acceptation plus récente', () => {
+  const stale = employee({
+    privacyNoticeVersion: '2025.01',
+    privacyNoticeAcknowledgedAt: '2025-01-02T08:00:00Z',
+    locationNoticeAcknowledgedAt: '2025-01-02T08:00:00Z'
+  });
+  const profile = resolveViewerProfile([stale], { userId: 'u1' }, 'admin', consented);
+  assert.equal(profile?.privacyNoticeVersion, ACCEPTED);
+  assert.equal(profile?.privacyNoticeAcknowledgedAt, '2026-08-09T21:37:37Z');
+  assert.equal(profile?.locationNoticeAcknowledgedAt, '2026-08-09T21:37:37Z');
+});
+
 test('un employé qui n’a jamais accepté voit bien l’avis', () => {
   const neverAccepted = employee({ id: 'u2', name: 'Alex Tremblay', role: 'employee' });
   const profile = resolveViewerProfile([neverAccepted], { userId: 'u2' }, 'employee', null);

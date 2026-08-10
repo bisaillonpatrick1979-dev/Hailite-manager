@@ -27,6 +27,7 @@ import {
 } from './regionsData';
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 import { canEmployeePunchProject, effectiveProjectAssignees, projectsAvailableForPunch } from './projectAccess';
+import { isInLocalMonth, isOnLocalDate, localDateKey, localMonthKey, monthOptions, offsetMonthKey } from './dateKeys';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -205,16 +206,43 @@ export default function App() {
   // heures du jour. Deux écrans, deux réponses, pour les mêmes données.
   // Calculé sur l'heure locale : en fin de soirée en Alberta, l'heure UTC est
   // déjà au lendemain et pourrait basculer de mois trop tôt.
-  const [statsMonth, setStatsMonth] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [statsMonth, setStatsMonth] = useState<string>(() => localMonthKey());
+  const [statsMonthFollowsCurrent, setStatsMonthFollowsCurrent] = useState(true);
+  const statsDemoWasActive = useRef(false);
   useEffect(() => {
-    if (!demoSandboxActive || !demoSandboxSummary) return;
-    setStatsMonth(demoSandboxSummary.latestStatsMonth);
-    setSyncFailure(null);
-    setCloudSyncing(false);
+    if (demoSandboxActive) {
+      statsDemoWasActive.current = true;
+      if (demoSandboxSummary) {
+        setStatsMonth(demoSandboxSummary.latestStatsMonth);
+        setStatsMonthFollowsCurrent(false);
+        setSyncFailure(null);
+        setCloudSyncing(false);
+      }
+      return;
+    }
+    if (statsDemoWasActive.current) {
+      statsDemoWasActive.current = false;
+      setStatsMonth(localMonthKey());
+      setStatsMonthFollowsCurrent(true);
+    }
   }, [demoSandboxActive, demoSandboxSummary]);
+  useEffect(() => {
+    if (demoSandboxActive || !statsMonthFollowsCurrent) return;
+    const refreshCurrentMonth = () => {
+      const currentMonth = localMonthKey();
+      setStatsMonth(value => value === currentMonth ? value : currentMonth);
+    };
+    const onVisibility = () => { if (!document.hidden) refreshCurrentMonth(); };
+    refreshCurrentMonth();
+    const interval = window.setInterval(refreshCurrentMonth, 60_000);
+    window.addEventListener('focus', refreshCurrentMonth);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshCurrentMonth);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [demoSandboxActive, statsMonthFollowsCurrent]);
   const [expandedEmployeeId, setExpandedEmployeeId] = useState<string | null>(null);
   const [teamCalendarEmployeeId, setTeamCalendarEmployeeId] = useState<string>('');
   const [statsSubTab, setStatsSubTab] = useState<'analytics' | 'payroll'>('analytics');
@@ -239,8 +267,8 @@ export default function App() {
 
   // Accounting management local inputs
   const [accountingViewMode, setAccountingViewMode] = useState<'expenses' | 'payroll'>('expenses');
-  const [newExpenseFormSetting, setNewExpenseFormSetting] = useState({ date: '2026-06-03', description: '', category: 'Materials', amount: 0, projectId: '' });
-  const [newPayrollFormSetting, setNewPayrollFormSetting] = useState({ date: '2026-06-03', employeeId: '', amount: 0, hours: 0, projectId: '', status: 'paid' });
+  const [newExpenseFormSetting, setNewExpenseFormSetting] = useState({ date: localDateKey(), description: '', category: 'Materials', amount: 0, projectId: '' });
+  const [newPayrollFormSetting, setNewPayrollFormSetting] = useState({ date: localDateKey(), employeeId: '', amount: 0, hours: 0, projectId: '', status: 'paid' });
 
   // Custom corporate payroll benefits simulation state
   const [simHourlyRate, setSimHourlyRate] = useState<number>(45);
@@ -775,8 +803,8 @@ export default function App() {
   // suivi du protocole d'actions que l'IA peut déclencher dans l'application.
   const buildAiAppContext = (): string => {
     const now = new Date();
-    const monthPrefix = now.toISOString().slice(0, 7); // "2026-07"
-    const inMonth = (dateStr?: string | null) => !!dateStr && dateStr.startsWith(monthPrefix);
+    const monthPrefix = localMonthKey(now);
+    const inMonth = (dateStr?: string | null) => isInLocalMonth(dateStr, monthPrefix);
 
     const monthPunches = punchSessions.filter(p => inMonth(p.startTime) && p.endTime);
     const punchStatsByEmployee = employees.map(emp => {
@@ -802,7 +830,7 @@ export default function App() {
     const coutMainOeuvreCeMois = monthPunches.reduce((s, p) => s + (p.revenue || 0), 0);
 
     const data = {
-      dateDuJour: now.toISOString().split('T')[0],
+      dateDuJour: localDateKey(now),
       moisCourant: monthPrefix,
       financesDuMois: {
         revenusClientsEncaisses: Number(revenusClientsCeMois.toFixed(2)),
@@ -2008,7 +2036,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.hoursWorkedToday}</p>
                         <p className="text-lg font-bold text-white mt-1">
                           {punchSessions
-                            .filter(p => p.employeeId === activeEmployee.id && p.startTime.startsWith(new Date().toISOString().split('T')[0]))
+                            .filter(p => p.employeeId === activeEmployee.id && isOnLocalDate(p.startTime, localDateKey()))
                             .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0).toFixed(2)}h
                         </p>
                       </div>
@@ -2017,7 +2045,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <p className="text-[9px] uppercase font-bold text-gray-500">{t.earningsToday}</p>
                         <p className="text-lg font-bold text-green-400 mt-1">
                           {punchSessions
-                            .filter(p => p.employeeId === activeEmployee.id && p.startTime.startsWith(new Date().toISOString().split('T')[0]))
+                            .filter(p => p.employeeId === activeEmployee.id && isOnLocalDate(p.startTime, localDateKey()))
                             .reduce((sum, p) => sum + p.revenue, 0).toFixed(2)}$
                         </p>
                       </div>
@@ -3270,20 +3298,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             {/* -------------------- VIEW CONTAINER : STATS -------------------- */}
             {activeTab === 'stats' && (() => {
               // --- HELPERS & LOGIC WITHIN MOUNTED SCOPE OF STATS ---
-              const getOffsetMonth = (ym: string, offset: number): string => {
-                const [y, m] = ym.split('-').map(Number);
-                const date = new Date(y, m - 1 + offset, 1);
-                const ny = date.getFullYear();
-                const nm = date.getMonth() + 1;
-                return `${ny}-${String(nm).padStart(2, '0')}`;
-              };
-
               const getMetricsForPeriod = (ym: string) => {
-                const ymSessions = punchSessions.filter(p => p.endTime !== null && p.startTime.startsWith(ym));
+                const ymSessions = punchSessions.filter(p => p.endTime !== null && isInLocalMonth(p.startTime, ym));
                 const revenue = ymSessions.reduce((sum, p) => sum + p.revenue, 0);
                 const hours = ymSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
                 const sessionsCount = ymSessions.length;
-                const uniqueDays = new Set(ymSessions.map(p => p.startTime.slice(0, 10))).size;
+                const uniqueDays = new Set(ymSessions.map(p => localDateKey(p.startTime))).size;
                 return { revenue, hours, sessionsCount, uniqueDays, sessions: ymSessions };
               };
 
@@ -3293,11 +3313,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               };
 
               const currentMetrics = getMetricsForPeriod(statsMonth);
-              const lastMonthMetrics = getMetricsForPeriod(getOffsetMonth(statsMonth, -1));
-              const lastYearMetrics = getMetricsForPeriod(getOffsetMonth(statsMonth, -12));
+              const lastMonthMetrics = getMetricsForPeriod(offsetMonthKey(statsMonth, -1));
+              const lastYearMetrics = getMetricsForPeriod(offsetMonthKey(statsMonth, -12));
 
               // Sparklines calculations
-              const sparkMonths = Array.from({ length: 6 }).map((_, i) => getOffsetMonth(statsMonth, -5 + i));
+              const sparkMonths = Array.from({ length: 6 }).map((_, i) => offsetMonthKey(statsMonth, -5 + i));
               const revSpark = sparkMonths.map(ym => getMetricsForPeriod(ym).revenue);
               const hrsSpark = sparkMonths.map(ym => getMetricsForPeriod(ym).hours);
               const sesSpark = sparkMonths.map(ym => getMetricsForPeriod(ym).sessionsCount);
@@ -3478,23 +3498,32 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                     </div>
                     <div className="flex items-center gap-2 self-end sm:self-auto">
                       <button
-                        onClick={() => setStatsMonth(getOffsetMonth(statsMonth, -1))}
+                        onClick={() => {
+                          setStatsMonth(offsetMonthKey(statsMonth, -1));
+                          setStatsMonthFollowsCurrent(false);
+                        }}
                         className="p-2 bg-gray-950 text-gray-400 hover:text-white rounded-lg border border-gray-800 hover:bg-gray-850 cursor-pointer"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
                       <select
                         value={statsMonth}
-                        onChange={(e) => setStatsMonth(e.target.value)}
+                        onChange={(e) => {
+                          setStatsMonth(e.target.value);
+                          setStatsMonthFollowsCurrent(false);
+                        }}
                         className="bg-gray-950 text-white font-mono text-xs p-2 rounded-lg border border-gray-800 cursor-pointer focus:outline-none focus:ring-1 focus:ring-orange-500"
                       >
-                        {["2026-12", "2026-11", "2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01", "2025-12", "2025-11", "2025-10", "2025-09"].map(m => {
+                        {monthOptions(statsMonth).map(m => {
                           const [year, col] = m.split('-');
                           return <option key={m} value={m}>{`${t.monthNames[Number(col) - 1]} ${year}`}</option>;
                         })}
                       </select>
                       <button
-                        onClick={() => setStatsMonth(getOffsetMonth(statsMonth, 1))}
+                        onClick={() => {
+                          setStatsMonth(offsetMonthKey(statsMonth, 1));
+                          setStatsMonthFollowsCurrent(false);
+                        }}
                         className="p-2 bg-gray-950 text-gray-400 hover:text-white rounded-lg border border-gray-800 hover:bg-gray-850 cursor-pointer"
                       >
                         <ChevronRight className="w-4 h-4" />
@@ -3847,7 +3876,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                   {/* -------------------- SIMPLIFIED ACCOUNTING SUMMARY PANEL (ADMIN ONLY) -------------------- */}
                   {activeEmployee && activeEmployee.role === 'admin' && (() => {
-                    const filteredInvoices = documents.filter(d => d.type === 'invoice' && d.date.startsWith(statsMonth));
+                    const filteredInvoices = documents.filter(d => d.type === 'invoice' && isInLocalMonth(d.date, statsMonth));
                     const totalInvoiceBilled = filteredInvoices.reduce((sum, i) => sum + i.total, 0);
                     const totalInvoiceSubtotal = filteredInvoices.reduce((sum, i) => sum + i.subtotal, 0);
                     const totalInvoicePaid = filteredInvoices.reduce((sum, i) => {
@@ -3855,10 +3884,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       return sum + sumPaid;
                     }, 0);
 
-                    const filteredExpenses = expenses.filter(e => e.date.startsWith(statsMonth));
+                    const filteredExpenses = expenses.filter(e => isInLocalMonth(e.date, statsMonth));
                     const totalExpenseAmt = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-                    const filteredPayroll = payrollPayments.filter(p => p.date.startsWith(statsMonth));
+                    const filteredPayroll = payrollPayments.filter(p => isInLocalMonth(p.date, statsMonth));
                     const totalPayrollPaid = filteredPayroll.reduce((sum, p) => sum + p.amount, 0);
                     const cnesstProvision = totalPayrollPaid * 0.055;
 
@@ -4011,12 +4040,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       }
 
                       const empHours = punchSessions
-                        .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
+                        .filter(p => p.employeeId === emp.id && p.endTime !== null && isInLocalMonth(p.startTime, statsMonth))
                         .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
 
                       const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                       const isContractor = emp.workerType === 'contractor';
-                      const personalPayments = payrollPayments.filter(p => p.employeeId === emp.id && (p.period === 'Mois ' + statsMonth || p.date.startsWith(statsMonth)));
+                      const personalPayments = payrollPayments.filter(p => p.employeeId === emp.id && (p.period === 'Mois ' + statsMonth || isInLocalMonth(p.date, statsMonth)));
 
                       return (
                         <div className="space-y-6 text-left">
@@ -4053,7 +4082,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">{t.compiledFieldHours}</span>
                                 <p className="text-2xl font-black text-orange-500 font-mono">{empHours.toFixed(1)} h</p>
-                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth)).length })}</span>
+                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && isInLocalMonth(p.startTime, statsMonth)).length })}</span>
                               </div>
 
                               <div className="space-y-2.5 pt-2 font-mono text-xs text-left">
@@ -4213,7 +4242,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             <p className="text-lg font-mono text-white font-black">
                               {employees.reduce((sum, e) => {
                                 const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
+                                  .filter(p => p.employeeId === e.id && p.endTime !== null && isInLocalMonth(p.startTime, statsMonth))
                                   .reduce((s, p) => s + (p.totalWorkedHours || 0), 0);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).net;
                               }, 0).toFixed(2)} $
@@ -4227,7 +4256,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               {(employees.reduce((sum, e) => {
                                 if (e.workerType === 'contractor') return sum;
                                 const hrs = punchSessions
-                                  .filter(p => p.employeeId === e.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
+                                  .filter(p => p.employeeId === e.id && p.endTime !== null && isInLocalMonth(p.startTime, statsMonth))
                                   .reduce((s, p) => s + (p.totalWorkedHours || 0), 0);
                                 return sum + calculateDetailedPayroll(e, companyInfo, hrs).gross;
                               }, 0) * 0.055).toFixed(2)} $
@@ -4238,9 +4267,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <div className="p-4 bg-gray-950 border border-gray-850 rounded-xl text-left space-y-1">
                             <span className="text-[9.5px] text-gray-400 uppercase font-mono block">{t.recordedPayments}</span>
                             <p className="text-lg font-mono text-emerald-400 font-black">
-                              {payrollPayments.filter(p => p.period === 'Mois ' + statsMonth || p.date.startsWith(statsMonth)).reduce((sum, p) => sum + p.amount, 0).toFixed(2)} $
+                              {payrollPayments.filter(p => p.period === 'Mois ' + statsMonth || isInLocalMonth(p.date, statsMonth)).reduce((sum, p) => sum + p.amount, 0).toFixed(2)} $
                             </p>
-                            <span className="text-[9px] text-gray-500 block font-sans">{payrollPayments.filter(p => p.period === 'Mois ' + statsMonth || p.date.startsWith(statsMonth)).length} {t.checksIssued}</span>
+                            <span className="text-[9px] text-gray-500 block font-sans">{payrollPayments.filter(p => p.period === 'Mois ' + statsMonth || isInLocalMonth(p.date, statsMonth)).length} {t.checksIssued}</span>
                           </div>
                         </div>
 
@@ -4265,12 +4294,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               <tbody className="divide-y divide-gray-850">
                                 {employees.map(emp => {
                                   const empHours = punchSessions
-                                    .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
+                                    .filter(p => p.employeeId === emp.id && p.endTime !== null && isInLocalMonth(p.startTime, statsMonth))
                                     .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
 
                                   const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                                   const isContractor = emp.workerType === 'contractor';
-                                  const alreadyPaid = payrollPayments.some(p => p.employeeId === emp.id && (p.period === 'Mois ' + statsMonth || p.date.startsWith(statsMonth)));
+                                  const alreadyPaid = payrollPayments.some(p => p.employeeId === emp.id && (p.period === 'Mois ' + statsMonth || isInLocalMonth(p.date, statsMonth)));
 
                                   return (
                                     <tr key={emp.id} className="hover:bg-gray-900 border-b border-gray-900 transition-all font-mono">
@@ -4331,12 +4360,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           if (!emp) return null;
 
                           const empHours = punchSessions
-                            .filter(p => p.employeeId === emp.id && p.endTime !== null && p.startTime.startsWith(statsMonth))
+                            .filter(p => p.employeeId === emp.id && p.endTime !== null && isInLocalMonth(p.startTime, statsMonth))
                             .reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
 
                           const pay = calculateDetailedPayroll(emp, companyInfo, empHours);
                           const isContractor = emp.workerType === 'contractor';
-                          const alreadyPaid = payrollPayments.some(p => p.employeeId === emp.id && (p.period === 'Mois ' + statsMonth || p.date.startsWith(statsMonth)));
+                          const alreadyPaid = payrollPayments.some(p => p.employeeId === emp.id && (p.period === 'Mois ' + statsMonth || isInLocalMonth(p.date, statsMonth)));
 
                           return (
                             <div className="p-5 bg-gray-900 border border-gray-850 rounded-2xl space-y-4 font-mono text-xs">
@@ -4422,13 +4451,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                   <button
                                     onClick={() => {
                                       addPayrollPayment({
-                                        date: new Date().toISOString().slice(0, 10),
+                                        date: localDateKey(),
                                         employeeId: emp.id,
                                         employeeName: emp.name,
                                         amount: pay.net,
                                         hours: empHours,
                                         period: 'Mois ' + statsMonth,
-                                        status: 'paid'
+                                        status: 'paid',
+                                        workerTypeAtPayment: emp.workerType === 'salaried' || emp.workerType === 'contractor'
+                                          ? emp.workerType
+                                          : undefined
                                       });
                                       setPayrollFocusEmployeeId('');
                                       alert(fmt(t.transferIssuedAlert, { amt: pay.net.toFixed(2), name: emp.name }));
@@ -6569,9 +6601,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                     hours: Number(newPayrollFormSetting.hours || 0),
                                     projectId: newPayrollFormSetting.projectId || undefined,
                                     period: 'Mois ' + newPayrollFormSetting.date.substring(0, 7),
-                                    status: 'paid'
+                                    status: 'paid',
+                                    workerTypeAtPayment: targetEmployee?.workerType === 'salaried' || targetEmployee?.workerType === 'contractor'
+                                      ? targetEmployee.workerType
+                                      : undefined
                                   });
-                                  setNewPayrollFormSetting({ date: '2026-06-03', employeeId: '', amount: 0, hours: 0, projectId: '', status: 'paid' });
+                                  setNewPayrollFormSetting({ date: localDateKey(), employeeId: '', amount: 0, hours: 0, projectId: '', status: 'paid' });
                                   alert(t.payrollSavedAlert);
                                 }}
                                 className="w-full py-1.5 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs rounded transition disabled:opacity-40 cursor-pointer"

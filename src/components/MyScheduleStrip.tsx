@@ -8,20 +8,19 @@ import { useMemo } from 'react';
 import useAppStore from '../store';
 import { translations } from '../translations';
 import { CalendarDays, MapPin } from 'lucide-react';
-
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+import { localDateKey } from '../dateKeys';
 
 export default function MyScheduleStrip() {
   const { currentLanguage, activeEmployee, shiftAssignments, projects } = useAppStore();
   const t = translations[currentLanguage];
   const dateLocale = currentLanguage === 'FR' ? 'fr-CA' : 'en-CA';
 
-  const today = isoDay(new Date());
+  const today = localDateKey();
   // Aujourd'hui et les six jours suivants : au-delà, ça change encore trop.
   const horizon = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() + 6);
-    return isoDay(d);
+    return localDateKey(d);
   }, []);
 
   const mine = useMemo(() => {

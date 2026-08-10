@@ -20,14 +20,41 @@ export interface HydrateViewer {
   name?: string;
 }
 
-/** Reprend les accusés de réception déjà connus quand la lecture n'en a pas. */
+function timestampValue(value: string | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function latestTimestamp(fresh: string | undefined, previous: string | undefined): string | undefined {
+  if (!fresh) return previous;
+  if (!previous) return fresh;
+  return timestampValue(previous) > timestampValue(fresh) ? previous : fresh;
+}
+
+/**
+ * Reprend les accusés de réception déjà connus quand la lecture n'en a pas et
+ * conserve la paire version/date la plus récente lorsqu'une ancienne requête
+ * d'hydratation revient après l'enregistrement du consentement.
+ */
 export function keepAcknowledgements(profile: Employee, previous: Employee | null): Employee {
   if (!previous) return profile;
+  const profilePrivacyAt = profile.privacyNoticeAcknowledgedAt;
+  const previousPrivacyAt = previous.privacyNoticeAcknowledgedAt;
+  const previousPrivacyIsNewer = Boolean(previousPrivacyAt) && (
+    !profilePrivacyAt || timestampValue(previousPrivacyAt) > timestampValue(profilePrivacyAt)
+  );
+
   return {
     ...profile,
-    privacyNoticeVersion: profile.privacyNoticeVersion || previous.privacyNoticeVersion,
-    privacyNoticeAcknowledgedAt: profile.privacyNoticeAcknowledgedAt || previous.privacyNoticeAcknowledgedAt,
-    locationNoticeAcknowledgedAt: profile.locationNoticeAcknowledgedAt || previous.locationNoticeAcknowledgedAt
+    privacyNoticeVersion: previousPrivacyIsNewer
+      ? previous.privacyNoticeVersion || profile.privacyNoticeVersion
+      : profile.privacyNoticeVersion || previous.privacyNoticeVersion,
+    privacyNoticeAcknowledgedAt: latestTimestamp(profilePrivacyAt, previousPrivacyAt),
+    locationNoticeAcknowledgedAt: latestTimestamp(
+      profile.locationNoticeAcknowledgedAt,
+      previous.locationNoticeAcknowledgedAt
+    )
   };
 }
 

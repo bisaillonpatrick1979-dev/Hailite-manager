@@ -61,9 +61,13 @@ assert.ok(help.includes("localStorage.setItem(progressKey"), 'La progression de 
 assert.ok(!help.includes("sessionStorage.setItem(progressKey"), 'La progression ne doit plus être limitée à la session.');
 // L'intention d'origine reste : sur une tablette partagée, la progression d'un
 // employé ne doit pas devenir celle d'un autre. La clé porte donc son
-// identifiant, et le préfixe est déclaré dans la politique de stockage pour
-// échapper au nettoyage du démarrage sans ouvrir la porte aux données métier.
-assert.ok(help.includes('`gcp_help_progress_${employeeId}`'), 'La progression doit être propre à chaque employé.');
+// identifiant, son rôle et la version du parcours; le préfixe est déclaré dans
+// la politique de stockage pour échapper au nettoyage du démarrage sans ouvrir
+// la porte aux données métier.
+assert.ok(
+  help.includes('`gcp_help_progress_${employeeId}_${role}_v${HELP_CHECKLIST_VERSION}`'),
+  'La progression doit être propre à chaque employé, rôle et version de parcours.'
+);
 const storagePolicy = read('src/securityStorage.ts');
 assert.ok(storagePolicy.includes("'gcp_help_progress_'"), 'Le préfixe de progression doit être autorisé explicitement.');
 assert.ok(storagePolicy.includes('SAFE_KEY_PREFIXES'), 'La politique de stockage doit encadrer les préfixes autorisés.');

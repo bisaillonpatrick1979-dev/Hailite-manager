@@ -12,6 +12,7 @@
 // aucune requête de données n'est servie sans identité vérifiée.
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import { MAX_COMPANY_USERS } from './src/projectLimits.js';
 import type express from 'express';
 import { resolveCompanyId, supabase, supabaseEnabled } from './db.js';
 
@@ -244,7 +245,7 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
     .select('id, full_name, role, company_id, access_code_hash, is_active')
     .eq('company_id', companyId)
     .eq('is_active', true)
-    .limit(250);
+    .limit(MAX_COMPANY_USERS);
   const submittedHandle = Buffer.from(loginHandle);
   const user = (users || []).find(candidate => {
     const expectedHandle = Buffer.from(createLoginHandle(companyId, String(candidate.id)));

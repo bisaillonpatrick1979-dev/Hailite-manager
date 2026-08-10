@@ -587,6 +587,9 @@ export interface PayrollPayment {
   status: 'draft' | 'approved' | 'paid' | 'held' | 'refused';
   date: string;
   hours?: number;
+  /** Type fiscal figé au moment du versement. La fiche de l'employé peut être
+   *  corrigée plus tard sans réécrire l'historique comptable. */
+  workerTypeAtPayment?: 'salaried' | 'contractor';
 }
 
 
