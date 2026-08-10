@@ -1767,6 +1767,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   stopPunchSession: (id, surfaceMaterials) => {
     const { punchSessions } = get();
+    // Idempotence : un second appel (double clic, retour réseau, rejeu hors
+    // ligne) ne doit ni rallonger les heures, ni redonner l'XP, ni retirer une
+    // deuxième fois les matériaux de l'inventaire. On sort avant tout effet.
+    const target = punchSessions.find(p => p.id === id);
+    if (!target || target.endTime !== null) return;
+
     const updated = punchSessions.map(p => {
       if (p.id === id) {
         const endTime = new Date().toISOString();
