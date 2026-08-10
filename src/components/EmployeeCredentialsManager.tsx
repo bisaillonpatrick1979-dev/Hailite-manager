@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Camera, Check, Edit, Plus, Trash, X } from 'lucide-react';
+import { Camera, Check, Clock, Edit, Plus, ShieldCheck, Trash, X, XCircle } from 'lucide-react';
 import type { EmployeeCredential, EmployeeCredentialType } from '../types';
 import { addYearsToDate, getCredentialDaysRemaining, getCredentialStatus } from '../credentialUtils';
+import { validateSubmission, verificationStatus, type SubmissionInput, type SubmissionProblem } from '../../credentialVerification';
 
 type Props = {
   value: EmployeeCredential[];
@@ -9,6 +10,16 @@ type Props = {
   currentLanguage: 'FR' | 'EN';
   canManage?: boolean;
   title?: string;
+  /**
+   * Mode libre-service : le travailleur ajoute lui-même une carte en la
+   * photographiant. Elle part alors en vérification au lieu d'entrer
+   * directement dans le dossier — il ne peut ni la modifier ni l'effacer
+   * ensuite, sinon on pourrait faire vérifier une carte puis en changer la
+   * date d'expiration.
+   */
+  selfService?: boolean;
+  onSubmit?: (submission: SubmissionInput) => Promise<boolean>;
+  submitting?: boolean;
 };
 
 type CredentialDraft = Omit<EmployeeCredential, 'id'>;
@@ -79,12 +90,20 @@ async function compressImage(file: File): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.72);
 }
 
-export default function EmployeeCredentialsManager({ value, onChange, currentLanguage, canManage = true, title }: Props) {
+export default function EmployeeCredentialsManager({
+  value, onChange, currentLanguage, canManage = true, title,
+  selfService = false, onSubmit, submitting = false
+}: Props) {
   const t = (fr: string, en: string) => currentLanguage === 'FR' ? fr : en;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CredentialDraft>(() => emptyDraft(currentLanguage));
   const [showForm, setShowForm] = useState(false);
   const [imageError, setImageError] = useState('');
+  const [problems, setProblems] = useState<SubmissionProblem[]>([]);
+  const canAdd = canManage || selfService;
+  const problemFor = (field: SubmissionProblem['field']) => problems.find(problem => problem.field === field);
+  const problemText = (problem: SubmissionProblem | undefined) =>
+    problem ? (currentLanguage === 'FR' ? problem.messageFR : problem.messageEN) : '';
 
   const summary = useMemo(() => value.reduce((totals, credential) => {
     const status = getCredentialStatus(credential);
@@ -96,6 +115,7 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
     setEditingId(null);
     setDraft(emptyDraft(currentLanguage));
     setImageError('');
+    setProblems([]);
     setShowForm(true);
   };
 
@@ -111,9 +131,22 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
     setShowForm(false);
     setEditingId(null);
     setImageError('');
+    setProblems([]);
   };
 
-  const save = () => {
+  const save = async () => {
+    // Libre-service : la carte est soumise au bureau, pas enregistrée telle
+    // quelle. Le serveur revalide de toute façon — ce contrôle-ci ne sert qu'à
+    // dire tout de suite ce qui manque, sur le chantier, avant l'aller-retour.
+    if (selfService && !canManage) {
+      const found = validateSubmission(draft as SubmissionInput);
+      setProblems(found);
+      if (found.length > 0 || !onSubmit) return;
+      const accepted = await onSubmit(draft as SubmissionInput);
+      if (accepted) closeForm();
+      return;
+    }
+
     const cleanName = draft.name.trim();
     if (!cleanName) return;
     const nextCredential: EmployeeCredential = {
@@ -172,12 +205,23 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
           <h5 className="text-sm font-black text-white">🪪 {title || t('Certifications et cartes de compétence', 'Certifications and competency cards')}</h5>
           <p className="text-[10px] text-gray-500 mt-1">{t("Photos, dates d'expiration et rappels de renouvellement.", 'Photos, expiry dates, and renewal reminders.')}</p>
         </div>
-        {canManage && (
+        {canAdd && (
           <button type="button" onClick={beginAdd} className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-600 hover:bg-orange-500 px-4 py-2.5 text-xs font-black text-white">
-            <Plus className="w-4 h-4" /> {t('Ajouter une carte', 'Add a card')}
+            <Plus className="w-4 h-4" /> {selfService && !canManage
+              ? t('Ajouter ma carte', 'Add my card')
+              : t('Ajouter une carte', 'Add a card')}
           </button>
         )}
       </div>
+
+      {selfService && !canManage && (
+        <p className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3 text-[11px] leading-relaxed text-cyan-200">
+          {t(
+            'Photographiez le recto et le verso de votre nouvelle carte. Le bureau la confronte ensuite au registre de l’organisme avant qu’elle compte dans votre dossier.',
+            'Photograph the front and back of your new card. The office then checks it against the issuer’s registry before it counts in your file.'
+          )}
+        </p>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded-xl bg-green-500/10 border border-green-500/20 p-2.5"><p className="text-[9px] uppercase font-black text-green-500">{t('Valides', 'Valid')}</p><p className="text-xl font-black text-green-400">{summary.valid}</p></div>
@@ -208,8 +252,35 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
                     <p className="text-[10px] text-gray-500 mt-1">{credential.issuer || t('Organisme non précisé', 'Issuer not specified')}{credential.credentialNumber ? ` · #${credential.credentialNumber}` : ''}</p>
                   </div>
                 </div>
-                <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-black uppercase ${status.classes}`}>{status.label}</span>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className={`rounded-full border px-2 py-1 text-[9px] font-black uppercase ${status.classes}`}>{status.label}</span>
+                  {/* Une carte photographiée par le travailleur n'a pas la même
+                      valeur qu'une carte confrontée au registre. On ne laisse
+                      pas les deux se ressembler. */}
+                  {verificationStatus(credential) === 'submitted' && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[9px] font-black uppercase text-cyan-300">
+                      <Clock className="h-3 w-3" aria-hidden="true" />{t('À vérifier', 'To verify')}
+                    </span>
+                  )}
+                  {verificationStatus(credential) === 'rejected' && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-1 text-[9px] font-black uppercase text-red-300">
+                      <XCircle className="h-3 w-3" aria-hidden="true" />{t('Refusée', 'Rejected')}
+                    </span>
+                  )}
+                  {verificationStatus(credential) === 'verified' && credential.verifiedAt && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[9px] font-black uppercase text-emerald-300">
+                      <ShieldCheck className="h-3 w-3" aria-hidden="true" />{t('Vérifiée', 'Verified')}
+                    </span>
+                  )}
+                </div>
               </div>
+
+              {credential.verificationNote && (
+                <p className={`rounded-xl p-3 text-xs ${verificationStatus(credential) === 'rejected' ? 'bg-red-500/10 text-red-300' : 'bg-gray-900 text-gray-400'}`}>
+                  <strong className="font-black">{t('Note du bureau : ', 'Office note: ')}</strong>
+                  {credential.verificationNote}
+                </p>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
                 <div className="rounded-lg bg-gray-900 p-2"><span className="block uppercase font-bold text-gray-500">{t('Obtenue', 'Issued')}</span><span className="font-bold text-white">{credential.issuedDate || '—'}</span></div>
@@ -243,7 +314,7 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
         })}
       </div>
 
-      {showForm && canManage && (
+      {showForm && canAdd && (
         <div className="rounded-2xl border border-orange-500/35 bg-gray-950 p-4 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h6 className="text-xs font-black uppercase text-orange-400">{editingId ? t('Modifier ou renouveler la carte', 'Edit or renew card') : t('Nouvelle carte de compétence', 'New competency card')}</h6>
@@ -260,6 +331,7 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
             <div>
               <label className="text-[9px] uppercase font-black text-gray-500">{t('Nom inscrit sur la carte', 'Name on card')}</label>
               <input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} className="w-full mt-1 p-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white text-xs" />
+              {problemFor('name') && <p className="mt-1 text-[10px] font-bold text-red-400">{problemText(problemFor('name'))}</p>}
             </div>
             <div>
               <label className="text-[9px] uppercase font-black text-gray-500">{t('Organisme de formation', 'Training provider')}</label>
@@ -276,6 +348,7 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
             <div>
               <label className="text-[9px] uppercase font-black text-gray-500">{t("Date d'expiration", 'Expiry date')}</label>
               <input type="date" disabled={draft.doesNotExpire} value={draft.expiryDate} onChange={event => setDraft({ ...draft, expiryDate: event.target.value, notifiedAt: undefined })} className="w-full mt-1 p-2.5 rounded-xl bg-gray-900 border border-gray-800 text-white text-xs disabled:opacity-40" />
+              {problemFor('expiryDate') && <p className="mt-1 text-[10px] font-bold text-red-400">{problemText(problemFor('expiryDate'))}</p>}
               {!draft.doesNotExpire && draft.issuedDate && (
                 <div className="flex flex-wrap gap-1 mt-2">
                   {[1, 2, 3, 4].map(years => <button type="button" key={years} onClick={() => setDraft({ ...draft, expiryDate: addYearsToDate(draft.issuedDate, years), notifiedAt: undefined })} className="px-2 py-1 rounded-lg bg-gray-800 border border-gray-700 text-[9px] font-bold text-gray-300">+{years} {t('an', 'yr')}</button>)}
@@ -305,11 +378,15 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
                   <input id={inputId} type="file" accept="image/*" capture="environment" className="hidden" onChange={event => handlePhoto(event.target.files?.[0], side)} />
                   <label htmlFor={inputId} className="flex items-center justify-center gap-2 cursor-pointer rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 px-3 py-2 text-[10px] font-black uppercase"><Camera className="w-4 h-4" />{side === 'front' ? t('Photographier le recto', 'Photograph front') : t('Photographier le verso', 'Photograph back')}</label>
                   {photo && <><img src={photo} alt={side} className="w-full h-32 object-contain rounded-lg bg-black border border-gray-800" /><button type="button" onClick={() => setDraft({ ...draft, [side === 'front' ? 'photoFront' : 'photoBack']: '' })} className="w-full text-[9px] font-bold text-red-400">{t('Retirer la photo', 'Remove photo')}</button></>}
+                  {problemFor(side === 'front' ? 'photoFront' : 'photoBack') && (
+                    <p className="text-[10px] font-bold text-red-400">{problemText(problemFor(side === 'front' ? 'photoFront' : 'photoBack'))}</p>
+                  )}
                 </div>
               );
             })}
           </div>
           {imageError && <p className="text-xs text-red-400">{imageError}</p>}
+          {problemFor('photoSize') && <p className="text-xs font-bold text-red-400">{problemText(problemFor('photoSize'))}</p>}
 
           <div>
             <label className="text-[9px] uppercase font-black text-gray-500">{t('Notes', 'Notes')}</label>
@@ -318,7 +395,19 @@ export default function EmployeeCredentialsManager({ value, onChange, currentLan
 
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={closeForm} className="px-4 py-2.5 rounded-xl bg-gray-800 text-gray-300 text-xs font-black">{t('Annuler', 'Cancel')}</button>
-            <button type="button" disabled={!draft.name.trim()} onClick={save} className="px-5 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black disabled:opacity-40"><Check className="inline w-4 h-4 mr-1" />{t('Enregistrer', 'Save')}</button>
+            <button
+              type="button"
+              disabled={!draft.name.trim() || submitting}
+              onClick={() => { void save(); }}
+              className="px-5 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black disabled:opacity-40"
+            >
+              <Check className="inline w-4 h-4 mr-1" />
+              {submitting
+                ? t('Envoi…', 'Sending…')
+                : selfService && !canManage
+                  ? t('Soumettre pour vérification', 'Submit for verification')
+                  : t('Enregistrer', 'Save')}
+            </button>
           </div>
         </div>
       )}

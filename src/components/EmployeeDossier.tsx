@@ -22,9 +22,11 @@ import type { Employee, PayrollPayment, Project, PunchSession } from '../types';
 import {
   buildEmployeeDossier, dossierIdentity, employeePaidTotal, employeePayrollHistory
 } from '../employeeDossier';
+import { isAwaitingVerification } from '../../credentialVerification';
 
 const EmployeeWorkCalendar = lazy(() => import('./EmployeeWorkCalendar'));
 const EmployeeCredentialsManager = lazy(() => import('./EmployeeCredentialsManager'));
+const CredentialVerificationQueue = lazy(() => import('./CredentialVerificationQueue'));
 
 type Language = 'FR' | 'EN';
 
@@ -37,11 +39,21 @@ interface Props {
   dateLocale?: string;
   currency?: string;
   onClose: () => void;
+  /** Pays et province de la compagnie : ils déterminent le registre à
+   *  consulter pour vérifier une carte. */
+  country?: string;
+  region?: string;
+  onReviewCredential?: (
+    employeeId: string,
+    credentialId: string,
+    decision: { approved: boolean; method?: string; note?: string }
+  ) => Promise<void>;
 }
 
 export default function EmployeeDossier({
   employee, punchSessions, projects, payrollPayments,
-  currentLanguage, dateLocale, currency, onClose
+  currentLanguage, dateLocale, currency, onClose,
+  country, region, onReviewCredential
 }: Props) {
   const isFrench = currentLanguage === 'FR';
   const t = (fr: string, en: string) => (isFrench ? fr : en);
@@ -356,6 +368,27 @@ export default function EmployeeDossier({
               />
             </Suspense>
           </div>
+
+          {/* Cartes que cette personne a soumises elle-même et qui attendent
+              d'être confrontées au registre de l'organisme émetteur. */}
+          {onReviewCredential && (employee.credentials || []).some(isAwaitingVerification) && (
+            <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-4">
+              <h3 className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300">
+                {t('Cartes à vérifier', 'Cards to verify')}
+              </h3>
+              <Suspense fallback={<p className="text-xs text-gray-500">{t('Chargement…', 'Loading…')}</p>}>
+                <CredentialVerificationQueue
+                  pending={(employee.credentials || [])
+                    .filter(isAwaitingVerification)
+                    .map(credential => ({ employeeId: employee.id, employeeName: employee.name, credential }))}
+                  currentLanguage={currentLanguage}
+                  country={country}
+                  region={region}
+                  onDecide={onReviewCredential}
+                />
+              </Suspense>
+            </div>
+          )}
 
           {/* Cartes de compétence — lecture seule */}
           <Suspense fallback={null}>

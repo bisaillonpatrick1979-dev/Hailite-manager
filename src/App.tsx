@@ -13,6 +13,7 @@ const genLocalId = (): string =>
         return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
       });
 import { translations, fmt } from './translations';
+import { pendingVerifications, registriesForCredential, type SubmissionInput } from '../credentialVerification';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
 import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
@@ -49,6 +50,7 @@ const ToolRegistry = lazy(() => import('./components/ToolRegistry'));
 const EmployeeWorkCalendar = lazy(() => import('./components/EmployeeWorkCalendar'));
 const EmployeeCredentialsManager = lazy(() => import('./components/EmployeeCredentialsManager'));
 const EmployeeDossier = lazy(() => import('./components/EmployeeDossier'));
+const CredentialVerificationQueue = lazy(() => import('./components/CredentialVerificationQueue'));
 const UserHelpCenter = lazy(() => import('./components/UserHelpCenter'));
 const UserPrivacyNotice = lazy(() => import('./components/UserPrivacyNotice'));
 const BusinessLogoField = lazy(() => import('./components/BusinessLogoField'));
@@ -131,7 +133,8 @@ export default function App() {
     documents, expenses, payrollPayments, addExpense, deleteExpense, addPayrollPayment, deletePayrollPayment,
     personalExpenses, addPersonalExpense, deletePersonalExpense,
     hydrateCloud, setIsOnboarded,
-    demoSandboxActive, demoSandboxSummary, resetDemoSandbox, deactivateDemoSandbox
+    demoSandboxActive, demoSandboxSummary, resetDemoSandbox, deactivateDemoSandbox,
+    submitOwnCredential, reviewEmployeeCredential
   } = useAppStore();
 
   // Hydratation depuis Supabase au démarrage, puis rafraîchissement périodique.
@@ -370,6 +373,27 @@ export default function App() {
   // non l'objet : si la fiche change pendant que le dossier est ouvert — un
   // pointage qui se termine, une carte de compétence ajoutée — l'écran suit.
   const [dossierEmployeeId, setDossierEmployeeId] = useState<string | null>(null);
+
+  // Soumission d'une carte de compétence par son titulaire. On renvoie un
+  // booléen plutôt que de lever : le formulaire doit rester ouvert avec ce qui
+  // a été saisi si l'envoi échoue — reprendre deux photos de carte sur un
+  // chantier, personne n'a envie de le refaire pour rien.
+  const [credentialSubmitting, setCredentialSubmitting] = useState(false);
+  const credentialsToVerify = useMemo(() => pendingVerifications(employees), [employees]);
+  const submitCredentialForSelf = async (submission: SubmissionInput): Promise<boolean> => {
+    setCredentialSubmitting(true);
+    try {
+      await submitOwnCredential(submission);
+      return true;
+    } catch (error: any) {
+      window.alert(currentLanguage === 'FR'
+        ? `La carte n’a pas pu être envoyée : ${error?.message || 'erreur inconnue'}`
+        : `The card could not be sent: ${error?.message || 'unknown error'}`);
+      return false;
+    } finally {
+      setCredentialSubmitting(false);
+    }
+  };
 
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
@@ -2134,6 +2158,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           onChange={() => undefined}
                           currentLanguage={currentLanguage}
                           canManage={false}
+                          /* Le travailleur ajoute lui-même sa nouvelle carte en
+                             la photographiant. Elle part en vérification : il
+                             ne peut ni la modifier ni l'effacer ensuite. */
+                          selfService
+                          submitting={credentialSubmitting}
+                          onSubmit={submitCredentialForSelf}
                           title={currentLanguage === 'FR' ? 'Mes cartes de compétence' : 'My competency cards'}
                         />
                       </Suspense>
@@ -2450,6 +2480,23 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         onApprove={approvePunchSession}
                       />
                     </Suspense>
+
+                    {/* Cartes de compétence soumises par les travailleurs eux-mêmes.
+                        Elles ne comptent pas tant que le bureau ne les a pas
+                        confrontées au registre de l'organisme émetteur. */}
+                    {credentialsToVerify.length > 0 && (
+                      <Suspense fallback={<LazySectionFallback />}>
+                        <CredentialVerificationQueue
+                          pending={credentialsToVerify}
+                          currentLanguage={currentLanguage}
+                          country={companyInfo.country}
+                          region={companyInfo.region}
+                          onDecide={reviewEmployeeCredential}
+                          onOpenEmployee={setDossierEmployeeId}
+                          compact
+                        />
+                      </Suspense>
+                    )}
 
                     {/* Historical Punches list */}
                     <div className="bg-[#16191F] border border-gray-800 rounded-xl p-5">
@@ -8005,6 +8052,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               currentLanguage={currentLanguage}
               dateLocale={dateLocale}
               currency={companyInfo.currency}
+              country={companyInfo.country}
+              region={companyInfo.region}
+              onReviewCredential={reviewEmployeeCredential}
               onClose={() => setDossierEmployeeId(null)}
             />
           </Suspense>

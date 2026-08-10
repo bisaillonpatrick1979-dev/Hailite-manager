@@ -20,6 +20,19 @@ import {
   createLoginHandle, hashPin, SESSION_COOKIE_NAME
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
+import {
+  applyReview, buildSubmittedCredential, canReviewCredential, validateSubmission,
+  type SubmissionInput
+} from './credentialVerification.js';
+
+// Une carte soumise par un travailleur ne peut pas se déclarer vérifiée : la
+// méthode est bornée ici, côté serveur, et non lue telle quelle depuis la
+// requête.
+const ALLOWED_VERIFICATION_METHODS = new Set(['registry', 'issuer', 'document', 'other']);
+
+// Garde-fou contre une fiche qui gonflerait indéfiniment : chaque carte porte
+// deux photos, et app_users est relu à chaque hydratation.
+const MAX_CREDENTIALS_PER_USER = 40;
 
 // Toutes les tables exposées par la couche de données générique (voir supabase_migration.sql)
 const KNOWN_TABLES = [
@@ -894,6 +907,126 @@ export function registerApiRoutes(app: express.Express): void {
     } catch (error: any) {
       console.error('Error on /api/auth/privacy-notice:', error);
       return res.status(500).json({ error: 'Les confirmations n’ont pas pu être enregistrées' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Cartes de compétence soumises par le travailleur lui-même
+  // -------------------------------------------------------------------------
+  // La table app_users reste interdite en écriture à tout le monde sauf
+  // l'administration. On n'ouvre donc pas la table : on ouvre un geste précis.
+  // Cette route n'écrit que la colonne « credentials », uniquement sur la ligne
+  // de la personne authentifiée, et impose le statut « soumise » — le corps de
+  // la requête ne peut pas prétendre le contraire. Les cartes déjà présentes
+  // sont relues côté serveur puis réécrites avec la nouvelle en fin de liste :
+  // un client ne peut ni en effacer, ni en modifier une autre.
+  app.post('/api/credentials', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.status(503).json({ error: 'Base de données non configurée' });
+    }
+    const auth = req.auth as AuthContext;
+    const input = (req.body || {}) as Record<string, any>;
+
+    const problems = validateSubmission(input as SubmissionInput);
+    if (problems.length > 0) {
+      return res.status(400).json({
+        error: 'Soumission incomplète',
+        problems: problems.map(problem => ({ field: problem.field, messageFR: problem.messageFR, messageEN: problem.messageEN }))
+      });
+    }
+
+    try {
+      const { data: current, error: readError } = await supabase
+        .from('app_users')
+        .select('credentials')
+        .eq('id', auth.userId)
+        .eq('company_id', auth.companyId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!current) return res.status(404).json({ error: 'Compte actif introuvable' });
+
+      const existing = Array.isArray(current.credentials) ? current.credentials : [];
+      if (existing.length >= MAX_CREDENTIALS_PER_USER) {
+        return res.status(409).json({ error: 'Trop de cartes enregistrées pour ce compte' });
+      }
+
+      const submitted = buildSubmittedCredential(input as SubmissionInput, auth.userId, crypto.randomUUID());
+      const credentials = [...existing, submitted];
+
+      const { error: writeError } = await supabase
+        .from('app_users')
+        .update({ credentials })
+        .eq('id', auth.userId)
+        .eq('company_id', auth.companyId)
+        .eq('is_active', true);
+      if (writeError) throw writeError;
+
+      // La photo n'entre pas dans le journal : on note qu'une carte a été
+      // soumise, pas ce qu'elle montre.
+      logAudit(auth, 'credential_submitted', 'app_users', auth.userId, {
+        credentialId: submitted.id, type: submitted.type
+      });
+      return res.json({ success: true, credential: submitted });
+    } catch (error: any) {
+      console.error('Error on /api/credentials:', error);
+      return res.status(500).json({ error: 'La carte n’a pas pu être enregistrée' });
+    }
+  });
+
+  // Examen d'une carte soumise. Réservé au bureau : c'est la décision qui
+  // engage l'employeur devant l'organisme émetteur et devant la loi.
+  app.post('/api/credentials/:employeeId/:credentialId/review', requireAuth, async (req: AuthedRequest, res) => {
+    if (!supabaseEnabled || !supabase) {
+      return res.status(503).json({ error: 'Base de données non configurée' });
+    }
+    const auth = req.auth as AuthContext;
+    if (!canReviewCredential(auth)) {
+      logAudit(auth, 'credential_review_denied', 'app_users', String(req.params.employeeId));
+      return res.status(403).json({ error: 'Vérification réservée à la gestion' });
+    }
+
+    const { employeeId, credentialId } = req.params;
+    const approved = req.body?.approved === true;
+    const method = String(req.body?.method || '');
+    const note = String(req.body?.note || '').slice(0, 500);
+
+    try {
+      const { data: target, error: readError } = await supabase
+        .from('app_users')
+        .select('credentials')
+        .eq('id', employeeId)
+        .eq('company_id', auth.companyId)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!target) return res.status(404).json({ error: 'Employé introuvable' });
+
+      const existing = Array.isArray(target.credentials) ? target.credentials : [];
+      const found = existing.find((item: any) => item?.id === credentialId);
+      if (!found) return res.status(404).json({ error: 'Carte introuvable' });
+
+      const decided = applyReview(found, {
+        approved,
+        reviewerId: auth.userId,
+        method: ALLOWED_VERIFICATION_METHODS.has(method) ? (method as any) : undefined,
+        note
+      });
+      const credentials = existing.map((item: any) => item?.id === credentialId ? decided : item);
+
+      const { error: writeError } = await supabase
+        .from('app_users')
+        .update({ credentials })
+        .eq('id', employeeId)
+        .eq('company_id', auth.companyId);
+      if (writeError) throw writeError;
+
+      logAudit(auth, approved ? 'credential_verified' : 'credential_rejected', 'app_users', String(employeeId), {
+        credentialId, method: decided.verificationMethod
+      });
+      return res.json({ success: true, credential: decided });
+    } catch (error: any) {
+      console.error('Error on /api/credentials/review:', error);
+      return res.status(500).json({ error: 'La décision n’a pas pu être enregistrée' });
     }
   });
 
