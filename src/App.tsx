@@ -28,7 +28,7 @@ import {
 import { getDefaultRegion, getJurisdictionDefaults, getRegionsForMarket, marketLabel, type MarketCode } from './internationalRegions';
 import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from './projectAccess';
 import { todayKey, currentMonthKey, localDayKey, isInLocalMonth } from './localTime';
-import { punchHoursOnDay, punchHoursInMonth, punchRevenueOnDay, punchRevenueInMonth, punchDayKeys } from './punchHours';
+import { punchHoursOnDay, punchHoursInMonth, punchRevenueOnDay, punchRevenueInMonth, punchRevenueInPeriod, punchDayKeys } from './punchHours';
 // Composants chargés à la demande (code-splitting) : chacun n'est nécessaire
 // que sur un onglet précis, inutile de les inclure dans le bundle initial.
 const OnboardingScreen = lazy(() => import('./components/OnboardingScreen'));
@@ -211,6 +211,9 @@ export default function App() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  // Période du bandeau financier du tableau de bord : mois courant, année
+  // courante, ou tout l'historique depuis l'ouverture.
+  const [dashboardPeriod, setDashboardPeriod] = useState<'month' | 'year' | 'all'>('month');
   useEffect(() => {
     if (!demoSandboxActive || !demoSandboxSummary) return;
     setStatsMonth(demoSandboxSummary.latestStatsMonth);
@@ -1173,6 +1176,42 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       totalWages,
       totalHrs,
       activeWorkersCount
+    };
+  };
+
+  // Revenu, coûts et marge de la compagnie sur une période.
+  // Le préfixe suit les clés de journée locales : « 2026-07 » pour un mois,
+  // « 2026 » pour une année, chaîne vide pour tout l'historique.
+  // La formule est volontairement identique à celle des fiches de chantier
+  // (revenu facturé − dépenses − main-d'œuvre) : deux écrans de l'application
+  // ne doivent jamais afficher deux marges différentes.
+  const getCompanyFinances = (periodPrefix: string) => {
+    const billedInvoices = documents.filter(d =>
+      d.type === 'invoice' &&
+      (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
+      (d.date || '').startsWith(periodPrefix)
+    );
+    const revenue = billedInvoices.reduce((sum, d) => sum + (d.total || 0), 0);
+    // Encaissé : utile pour la trésorerie, affiché en second plan.
+    const collected = documents
+      .filter(d => d.type === 'invoice')
+      .reduce((sum, d) => sum + (d.paymentsHistory || [])
+        .filter(payment => (payment.date || '').startsWith(periodPrefix))
+        .reduce((inner, payment) => inner + (payment.amount || 0), 0), 0);
+
+    const labourCost = punchSessions
+      .filter(p => p.endTime !== null)
+      .reduce((sum, p) => sum + punchRevenueInPeriod(p, periodPrefix), 0);
+    const expenseCost = expenses
+      .filter(e => (e.date || '').startsWith(periodPrefix))
+      .reduce((sum, e) => sum + (e.amount || 0) + (e.tax || 0), 0);
+    const totalCost = labourCost + expenseCost;
+    const margin = revenue - totalCost;
+
+    return {
+      revenue, collected, labourCost, expenseCost, totalCost, margin,
+      marginPct: revenue > 0 ? (margin / revenue) * 100 : 0,
+      invoiceCount: billedInvoices.length
     };
   };
 
@@ -2176,16 +2215,98 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <div className="p-4 bg-green-600/10 text-green-500 rounded-xl">
                           <DollarSign className="w-7 h-7" />
                         </div>
-                        <div>
-                          <p className="text-xs uppercase font-black text-gray-400 tracking-wider">{t.monthlyEarnings}</p>
-                          <p className="text-3xl font-black text-[#22C55E] mt-1">
-                            {getAdminStats().totalWages.toFixed(2)}$
+                        <div className="min-w-0">
+                          <p className="text-xs uppercase font-black text-gray-400 tracking-wider">{t.labourCostTile}</p>
+                          <p className="text-3xl font-black text-[#22C55E] mt-1 break-words">
+                            {money(getAdminStats().totalWages)}
                           </p>
                           <span className="text-xs text-emerald-400 font-black uppercase mt-1 block">{t.grossAccumulated}</span>
                         </div>
                       </div>
 
                     </div>
+
+                    {/* Bandeau financier : revenu facturé, coûts réels et marge.
+                        Trois chiffres côte à côte pour éviter qu'un montant seul
+                        soit pris pour un autre — c'est ce qui rendait l'ancienne
+                        tuile trompeuse (elle affichait un coût sous l'étiquette
+                        « Revenu Total »). */}
+                    {(() => {
+                      const periodPrefix = dashboardPeriod === 'month'
+                        ? currentMonthKey()
+                        : dashboardPeriod === 'year'
+                          ? currentMonthKey().slice(0, 4)
+                          : '';
+                      const fin = getCompanyFinances(periodPrefix);
+                      const periodOptions: { key: 'month' | 'year' | 'all'; label: string }[] = [
+                        { key: 'month', label: t.periodMonth },
+                        { key: 'year', label: t.periodYear },
+                        { key: 'all', label: t.periodAll }
+                      ];
+                      return (
+                        <div id="dashboard-finance-strip" className="bg-[#16191F] border border-gray-800 rounded-2xl p-5 shadow-lg">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-black text-white uppercase tracking-wider">{t.financeStripTitle}</h4>
+                              <p className="text-[11px] text-gray-400 mt-0.5">{t.financeStripHint}</p>
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0" role="group" aria-label={t.financeStripTitle}>
+                              {periodOptions.map(option => (
+                                <button
+                                  key={option.key}
+                                  type="button"
+                                  onClick={() => setDashboardPeriod(option.key)}
+                                  aria-pressed={dashboardPeriod === option.key}
+                                  className={`min-h-11 px-3 rounded-lg text-xs font-black uppercase tracking-wide transition-colors cursor-pointer ${
+                                    dashboardPeriod === option.key
+                                      ? 'bg-orange-600 text-white'
+                                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                                  }`}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-5">
+                            <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-4 min-w-0">
+                              <p className="text-[10px] uppercase font-black text-gray-400 tracking-wider">{t.financeRevenue}</p>
+                              <p className="text-2xl font-black text-[#22C55E] mt-1 break-words">{money(fin.revenue)}</p>
+                              <p className="text-[10px] text-gray-500 mt-1 break-words">
+                                {fmt(t.financeRevenueHint, { n: fin.invoiceCount })}
+                              </p>
+                              <p className="text-[10px] text-emerald-400/80 mt-0.5 break-words">
+                                {fmt(t.financeCollectedHint, { amount: money(fin.collected) })}
+                              </p>
+                            </div>
+
+                            <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-4 min-w-0">
+                              <p className="text-[10px] uppercase font-black text-gray-400 tracking-wider">{t.financeCosts}</p>
+                              <p className="text-2xl font-black text-orange-400 mt-1 break-words">{money(fin.totalCost)}</p>
+                              <p className="text-[10px] text-gray-500 mt-1 break-words">
+                                {fmt(t.financeLabourHint, { amount: money(fin.labourCost) })}
+                              </p>
+                              <p className="text-[10px] text-gray-500 mt-0.5 break-words">
+                                {fmt(t.financeExpensesHint, { amount: money(fin.expenseCost) })}
+                              </p>
+                            </div>
+
+                            <div className="bg-gray-950/60 border border-gray-800 rounded-xl p-4 min-w-0">
+                              <p className="text-[10px] uppercase font-black text-gray-400 tracking-wider">{t.financeMargin}</p>
+                              <p className={`text-2xl font-black mt-1 break-words ${fin.margin >= 0 ? 'text-[#22C55E]' : 'text-red-400'}`}>
+                                {money(fin.margin)}
+                              </p>
+                              <p className="text-[10px] text-gray-500 mt-1 break-words">
+                                {fin.revenue > 0
+                                  ? fmt(t.financeMarginPct, { pct: fin.marginPct.toFixed(1) })
+                                  : t.financeMarginNoRevenue}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Live Team Monitor Dashboard Section */}
                     {motivationTeams.length > 0 && (

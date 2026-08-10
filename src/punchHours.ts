@@ -77,6 +77,22 @@ export function punchHoursOnDay(
     .reduce((sum, slice) => sum + slice.hours, 0);
 }
 
+/**
+ * Heures d'un pointage imputées à une période locale.
+ * La période est un préfixe de journée : « 2026-07 » pour un mois, « 2026 »
+ * pour une année, et la chaîne vide pour tout l'historique.
+ */
+export function punchHoursInPeriod(
+  punch: PunchSession,
+  periodPrefix: string,
+  timeZone: string = appTimeZone(),
+  now: Date = new Date()
+): number {
+  return splitPunchByLocalDay(punch, timeZone, now)
+    .filter(slice => slice.dayKey.startsWith(periodPrefix))
+    .reduce((sum, slice) => sum + slice.hours, 0);
+}
+
 /** Heures d'un pointage imputées à un mois local (« AAAA-MM »). */
 export function punchHoursInMonth(
   punch: PunchSession,
@@ -84,9 +100,7 @@ export function punchHoursInMonth(
   timeZone: string = appTimeZone(),
   now: Date = new Date()
 ): number {
-  return splitPunchByLocalDay(punch, timeZone, now)
-    .filter(slice => slice.dayKey.startsWith(monthKey))
-    .reduce((sum, slice) => sum + slice.hours, 0);
+  return punchHoursInPeriod(punch, monthKey, timeZone, now);
 }
 
 /** Total des heures d'une liste de pointages sur une journée locale. */
@@ -131,6 +145,26 @@ export function punchRevenueOnDay(
   return (punch.revenue || 0) * (onDay / total);
 }
 
+/**
+ * Montant d'un pointage imputé à une période locale.
+ * Même convention de préfixe que `punchHoursInPeriod` : « 2026-07 » pour un
+ * mois, « 2026 » pour une année, chaîne vide pour tout l'historique.
+ */
+export function punchRevenueInPeriod(
+  punch: PunchSession,
+  periodPrefix: string,
+  timeZone: string = appTimeZone(),
+  now: Date = new Date()
+): number {
+  const slices = splitPunchByLocalDay(punch, timeZone, now);
+  const total = slices.reduce((sum, slice) => sum + slice.hours, 0);
+  if (total <= 0) return 0;
+  const inPeriod = slices
+    .filter(slice => slice.dayKey.startsWith(periodPrefix))
+    .reduce((sum, slice) => sum + slice.hours, 0);
+  return (punch.revenue || 0) * (inPeriod / total);
+}
+
 /** Montant d'un pointage imputé à un mois local (« AAAA-MM »). */
 export function punchRevenueInMonth(
   punch: PunchSession,
@@ -138,13 +172,7 @@ export function punchRevenueInMonth(
   timeZone: string = appTimeZone(),
   now: Date = new Date()
 ): number {
-  const slices = splitPunchByLocalDay(punch, timeZone, now);
-  const total = slices.reduce((sum, slice) => sum + slice.hours, 0);
-  if (total <= 0) return 0;
-  const inMonth = slices
-    .filter(slice => slice.dayKey.startsWith(monthKey))
-    .reduce((sum, slice) => sum + slice.hours, 0);
-  return (punch.revenue || 0) * (inMonth / total);
+  return punchRevenueInPeriod(punch, monthKey, timeZone, now);
 }
 
 /** Journées locales touchées par un pointage. */
