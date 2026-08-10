@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { canEmployeePunchProject, effectiveProjectAssignees, projectsAvailableForPunch } from '../src/projectAccess.ts';
+import { canEmployeePunchProject, effectiveProjectAssignees, projectPickerLabel, projectsAvailableForPunch } from '../src/projectAccess.ts';
 import type { Employee, Project } from '../src/types.ts';
 
 const employee = { id: 'employee-1', role: 'employee' } as Employee;
@@ -40,4 +40,39 @@ test('un choix explicite est respecté, y compris vide', () => {
   const team = [{ id: 'a' }, { id: 'b' }];
   assert.deepEqual(effectiveProjectAssignees(team, ['b'], true), ['b']);
   assert.deepEqual(effectiveProjectAssignees(team, [], true), []);
+});
+
+test('un chantier au nom unique garde un libellé court', () => {
+  const all = [{ id: 'p1', name: 'Maison' }, { id: 'p2', name: 'Garage' }];
+  const label = projectPickerLabel(
+    { id: 'p1', name: 'Maison', clientName: 'Pat', address: '335 Grégoire' }, all
+  );
+  assert.equal(label, 'Maison');
+});
+
+test('deux chantiers du même nom sont départagés par leur adresse', () => {
+  // Cas réel : « Maison » au 335 et « Maison » au 337 de la même rue. Sans
+  // distinction, l'employé pointe ses heures sur le mauvais chantier.
+  const all = [{ id: 'p1', name: 'Maison' }, { id: 'p2', name: 'Maison' }];
+  assert.equal(
+    projectPickerLabel({ id: 'p1', name: 'Maison', clientName: 'Pat', address: '335 Grégoire' }, all),
+    'Maison — 335 Grégoire'
+  );
+  assert.equal(
+    projectPickerLabel({ id: 'p2', name: 'Maison', clientName: 'Pateick', address: '337 Grégoire' }, all),
+    'Maison — 337 Grégoire'
+  );
+});
+
+test('sans adresse, le nom du client sert de repère', () => {
+  const all = [{ id: 'p1', name: 'Kdldlkdkdx' }, { id: 'p2', name: 'Kdldlkdkdx' }];
+  assert.equal(
+    projectPickerLabel({ id: 'p2', name: 'Kdldlkdkdx', clientName: 'Labelle construction', address: '' }, all),
+    'Kdldlkdkdx — Labelle construction'
+  );
+});
+
+test('sans rien pour départager, on n’invente pas de libellé', () => {
+  const all = [{ id: 'p1', name: 'Maison' }, { id: 'p2', name: 'Maison' }];
+  assert.equal(projectPickerLabel({ id: 'p2', name: 'Maison', clientName: '', address: '' }, all), 'Maison');
 });
