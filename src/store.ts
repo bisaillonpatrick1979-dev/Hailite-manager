@@ -2544,9 +2544,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addPayrollPayment: (pay) => {
-    const { payrollPayments } = get();
+    const { payrollPayments, employees } = get();
+    // On fige la nature du travailleur au moment du versement. Sans cet
+    // instantané, l'export fiscal reclasse l'historique d'après la fiche
+    // actuelle : embaucher comme salarié un ancien sous-traitant effacerait ses
+    // paiements passés d'un T5018 déjà produit.
+    const payee = employees.find(employee => employee.id === pay.employeeId);
     const newPay: PayrollPayment = {
       ...pay,
+      workerTypeAtPayment: pay.workerTypeAtPayment || payee?.workerType || undefined,
       id: genId()
     };
     const updated = [newPay, ...payrollPayments];

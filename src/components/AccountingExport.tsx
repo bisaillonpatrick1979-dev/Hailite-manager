@@ -116,16 +116,21 @@ export default function AccountingExport() {
     [companyInfo.country, range.to]
   );
   const subcontractors = useMemo(
-    () => summarizeSubcontractorPayments(employees, periodPayroll, threshold ? threshold.amount : null),
+    () => summarizeSubcontractorPayments(employees, periodPayroll, threshold),
     [employees, periodPayroll, threshold]
   );
 
   const exportSubcontractors = () => download(`${slug}_sous-traitants_${stamp}.csv`, buildCsv(
     [t.accColSubName, t.accColSubBusiness, t.accColSubTaxNumber, t.accColSubAddress,
-     t.accColSubPhone, t.accColSubPayments, t.accColSubTotal, t.accColSubThreshold],
+     t.accColSubPhone, t.accColSubPayments, t.accColSubTotal, t.accColSubThreshold,
+     t.accColSubClassification],
     subcontractors.rows.map(r => [
       r.name, r.businessName, r.taxNumber, r.address, r.phone,
-      r.paymentCount, num(r.total), r.meetsThreshold ? t.wordYes : t.wordNo
+      r.paymentCount, num(r.total),
+      // « À valider » plutôt qu'un oui ou un non inventé : le seuil américain
+      // est indexé à partir de 2027 et n'est pas connu d'avance.
+      r.meetsThreshold === null ? t.accThresholdUnknown : (r.meetsThreshold ? t.wordYes : t.wordNo),
+      r.classificationInferred ? t.accClassificationInferred : ''
     ]), sep));
 
   const exportSales = () => download(`${slug}_ventes_${stamp}.csv`, buildCsv(
@@ -269,6 +274,25 @@ export default function AccountingExport() {
               {fmt(t.accUnclassifiedBody, {
                 count: subcontractors.unclassified.length,
                 names: subcontractors.unclassified.map(u => u.name || u.employeeId).join(', ')
+              })}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Versements antérieurs à l'instantané : ils sont classés d'après la
+          fiche actuelle, faute de mieux. Ils comptent dans le feuillet, mais on
+          nomme les personnes concernées — c'est le seul moyen de rattraper une
+          reclassification qui aurait changé l'histoire. */}
+      {subcontractors.inferred.length > 0 && (
+        <div role="status" className="flex items-start gap-2 rounded-xl border border-gray-700 bg-gray-900 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+          <div className="text-[11px] leading-relaxed text-gray-300">
+            <p className="font-black uppercase tracking-wide">{t.accInferredTitle}</p>
+            <p className="mt-1 font-bold">
+              {fmt(t.accInferredBody, {
+                count: subcontractors.inferred.length,
+                names: subcontractors.inferred.map(entry => entry.name || entry.employeeId).join(', ')
               })}
             </p>
           </div>

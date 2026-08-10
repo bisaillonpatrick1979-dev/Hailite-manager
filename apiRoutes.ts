@@ -20,6 +20,7 @@ import {
   createLoginHandle, hashPin, SESSION_COOKIE_NAME
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
+import { MAX_COMPANY_USERS } from './companyLimits.js';
 import {
   applyReview, buildSubmittedCredential, canReviewCredential, compareReadingToDeclared,
   inspectionVerdict, parseCredentialReading, validateSubmission,
@@ -1138,9 +1139,12 @@ export function registerApiRoutes(app: express.Express): void {
       const companyId = await resolveCompanyId();
       const { data, error } = await supabase
         .from('app_users')
+        // Même plafond que la recherche de connexion : un compte absent de
+        // l'annuaire ne peut pas être choisi à l'écran de connexion, et les
+        // deux listes doivent donc s'arrêter au même endroit.
         .select('id, full_name, avatar, is_active')
         .eq('company_id', companyId)
-        .limit(250);
+        .limit(MAX_COMPANY_USERS);
       if (error) throw error;
       return res.json({
         enabled: true,

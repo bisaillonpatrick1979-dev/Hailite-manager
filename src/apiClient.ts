@@ -1076,13 +1076,17 @@ export function rowToExpense(r: any): ExpenseRecord {
 export function payrollPaymentToRow(p: PayrollPayment, companyId?: string) {
   return {
     id: p.id, company_id: companyId, employee_id: p.employeeId, employee_name: p.employeeName,
-    project_id: p.projectId || null, period: p.period, amount: p.amount, status: p.status, date: p.date, hours: p.hours
+    project_id: p.projectId || null, period: p.period, amount: p.amount, status: p.status, date: p.date, hours: p.hours,
+    // Nature du travailleur figée au versement : c'est elle qui fait foi dans
+    // l'export fiscal, pas la fiche telle qu'elle sera plus tard.
+    worker_type_at_payment: p.workerTypeAtPayment || null
   };
 }
 export function rowToPayrollPayment(r: any): PayrollPayment {
   return {
     id: r.id, employeeId: r.employee_id, employeeName: r.employee_name || '', projectId: r.project_id || undefined,
-    period: r.period || '', amount: r.amount || 0, status: r.status || 'draft', date: r.date || '', hours: r.hours ?? undefined
+    period: r.period || '', amount: r.amount || 0, status: r.status || 'draft', date: r.date || '', hours: r.hours ?? undefined,
+    workerTypeAtPayment: r.worker_type_at_payment || undefined
   };
 }
 
