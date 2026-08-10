@@ -112,9 +112,16 @@ jobs:
                   'Vérifiez l’orthographe exacte du secret, accents compris.'
               )
           elif login_code_name == 'INVALID_CREDENTIALS':
+              # Message d'origine : « réenregistrez AI_TEST_PIN ». Il envoyait sur
+              # une fausse piste — un NIP parfaitement valide est refusé dès qu'il
+              # appartient à quelqu'un d'autre que le profil nommé dans
+              # AI_TEST_USER_NAME. Les deux secrets forment une paire.
               diagnostic = (
-                  'Le profil existe mais le NIP du secret AI_TEST_PIN a été refusé. '
-                  'Réenregistrez AI_TEST_PIN avec les quatre chiffres exacts du compte.'
+                  f'Le profil « {user_name} » existe, mais le NIP du secret AI_TEST_PIN '
+                  'n’est pas le sien. Ce NIP est peut-être valide pour un autre compte : '
+                  'la connexion se fait au nom indiqué dans AI_TEST_USER_NAME, et les deux '
+                  'secrets doivent désigner la même personne. Vérifiez la paire avant de '
+                  'toucher au NIP dans l’application.'
               )
           elif login_code_name == 'THROTTLED':
               diagnostic = 'Trop de tentatives récentes : le compte est temporairement bloqué.'
@@ -125,6 +132,12 @@ jobs:
 
           result.update({
               'directoryHttp': directory_code,
+              # Le nom cherché et les noms disponibles : sans eux, un rapport qui
+              # dit « profil trouvé, NIP refusé » ne permet pas de voir que les
+              # deux secrets désignent deux personnes différentes. Ces noms sont
+              # déjà publics — l'annuaire de l'écran de connexion les affiche.
+              'userNameUsed': user_name,
+              'directoryNames': sorted(str(user.get('name') or '') for user in users),
               'directoryUserFound': bool(selected),
               'loginHttp': login_code,
               'loginCode': login_code_name,
