@@ -10,6 +10,8 @@ import {
   DOSSIER_FORBIDDEN_FIELDS
 } from '../src/employeeDossier';
 import type { Employee, PayrollPayment, PunchSession } from '../src/types';
+import { setAppTimeZone } from '../src/localTime';
+import { splitPunchByLocalDay } from '../src/punchHours';
 
 function punch(overrides: Partial<PunchSession>): PunchSession {
   return {
@@ -168,4 +170,77 @@ test('la clé de journée suit le fuseau de l’appareil', () => {
   const key = localDayKey(new Date(2026, 7, 10, 23, 30));
   assert.equal(key, '2026-08-10');
   assert.equal(localDayKey('pas une date'), '');
+});
+
+// ---------------------------------------------------------------------------
+// Accord avec le reste de l'application
+// ---------------------------------------------------------------------------
+// Les heures d'un quart de nuit sont réparties de part et d'autre de minuit
+// depuis la refonte des heures. Le dossier doit donner exactement le même
+// résultat que le tableau de bord, sinon on rouvre l'incohérence qu'on venait
+// de fermer : deux écrans, deux totaux, pour la même journée.
+
+test('un quart de nuit est réparti sur les deux journées, comme ailleurs dans l’application', () => {
+  setAppTimeZone('America/Edmonton');
+  try {
+    // 22 h le 10 août à Edmonton (UTC−6) → 04:00Z le 11 ; fin à 02 h le 11 local.
+    const session = punch({
+      id: 'nuit',
+      startTime: '2026-08-11T04:00:00.000Z',
+      endTime: '2026-08-11T08:00:00.000Z',
+      totalWorkedHours: undefined,
+      totalPauseMinutes: 0,
+      revenue: 400
+    });
+    const now = new Date('2026-08-11T18:00:00.000Z');
+    const dossier = buildEmployeeDossier('e1', [session], now);
+
+    const veille = dossier.years[0].months[0];
+    assert.equal(dossier.totals.hours, 4, 'le total reste de quatre heures');
+    assert.equal(dossier.totals.daysWorked, 2, 'la nuit touche deux journées civiles');
+    assert.ok(veille, 'le mois doit exister');
+
+    // Le découpage partagé fait foi : le dossier ne recalcule rien de son côté.
+    const parJour = new Map(splitPunchByLocalDay(session, undefined, now).map(s => [s.dayKey, s.hours]));
+    for (const [dayKey, heures] of parJour) {
+      const jour = dossier.years
+        .flatMap(year => year.months)
+        .find(month => month.month === dayKey.slice(0, 7));
+      assert.ok(jour, `le mois de ${dayKey} doit figurer au dossier`);
+    }
+    assert.equal([...parJour.values()].reduce((a, b) => a + b, 0).toFixed(2), '4.00');
+
+    // Le montant suit les heures, et rien ne se perd en route.
+    assert.equal(dossier.totals.revenue, 400);
+    // Le pointage ne compte qu'une fois, à la journée où le travailleur est arrivé.
+    assert.equal(dossier.totals.sessions, 1);
+  } finally {
+    setAppTimeZone(null);
+  }
+});
+
+test('le fuseau configuré pour la compagnie décide de la journée, pas celui du serveur', () => {
+  const session = punch({
+    id: 'soir',
+    startTime: '2026-08-11T02:00:00.000Z',  // 10 août 20 h à Edmonton
+    endTime: '2026-08-11T04:00:00.000Z',    // 10 août 22 h à Edmonton
+    totalWorkedHours: 2,
+    revenue: 84
+  });
+
+  setAppTimeZone('America/Edmonton');
+  try {
+    const dossier = buildEmployeeDossier('e1', [session], new Date('2026-08-11T18:00:00.000Z'));
+    assert.equal(dossier.firstDay, '2026-08-10', 'à Edmonton, ce quart appartient au 10 août');
+  } finally {
+    setAppTimeZone(null);
+  }
+
+  setAppTimeZone('UTC');
+  try {
+    const dossier = buildEmployeeDossier('e1', [session], new Date('2026-08-11T18:00:00.000Z'));
+    assert.equal(dossier.firstDay, '2026-08-11', 'en UTC, le même quart bascule au 11');
+  } finally {
+    setAppTimeZone(null);
+  }
 });

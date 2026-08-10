@@ -13,6 +13,13 @@
 // l'entrepreneur lit sa feuille de temps.
 
 import type { Employee, PayrollPayment, PunchSession } from './types';
+// Le découpage d'un pointage en journées locales appartient à punchHours.ts
+// depuis la refonte des heures. Le dossier s'en sert au lieu d'en refaire une
+// version à lui : un quart de nuit doit compter les mêmes heures ici et sur le
+// tableau de bord, sinon on rouvre exactement l'incohérence qu'on venait de
+// fermer.
+import { localDayKey as localTimeDayKey } from './localTime';
+import { splitPunchByLocalDay } from './punchHours';
 
 export interface DossierDay {
   date: string;            // 2026-08-10
@@ -60,16 +67,12 @@ export interface EmployeeDossier {
   lastDay: string | null;
 }
 
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-/** Clé de jour dans le fuseau de l'appareil, jamais en UTC : un pointage de
- *  18 h à Fort McMurray ne doit pas basculer au lendemain. */
+/** Clé de jour dans le fuseau configuré pour la compagnie, jamais en UTC : un
+ *  pointage de 18 h à Fort McMurray ne doit pas basculer au lendemain. */
 export function localDayKey(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return localTimeDayKey(date);
 }
 
 /**
@@ -109,33 +112,46 @@ export function buildEmployeeDossier(
   let activeSession: PunchSession | null = null;
 
   for (const session of mine) {
-    const dayKey = localDayKey(session.startTime);
-    if (!dayKey) continue;
+    // Un quart de 22 h à 2 h appartient aux deux journées. Le découpage donne
+    // les heures réellement faites de chaque côté de minuit ; le montant suit
+    // au prorata, faute d'être horodaté ligne par ligne.
+    const slices = splitPunchByLocalDay(session, undefined, now);
+    if (slices.length === 0) continue;
 
-    const hours = punchSessionHours(session, now);
+    const totalHours = slices.reduce((sum, slice) => sum + slice.hours, 0);
     const revenue = Number.isFinite(Number(session.revenue)) ? Number(session.revenue) : 0;
     const open = session.endTime === null;
     if (open && (!activeSession || new Date(session.startTime) > new Date(activeSession.startTime))) {
       activeSession = session;
     }
 
-    const day = days.get(dayKey) || { date: dayKey, hours: 0, revenue: 0, sessions: 0, projects: [], inProgress: false };
-    day.hours += hours;
-    day.revenue += revenue;
-    day.sessions += 1;
-    day.inProgress = day.inProgress || open;
-    if (session.projectName && !day.projects.includes(session.projectName)) day.projects.push(session.projectName);
-    days.set(dayKey, day);
+    // Le pointage compte pour une seule occurrence, imputée à la journée où le
+    // travailleur est arrivé sur le chantier : c'est ainsi qu'il lit sa feuille
+    // de temps, même si le quart a mordu sur le lendemain.
+    const startDayKey = slices[0].dayKey;
+
+    for (const slice of slices) {
+      const share = totalHours > 0 ? slice.hours / totalHours : 0;
+      const day = days.get(slice.dayKey)
+        || { date: slice.dayKey, hours: 0, revenue: 0, sessions: 0, projects: [], inProgress: false };
+      day.hours += slice.hours;
+      day.revenue += revenue * share;
+      if (slice.dayKey === startDayKey) day.sessions += 1;
+      day.inProgress = day.inProgress || open;
+      if (session.projectName && !day.projects.includes(session.projectName)) day.projects.push(session.projectName);
+      days.set(slice.dayKey, day);
+    }
 
     const projectKey = session.projectId || session.projectName || 'inconnu';
+    const lastDayKey = slices[slices.length - 1].dayKey;
     const project = projects.get(projectKey) || {
       projectId: session.projectId || '',
       projectName: session.projectName || '',
-      hours: 0, revenue: 0, days: 0, lastWorked: dayKey
+      hours: 0, revenue: 0, days: 0, lastWorked: lastDayKey
     };
-    project.hours += hours;
+    project.hours += totalHours;
     project.revenue += revenue;
-    if (dayKey > project.lastWorked) project.lastWorked = dayKey;
+    if (lastDayKey > project.lastWorked) project.lastWorked = lastDayKey;
     projects.set(projectKey, project);
   }
 
@@ -143,11 +159,9 @@ export function buildEmployeeDossier(
   // fois une journée où l'employé a pointé deux quarts sur le même chantier.
   const projectDays = new Map<string, Set<string>>();
   for (const session of mine) {
-    const dayKey = localDayKey(session.startTime);
-    if (!dayKey) continue;
     const projectKey = session.projectId || session.projectName || 'inconnu';
     const set = projectDays.get(projectKey) || new Set<string>();
-    set.add(dayKey);
+    for (const slice of splitPunchByLocalDay(session, undefined, now)) set.add(slice.dayKey);
     projectDays.set(projectKey, set);
   }
   for (const [key, set] of projectDays) {
