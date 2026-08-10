@@ -582,7 +582,7 @@ export default function ClientDocumentsManager() {
             <DollarSign className="w-4 h-4" />
           </div>
           <span className="text-[10px] text-gray-500 uppercase font-mono tracking-wider block">{t.cdmReceivables}</span>
-          <p className="text-xl font-black text-white mt-1">{totalReceivables.toLocaleString(dateLocale)}$</p>
+          <p className="text-lg sm:text-xl font-black text-white mt-1 break-words tabular-nums">{totalReceivables.toLocaleString(dateLocale)}$</p>
           <p className="text-[10px] text-gray-400 mt-1">{t.cdmUnpaidInvoices}</p>
         </div>
 
@@ -591,7 +591,7 @@ export default function ClientDocumentsManager() {
             <Briefcase className="w-4 h-4" />
           </div>
           <span className="text-[10px] text-gray-500 uppercase font-mono tracking-wider block">{t.cdmSignedQuotes}</span>
-          <p className="text-xl font-black text-white mt-1">{totalQuotesAccepted.toLocaleString(dateLocale)}$</p>
+          <p className="text-lg sm:text-xl font-black text-white mt-1 break-words tabular-nums">{totalQuotesAccepted.toLocaleString(dateLocale)}$</p>
           <p className="text-[10px] text-gray-400 mt-1">{t.cdmApprovedReady}</p>
         </div>
 
@@ -654,7 +654,10 @@ export default function ClientDocumentsManager() {
                       {doc.type === 'quote' ? t.cdmDocQuoteShort : doc.type === 'contract' ? t.cdmDocContractShort : t.cdmDocInvoiceShort}
                     </span>
                   </div>
-                  <h4 className="text-sm font-bold text-white max-w-[220px] truncate">{doc.clientName}</h4>
+                  {/* Le nom du client se coupait à 220 px sans que le texte
+                      complet soit accessible nulle part. Il passe maintenant à
+                      la ligne : un nom de client n'est jamais du remplissage. */}
+                  <h4 className="text-sm font-bold text-white break-words">{doc.clientName}</h4>
                   <p className="text-[11px] text-gray-400 flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5 text-gray-500" />
                     <span>{fmt(t.cdmIssuedDue, { date: doc.date, due: doc.dueDate })}</span>
@@ -675,18 +678,24 @@ export default function ClientDocumentsManager() {
               </div>
 
               {/* Items summary and pricing */}
-              <div className="bg-gray-950/40 rounded-lg p-2.5 grid grid-cols-3 gap-2 text-center text-xs border border-gray-850">
-                <div>
+              {/* Montants : sur téléphone, trois colonnes ne laissent qu'une
+                  soixantaine de pixels par montant, et un montant français
+                  (« 58 200,00 $ ») contient des espaces insécables — il ne peut
+                  donc pas passer à la ligne et débordait de sa case. On empile
+                  étiquette et valeur sur toute la largeur en dessous de `sm`,
+                  et on ne revient aux trois colonnes que lorsqu'il y a la place. */}
+              <div className="bg-gray-950/40 rounded-lg p-2.5 text-xs border border-gray-850 flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between gap-2 min-w-0">
                   <span className="text-[10px] text-gray-500 font-mono">{t.cdmSubtotal}</span>
-                  <p className="font-bold text-white mt-0.5">{money(doc.subtotal)}</p>
+                  <p className="font-bold text-white tabular-nums text-right">{money(doc.subtotal)}</p>
                 </div>
-                <div>
+                <div className="flex items-baseline justify-between gap-2 min-w-0">
                   <span className="text-[10px] text-gray-500 font-mono">{t.cdmTaxesTtc}</span>
-                  <p className="font-bold text-white mt-0.5">{money(doc.total)}</p>
+                  <p className="font-bold text-white tabular-nums text-right">{money(doc.total)}</p>
                 </div>
-                <div>
-                  <span className="text-[10px] text-gray-500 font-mono text-orange-500">{t.cdmDueShort}</span>
-                  <p className="font-black text-green-400 mt-0.5">{money(doc.balanceDue)}</p>
+                <div className="flex items-baseline justify-between gap-2 min-w-0">
+                  <span className="text-[10px] font-mono text-orange-500">{t.cdmDueShort}</span>
+                  <p className="font-black text-green-400 tabular-nums text-right">{money(doc.balanceDue)}</p>
                 </div>
               </div>
 

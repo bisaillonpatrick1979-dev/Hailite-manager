@@ -20,7 +20,10 @@ export default function LegalLinks({ language, className = '' }: Props) {
           href={publicSiteUrl(href)}
           target="_blank"
           rel="noreferrer"
-          className="min-h-8 inline-flex items-center underline decoration-gray-600 underline-offset-4 hover:text-orange-300 focus-visible:text-orange-300"
+          // min-h-11 : 44 px, le minimum utilisable au doigt. La hauteur
+          // précédente (32 px) rendait ces liens difficiles à viser sur
+          // téléphone, notamment pendant l'onboarding.
+          className="min-h-11 inline-flex items-center underline decoration-gray-600 underline-offset-4 hover:text-orange-300 focus-visible:text-orange-300"
         >
           {labels[index]}
         </a>

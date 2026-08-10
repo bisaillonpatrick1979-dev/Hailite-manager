@@ -161,7 +161,9 @@ export default function EmployeeWorkCalendar({ employee, punchSessions, projects
             <div key={`${category.emoji}-${category.range}`} className="rounded-xl border px-2.5 py-2 flex items-center gap-2" style={{ backgroundColor: `${category.color}12`, borderColor: `${category.color}35` }}>
               <span className={`calendar-day-emoji ${category.animation} text-xl`} aria-hidden="true">{category.emoji}</span>
               <div className="min-w-0">
-                <p className="text-[10px] font-black truncate" style={{ color: category.color }}>{currentLanguage === 'FR' ? category.labelFR : category.labelEN}</p>
+                {/* « Très petite journée » perdait 67 px sur téléphone : une
+                    légende tronquée n'explique plus rien. Elle passe à la ligne. */}
+                <p className="text-[10px] font-black leading-tight break-words" style={{ color: category.color }}>{currentLanguage === 'FR' ? category.labelFR : category.labelEN}</p>
                 <p className="text-[9px] text-gray-500 font-bold">{category.range}</p>
               </div>
             </div>

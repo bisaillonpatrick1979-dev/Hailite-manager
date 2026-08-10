@@ -705,7 +705,7 @@ export default function MotivationTab() {
 
                     <div className="pl-2 flex items-center justify-between text-xs text-gray-400 font-mono">
                       <span className="font-bold">🔨 {isFrench ? 'Chantier :' : 'Site:'}</span>
-                      <span className="text-white font-black truncate max-w-[150px]">{stats.activeProjectNames}</span>
+                      <span className="text-white font-black break-words text-right min-w-0">{stats.activeProjectNames}</span>
                     </div>
                   </div>
                 );

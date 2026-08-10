@@ -1460,7 +1460,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           {activeEmployee?.role === 'admin' && (
             <a
               href="/assistant"
-              className="hidden sm:flex items-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
+              // min-h-11 : la zone tactile faisait 30 px, sous le minimum de
+              // 44 px utilisable avec des gants sur un chantier.
+              className="hidden sm:flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-[13px] rounded transition cursor-pointer border border-gray-700"
               title={currentLanguage === 'FR' ? 'Assistant IA (plein écran)' : 'AI Assistant (full screen)'}
               aria-label={currentLanguage === 'FR' ? 'Ouvrir l’assistant IA' : 'Open the AI assistant'}
             >
@@ -2243,7 +2245,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-3xl font-black text-white mt-1">
                             {getAdminStats().activeWorkersCount} / {employees.length - 1}
                           </p>
-                          <span className="text-xs text-green-400 font-black uppercase mt-1 block">{t.onActiveSite}</span>
+                          <span className="text-xs text-green-400 font-black uppercase mt-1 block break-words">{t.onActiveSite}</span>
                         </div>
                       </div>
 
@@ -2256,7 +2258,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-3xl font-black text-white mt-1">
                             {getAdminStats().totalHrs.toFixed(1)}h
                           </p>
-                          <span className="text-xs text-blue-400 font-bold uppercase mt-1 block">{t.sinceOpening}</span>
+                          <span className="text-xs text-blue-400 font-bold uppercase mt-1 block break-words">{t.sinceOpening}</span>
                         </div>
                       </div>
 
@@ -2269,7 +2271,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <p className="text-3xl font-black text-[#22C55E] mt-1 break-words">
                             {money(getAdminStats().totalWages)}
                           </p>
-                          <span className="text-xs text-emerald-400 font-black uppercase mt-1 block">{t.grossAccumulated}</span>
+                          <span className="text-xs text-emerald-400 font-black uppercase mt-1 block break-words">{t.grossAccumulated}</span>
                         </div>
                       </div>
 
@@ -2399,22 +2401,22 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                                 <div className="pl-2 grid grid-cols-3 gap-2 text-center font-mono text-[10px] text-gray-400">
                                   <div className="bg-gray-950 p-2 rounded-lg border border-gray-800/80">
-                                    <span className="block text-[9px] text-gray-500 uppercase leading-none mb-1.5 font-bold tracking-wider">{t.membersLabel}</span>
+                                    <span className="block text-[9px] text-gray-500 uppercase leading-tight mb-1.5 font-bold tracking-wide break-words">{t.membersLabel}</span>
                                     <span className="text-white text-sm font-black">{activeCount}/{team.memberIds.length}</span>
                                   </div>
                                   <div className="bg-gray-950 p-2 rounded-lg border border-gray-800/80">
-                                    <span className="block text-[9px] text-gray-500 uppercase leading-none mb-1.5 font-bold tracking-wider">{t.hoursLabel}</span>
+                                    <span className="block text-[9px] text-gray-500 uppercase leading-tight mb-1.5 font-bold tracking-wide break-words">{t.hoursLabel}</span>
                                     <span className="text-white text-sm font-black">{totalHrs.toFixed(1)}h</span>
                                   </div>
                                   <div className="bg-gray-950 p-2 rounded-lg border border-gray-800/80">
-                                    <span className="block text-[9px] text-gray-500 uppercase leading-none mb-1.5 font-bold tracking-wider">{t.revenueLabel}</span>
+                                    <span className="block text-[9px] text-gray-500 uppercase leading-tight mb-1.5 font-bold tracking-wide break-words">{t.revenueLabel}</span>
                                     <span className="text-emerald-400 text-sm font-black">{totalRev.toFixed(0)}$</span>
                                   </div>
                                 </div>
 
                                 <div className="pl-2 flex justify-between items-center text-xs text-gray-400 pt-1 border-t border-gray-850">
                                   <span className="font-bold flex items-center gap-1">{t.siteShortLabel}</span>
-                                  <span className="text-white font-black truncate max-w-[150px]">{chantierName}</span>
+                                  <span className="text-white font-black break-words text-right min-w-0">{chantierName}</span>
                                 </div>
                               </div>
                             );
@@ -2492,7 +2494,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             >
                               <ShieldAlert className="w-5 h-5 flex-shrink-0 text-red-400 mt-0.5" />
                               <div className="flex-1 min-w-0">
-                                <h5 className="text-xs font-bold uppercase tracking-tight">{alert.title}</h5>
+                                <h5 className="text-xs font-bold uppercase tracking-tight break-words">{alert.title}</h5>
                                 <p className="text-[11px] text-gray-300 mt-1 leading-normal">{alert.message}</p>
                                 <span className="text-[9px] text-gray-400 mt-2 block font-mono">{new Date(alert.date).toLocaleDateString()}</span>
                               </div>
@@ -3629,7 +3631,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {/* Col 2: Streaks */}
                           <div className={`p-4 bg-gray-950 rounded-xl border border-gray-850 flex flex-col justify-between ${streakColor}`}>
                             <div className="flex justify-between items-center">
-                              <span className="text-xs font-bold uppercase tracking-tight">{t.punchStreakLabel}</span>
+                              <span className="text-xs font-bold uppercase tracking-tight break-words">{t.punchStreakLabel}</span>
                               <span className="text-xs font-mono font-black">{streak} {t.daysWord}</span>
                             </div>
                             <div className="mt-2 text-xs font-semibold">
@@ -4067,7 +4069,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 font-mono text-xs">
                           {/* Card A: Invoices */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.clientInvoicesCard}</span>
+                            <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.clientInvoicesCard}</span>
                             <p className="text-base text-white font-black">{totalInvoiceBilled.toFixed(2)} $ <span className="text-[10px] text-gray-500 font-normal">{t.ttcLabel}</span></p>
                             <p className="text-[11px] text-green-400">{t.recoveredColon} {totalInvoicePaid.toFixed(2)} $</p>
                             <p className="text-[11px] text-gray-500">{t.dueColon} {(totalInvoiceBilled - totalInvoicePaid).toFixed(2)} $</p>
@@ -4075,7 +4077,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                           {/* Card B: Expenses */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.supplierExpensesCard}</span>
+                            <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.supplierExpensesCard}</span>
                             <p className="text-base text-white font-black">{totalExpenseAmt.toFixed(2)} $</p>
                             <p className="text-[11px] text-amber-500">{t.materialsFuelColon} {filteredExpenses.length} {t.piecesWord}</p>
                             <p className="text-[10px] text-gray-500 font-sans">{t.recordedCAD}</p>
@@ -4083,7 +4085,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
                           {/* Card C: Payroll Payments */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.payrollMass}</span>
+                            <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.payrollMass}</span>
                             <p className="text-base text-white font-black">{totalPayrollPaid.toFixed(2)} $</p>
                             <p className="text-[11px] text-cyan-400">Prov. {workersCompName} (5.5%) : {cnesstProvision.toFixed(2)} $</p>
                             <p className="text-[10px] text-gray-500 font-sans">{t.tradesPeople}</p>
@@ -4092,7 +4094,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           {/* Card D: Prov Net Results */}
                           <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl space-y-1 flex flex-col justify-between">
                             <div>
-                              <span className="text-[10px] text-gray-500 uppercase block font-sans">{t.provisionalNet}</span>
+                              <span className="text-[10px] text-gray-500 uppercase block font-sans break-words">{t.provisionalNet}</span>
                               <p className={`text-base font-black ${netIncome >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                 {netIncome.toFixed(2)} $
                               </p>
