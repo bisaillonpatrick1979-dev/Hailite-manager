@@ -18,7 +18,7 @@ const storage = new MemoryStorage();
 
 const {
   buildApplicationBackup, decideRestoreScope, importApplicationBackup,
-  restorableEntries, sanitizeRestoredValue
+  registerBackupSnapshotProvider, restorableEntries, sanitizeRestoredValue
 } = await import('../src/personalBackup');
 
 function seedBusiness() {
@@ -41,6 +41,72 @@ const asFile = (payload: unknown) => ({
   size: 1000,
   text: async () => JSON.stringify(payload)
 }) as unknown as File;
+
+// ---------------------------------------------------------------------------
+// Ce que le fichier contient réellement
+// ---------------------------------------------------------------------------
+// En fonctionnement réel, les données d'affaires ne sont JAMAIS dans le
+// stockage du navigateur : securityStorage les refuse et une purge les efface
+// au démarrage. Les cas suivants reproduisent cette situation — un stockage qui
+// ne contient que des préférences — pour vérifier que le fichier déposé sur le
+// nuage du client contient malgré tout son entreprise.
+
+function seedPreferencesOnly() {
+  storage.clear();
+  storage.setItem('gcp_personalBackupConfig', JSON.stringify({
+    mode: 'personal_cloud', provider: 'google_drive', folderName: 'Hailite',
+    fileName: 'sauvegarde.json', connected: true, automatic: true
+  }));
+  storage.setItem('gcp_currentLanguage', JSON.stringify('FR'));
+  storage.setItem('gcp_currentTheme', JSON.stringify('quantum'));
+}
+
+test('la sauvegarde contient l’entreprise même quand le navigateur ne garde que les préférences', () => {
+  seedPreferencesOnly();
+  registerBackupSnapshotProvider(() => ({
+    gcp_employees: [{ id: 'e1', name: 'Léa Tremblay', nip: '4821', hourlyRate: 42 }],
+    gcp_projects: [{ id: 'c1', name: '335 Grégoire' }],
+    gcp_punchSessions: [{ id: 'p1', employeeId: 'e1', revenue: 336 }],
+    gcp_documents: [{ id: 'd1', number: 'FAC-0001', total: 352.8 }]
+  }));
+
+  const data = buildApplicationBackup().data as Record<string, any>;
+  registerBackupSnapshotProvider(null);
+
+  assert.equal(data.gcp_projects[0].name, '335 Grégoire');
+  assert.equal(data.gcp_punchSessions[0].revenue, 336);
+  assert.equal(data.gcp_documents[0].number, 'FAC-0001');
+  assert.equal(data.gcp_currentLanguage, 'FR', 'les préférences restent du stockage local');
+});
+
+test('le NIP est vidé avant de partir chez un hébergeur tiers', () => {
+  seedPreferencesOnly();
+  registerBackupSnapshotProvider(() => ({
+    gcp_employees: [{ id: 'e1', name: 'Léa Tremblay', nip: '4821', hourlyRate: 42 }]
+  }));
+
+  const data = buildApplicationBackup().data as Record<string, any>;
+  registerBackupSnapshotProvider(null);
+
+  assert.equal(data.gcp_employees[0].nip, '', 'un code d’accès ne quitte jamais l’appareil');
+  assert.equal(data.gcp_employees[0].hourlyRate, 42, 'le reste de la fiche part bien');
+});
+
+test('la destination de sauvegarde et les jetons ne partent pas, même fournis par le magasin', () => {
+  seedPreferencesOnly();
+  registerBackupSnapshotProvider(() => ({
+    gcp_authToken: 'jeton',
+    gcp_personalBackupConfig: { mode: 'local' },
+    gcp_projects: [{ id: 'c1' }]
+  }));
+
+  const data = buildApplicationBackup().data as Record<string, any>;
+  registerBackupSnapshotProvider(null);
+
+  assert.equal(data.gcp_authToken, undefined);
+  assert.equal(data.gcp_personalBackupConfig, undefined);
+  assert.equal(data.gcp_projects.length, 1);
+});
 
 // ---------------------------------------------------------------------------
 // La promesse : ce qui sort doit pouvoir revenir

@@ -150,7 +150,33 @@ export async function clearPersonalBackupHandle(): Promise<void> {
   }
 }
 
-function collectApplicationData(): Record<string, unknown> {
+// ---------------------------------------------------------------------------
+// D'où viennent les données mises dans le fichier
+// ---------------------------------------------------------------------------
+// Le fichier était construit en relisant le stockage du navigateur. Or la
+// politique de sécurité (securityStorage.ts) interdit d'y écrire les données
+// d'affaires : employés, chantiers, pointages et documents n'y sont jamais,
+// et une purge les efface au démarrage. Le fichier déposé sur le nuage du
+// client ne contenait donc que sa langue et son thème — alors que toute la
+// promesse est qu'il garde SES informations chez lui.
+//
+// Le magasin en mémoire est la seule source qui les possède réellement. Il
+// s'enregistre ici au démarrage. La lecture du stockage local reste utilisée
+// pour les préférences, et sert de repli si rien ne s'est enregistré.
+
+type BackupSnapshotProvider = () => Record<string, unknown>;
+
+let snapshotProvider: BackupSnapshotProvider | null = null;
+
+/**
+ * Branche la source des données d'affaires. Appelé par le magasin, qui ne peut
+ * pas être importé ici : c'est lui qui importe ce module.
+ */
+export function registerBackupSnapshotProvider(provider: BackupSnapshotProvider | null): void {
+  snapshotProvider = provider;
+}
+
+function localStorageEntries(): Record<string, unknown> {
   const storage = safeLocalStorage();
   const data: Record<string, unknown> = {};
   if (!storage) return data;
@@ -165,6 +191,19 @@ function collectApplicationData(): Record<string, unknown> {
       data[key] = raw;
     }
   }
+  return data;
+}
+
+export function collectApplicationData(): Record<string, unknown> {
+  const data = localStorageEntries();
+
+  for (const [key, value] of Object.entries(snapshotProvider?.() || {})) {
+    if (!key.startsWith('gcp_') || EXCLUDED_KEYS.has(key)) continue;
+    if (value === undefined) continue;
+    // Un NIP ne quitte jamais l'appareil dans un fichier déposé sur un nuage.
+    data[key] = sanitizeRestoredValue(key, value);
+  }
+
   return data;
 }
 
