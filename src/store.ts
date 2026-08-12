@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { scheduleConfiguredBackup } from './personalBackup';
+import { registerBackupSnapshotProvider, scheduleConfiguredBackup } from './personalBackup';
 import {
   Employee, Project, PunchSession, Invoice, CatalogueMaterial,
   InventoryItem, ToolAsset, ToolTheftReport, SupplierOrder, Supplier, Client, CompanyInfo, HRAlert, EmployeeRole, PayMode, VisualTheme,
@@ -2722,4 +2722,64 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   }
 }));
+
+// ---------------------------------------------------------------------------
+// Ce que la sauvegarde personnelle doit réellement contenir
+// ---------------------------------------------------------------------------
+// Les données d'affaires n'atteignent jamais le stockage du navigateur : la
+// politique de sécurité les refuse et une purge les efface au démarrage. Le
+// magasin en mémoire est donc le seul endroit où elles existent côté client.
+// Sans ce branchement, le fichier déposé sur le nuage du client ne contient
+// que sa langue et son thème.
+//
+// Le NIP est vidé au passage par le module de sauvegarde : un code d'accès ne
+// part jamais dans un fichier déposé chez un tiers.
+const BACKUP_STATE_KEYS: Record<string, keyof AppState> = {
+  gcp_employees: 'employees',
+  gcp_projects: 'projects',
+  gcp_punchSessions: 'punchSessions',
+  gcp_invoices: 'invoices',
+  gcp_catalogue: 'catalogue',
+  gcp_suppliers: 'suppliers',
+  gcp_inventory: 'inventory',
+  gcp_toolAssets: 'toolAssets',
+  gcp_toolTheftReports: 'toolTheftReports',
+  gcp_orders: 'orders',
+  gcp_clients: 'clients',
+  gcp_companyInfo: 'companyInfo',
+  gcp_hrAlerts: 'hrAlerts',
+  gcp_documents: 'documents',
+  gcp_expenses: 'expenses',
+  gcp_projectPhotos: 'projectPhotos',
+  gcp_changeOrders: 'changeOrders',
+  gcp_insuranceClaims: 'insuranceClaims',
+  gcp_leads: 'leads',
+  gcp_shiftAssignments: 'shiftAssignments',
+  gcp_safetyRecords: 'safetyRecords',
+  gcp_personalExpenses: 'personalExpenses',
+  gcp_payrollPayments: 'payrollPayments',
+  gcp_motivationTeams: 'motivationTeams',
+  gcp_motivationGoals: 'motivationGoals',
+  gcp_weeklyGoals: 'weeklyGoals',
+  gcp_currentLanguage: 'currentLanguage',
+  gcp_currentTheme: 'currentTheme',
+  gcp_isOnboarded: 'isOnboarded'
+};
+
+export function backupSnapshot(): Record<string, unknown> {
+  const state = useAppStore.getState();
+  // Le bac à sable de démonstration contient des chiffres inventés. Les écrire
+  // dans la sauvegarde du client remplacerait sa vraie entreprise par une
+  // fiction au moment où il en aurait le plus besoin.
+  if (state.demoSandboxActive) return {};
+
+  const snapshot: Record<string, unknown> = {};
+  for (const [storageKey, stateKey] of Object.entries(BACKUP_STATE_KEYS)) {
+    snapshot[storageKey] = state[stateKey];
+  }
+  return snapshot;
+}
+
+registerBackupSnapshotProvider(backupSnapshot);
+
 export default useAppStore;
