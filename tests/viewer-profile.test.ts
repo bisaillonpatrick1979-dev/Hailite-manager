@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Employee } from '../src/types';
-import { resolveViewerProfile } from '../src/viewerProfile';
+import { keepAcknowledgements, resolveViewerProfile } from '../src/viewerProfile';
 
 const ACCEPTED = '2026.08';
 
@@ -69,4 +69,44 @@ test('le rôle vient toujours du jeton vérifié, jamais de la session', () => {
 
 test('aucun profil sans visiteur identifié', () => {
   assert.equal(resolveViewerProfile([consented], null, 'admin', consented), null);
+});
+
+// ---------------------------------------------------------------------------
+// Une réponse en retard ne doit pas faire reculer la date d'acceptation
+// ---------------------------------------------------------------------------
+
+test('une hydratation en retard ne remplace pas un consentement plus récent', () => {
+  // Partie avant le ré-accord, revenue après : sa date est plus ancienne mais
+  // non vide. La retenir ferait reculer la preuve d'acceptation.
+  const frais = { privacyNoticeVersion: '1', privacyNoticeAcknowledgedAt: '2026-01-01T00:00:00.000Z' } as any;
+  const connu = { privacyNoticeVersion: '2', privacyNoticeAcknowledgedAt: '2026-08-10T00:00:00.000Z' } as any;
+  const fusion = keepAcknowledgements(frais, connu);
+  assert.equal(fusion.privacyNoticeAcknowledgedAt, '2026-08-10T00:00:00.000Z');
+  assert.equal(fusion.privacyNoticeVersion, '2', 'la version suit sa date');
+});
+
+test('une lecture plus récente que ce qu’on connaît est adoptée', () => {
+  const frais = { privacyNoticeVersion: '3', privacyNoticeAcknowledgedAt: '2026-08-11T00:00:00.000Z' } as any;
+  const connu = { privacyNoticeVersion: '2', privacyNoticeAcknowledgedAt: '2026-08-10T00:00:00.000Z' } as any;
+  const fusion = keepAcknowledgements(frais, connu);
+  assert.equal(fusion.privacyNoticeAcknowledgedAt, '2026-08-11T00:00:00.000Z');
+  assert.equal(fusion.privacyNoticeVersion, '3');
+});
+
+test('un consentement connu survit toujours à une lecture vide', () => {
+  const fusion = keepAcknowledgements(
+    {} as any,
+    { privacyNoticeVersion: '2', privacyNoticeAcknowledgedAt: '2026-08-10T00:00:00.000Z',
+      locationNoticeAcknowledgedAt: '2026-08-10T00:00:00.000Z' } as any
+  );
+  assert.equal(fusion.privacyNoticeAcknowledgedAt, '2026-08-10T00:00:00.000Z');
+  assert.equal(fusion.locationNoticeAcknowledgedAt, '2026-08-10T00:00:00.000Z');
+});
+
+test('une date illisible ne l’emporte pas sur une date valide', () => {
+  const fusion = keepAcknowledgements(
+    { privacyNoticeAcknowledgedAt: 'pas une date' } as any,
+    { privacyNoticeAcknowledgedAt: '2026-08-10T00:00:00.000Z' } as any
+  );
+  assert.equal(fusion.privacyNoticeAcknowledgedAt, '2026-08-10T00:00:00.000Z');
 });
