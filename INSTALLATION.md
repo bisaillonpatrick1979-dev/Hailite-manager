@@ -50,7 +50,15 @@ vos données se transfèrent.
    **« Mon nuage personnel »**.
 3. Choisissez où déposer le fichier : Google Drive, OneDrive, Dropbox, iCloud
    Drive, Samsung Cloud, ou simplement un dossier de l'appareil.
-4. Donnez la permission quand le téléphone la demande. C'est tout.
+4. Donnez la permission quand le téléphone la demande.
+5. Sur le même écran, entrez **votre nom et le NIP de votre choix**. C'est
+   votre accès d'administrateur. Personne ne pourra vous le redonner si vous
+   l'oubliez : notez-le quelque part de sûr.
+6. Terminez l'accueil. C'est tout — aucun compte à créer nulle part.
+
+Ensuite, ajoutez vos employés dans **Administration → Employés → Ajouter**.
+Chacun reçoit son NIP et retrouve ses affaires en se connectant sur cet
+appareil.
 
 À partir de là, l'application dépose automatiquement une copie complète de
 votre entreprise dans ce dossier, quelques secondes après chaque changement.
@@ -64,9 +72,17 @@ choisissez le fichier dans votre nuage.
 - Ce fichier contient votre entreprise au complet. Il est aussi sensible que
   vos dossiers papier : gardez-le dans un dossier privé, pas dans un dossier
   partagé avec des liens publics.
-- Le NIP n'est jamais écrit dans ce fichier. Sur un appareil, le NIP est une
-  commodité, pas un coffre-fort : la vraie protection, c'est le verrouillage
-  d'écran de l'appareil. Activez-le.
+- Le NIP en clair n'est jamais écrit, ni sur l'appareil ni dans ce fichier :
+  l'application n'en garde qu'une empreinte, dont on ne peut pas le déduire
+  directement. Mais soyons francs — un NIP à quatre chiffres n'a que dix mille
+  possibilités. Il empêche un employé d'ouvrir le dossier d'un collègue sur la
+  tablette du chantier; il n'arrête pas quelqu'un qui vous vole l'appareil.
+  **Activez le verrouillage d'écran de votre téléphone**, c'est lui la vraie
+  protection.
+
+**Si vous oubliez votre NIP** en mode hors serveur, il n'y a personne pour le
+réinitialiser : c'est le revers de n'avoir aucun compte chez personne. Gardez
+une sauvegarde à jour et notez votre NIP ailleurs.
 
 ---
 
