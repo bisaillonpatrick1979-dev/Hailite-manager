@@ -1,0 +1,57 @@
+name: Tester le mode hors serveur
+
+# Le client qui choisit « nuage personnel » n'a aucun serveur : ses données
+# vivent sur son appareil et son NIP est vérifié là. Deux régressions
+# silencieuses guettent ce mode, et aucune ne se voit dans un test unitaire :
+# la purge de sécurité au démarrage peut recommencer à tout effacer, et la
+# connexion peut se remettre à passer par le réseau. Ce parcours les attrape
+# dans un vrai navigateur.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-mode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Installer Chrome (version épinglée)
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          # Épinglé sur la version que puppeteer-core cible, pour la même raison
+          # que dans le parcours d'onboarding : un navigateur qui suit le canal
+          # public fait échouer le test sans qu'aucun code n'ait changé.
+          # À relever en même temps que puppeteer-core.
+          chrome-version: 151.0.7922.47
+      - name: Compiler et servir l’application
+        run: |
+          npx vite build
+          npx vite preview --port 4173 --host 127.0.0.1 > /tmp/hailite-preview.log 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4173/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/hailite-preview.log
+          exit 1
+      - name: Parcours hors serveur
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+          OFFLINE_URL: http://127.0.0.1:4173
+        run: npm run test:offline

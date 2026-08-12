@@ -47,6 +47,9 @@ export interface Employee {
   id: string;
   name: string;
   nip: string; // valeur transitoire d'écriture seulement; jamais relue ni persistée
+  // Empreinte dérivée du NIP, uniquement en mode hors serveur (voir localAuth.ts).
+  // En mode Supabase, elle reste vide : le serveur détient la sienne.
+  accessCodeHash?: string;
   role: EmployeeRole;
   hourlyRate: number;
   workerType: string; // ex: 'Compagnon', 'Salarié', 'Apprenti', etc.

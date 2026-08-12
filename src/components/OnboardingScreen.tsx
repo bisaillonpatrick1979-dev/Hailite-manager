@@ -27,7 +27,7 @@ const THEMES = [
 export default function OnboardingScreen() {
   const {
     currentLanguage, setLanguage, currentTheme, setTheme,
-    companyInfo, updateCompanyInfo, setIsOnboarded
+    companyInfo, updateCompanyInfo, setIsOnboarded, addEmployee
   } = useAppStore();
 
   const isFR = currentLanguage === 'FR';
@@ -35,6 +35,9 @@ export default function OnboardingScreen() {
   const initialDefaults = getJurisdictionDefaults(initialMarket, companyInfo.region);
 
   const [step, setStep] = useState(1);
+  // Premier administrateur, demandé seulement en mode hors serveur.
+  const [adminName, setAdminName] = useState('');
+  const [adminPin, setAdminPin] = useState('');
   const onboardingScrollRef = useRef<HTMLDivElement | null>(null);
   const [companyName, setCompanyName] = useState(companyInfo.name || '');
   const [companyEmail, setCompanyEmail] = useState(companyInfo.email || '');
@@ -137,11 +140,19 @@ export default function OnboardingScreen() {
   };
 
   const needsCrossBorderAcknowledgement = market === 'EU' && storageMode !== 'local';
+
+  // Hors serveur, aucun compte n'a été créé par une commande d'installation :
+  // sans premier administrateur, l'écran de connexion n'aurait personne à
+  // proposer et l'application serait inaccessible dès la fin de l'accueil.
+  const offlineMode = storageMode === 'local' || storageMode === 'personal_cloud';
+  const administratorReady = !offlineMode
+    || (adminName.trim().length >= 2 && adminPin.trim().length >= 4);
+
   const canContinue = (() => {
     if (step === 1) return companyName.trim().length >= 2 && companyEmail.includes('@') && privacyContactEmail.includes('@');
     if (step === 2) return !!regionCode && !!currency && !!dateLocale;
     if (step === 3) return taxConfirmed;
-    if (step === 4) return storageSetupReady && privacyAccepted && employeeBasisConfirmed && locationNoticeConfirmed && (!needsCrossBorderAcknowledgement || crossBorderAccepted);
+    if (step === 4) return storageSetupReady && administratorReady && privacyAccepted && employeeBasisConfirmed && locationNoticeConfirmed && (!needsCrossBorderAcknowledgement || crossBorderAccepted);
     return true;
   })();
 
@@ -198,6 +209,23 @@ export default function OnboardingScreen() {
       complianceVersion: COMPLIANCE_VERSION,
       isOnboarded: true
     });
+    // Après updateCompanyInfo, et pas avant : c'est cette écriture qui fixe le
+    // mode de stockage sur l'appareil, et l'enregistrement du NIP en dépend.
+    if (offlineMode) {
+      addEmployee({
+        name: adminName.trim(),
+        nip: adminPin.trim(),
+        role: 'admin',
+        hourlyRate: 0,
+        workerType: isFR ? 'Administration' : 'Administration',
+        asNumber: '',
+        phone: '',
+        address: '',
+        hireDate: now.slice(0, 10),
+        avatar: ''
+      });
+    }
+
     setIsOnboarded(true);
     document.title = `${cleanName} — Hailite Manager`;
   };
@@ -297,6 +325,40 @@ export default function OnboardingScreen() {
               onConnectionMethodChange={setBackupConnectionMethod}
               cloudRegion={CLOUD_REGION}
             />
+            {offlineMode && (
+              <div className="rounded-2xl border border-orange-500/40 bg-orange-500/10 p-5">
+                <h3 className="text-xl font-black flex items-center gap-2">
+                  <ShieldCheck className="h-6 w-6 text-orange-300" />
+                  {isFR ? 'Votre accès à l’application' : 'Your access to the application'}
+                </h3>
+                <p className="mt-2 text-sm leading-relaxed text-gray-300">
+                  {isFR
+                    ? 'Sans serveur, il n’y a personne d’autre pour vérifier qui vous êtes : ce NIP est vérifié sur cet appareil. Choisissez-en un dont vous vous souviendrez, personne ne pourra vous le redonner. Activez aussi le verrouillage d’écran de l’appareil : c’est lui la vraie protection si on vous le vole.'
+                    : 'Without a server, nobody else can check who you are: this PIN is verified on this device. Pick one you will remember — no one can recover it for you. Turn on the device screen lock too: that is the real protection if the device is stolen.'}
+                </p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <label>
+                    <span className="block mb-2 font-bold text-gray-200">{isFR ? 'Votre nom' : 'Your name'}</span>
+                    <input
+                      value={adminName}
+                      onChange={event => setAdminName(event.target.value)}
+                      autoComplete="name"
+                      className="w-full min-h-12 rounded-xl border border-gray-700 bg-[#0F1115] px-3"
+                    />
+                  </label>
+                  <label>
+                    <span className="block mb-2 font-bold text-gray-200">{isFR ? 'Votre NIP (4 chiffres ou plus)' : 'Your PIN (4 digits or more)'}</span>
+                    <input
+                      value={adminPin}
+                      onChange={event => setAdminPin(event.target.value.replace(/\D/g, '').slice(0, 8))}
+                      inputMode="numeric"
+                      autoComplete="new-password"
+                      className="w-full min-h-12 rounded-xl border border-gray-700 bg-[#0F1115] px-3 font-mono tracking-[0.4em]"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
             <div className="grid sm:grid-cols-3 gap-4"><label className="sm:col-span-2"><span className="block mb-2 font-bold text-gray-200">{isFR ? 'Responsable de la confidentialité' : 'Privacy contact person'}</span><input value={privacyOfficerName} onChange={event => setPrivacyOfficerName(event.target.value)} className="w-full min-h-12 rounded-xl border border-gray-700 bg-[#0F1115] px-3" /></label><label><span className="block mb-2 font-bold text-gray-200">{isFR ? 'Conservation (mois)' : 'Retention (months)'}</span><input type="number" min="1" value={retentionMonths} onChange={event => setRetentionMonths(Number(event.target.value))} className="w-full min-h-12 rounded-xl border border-gray-700 bg-[#0F1115] px-3 font-mono" /></label></div>
             <div className="space-y-3">
               <label className="flex items-start gap-3 rounded-2xl border border-gray-700 bg-[#0F1115] p-4 cursor-pointer"><input type="checkbox" checked={privacyAccepted} onChange={event => setPrivacyAccepted(event.target.checked)} className="mt-1 w-5 h-5 accent-orange-500" /><span><strong>{isFR ? 'Avis et rôle.' : 'Notice and role.'}</strong> {isFR ? 'Je comprends que ma compagnie détermine les finalités et agit généralement comme responsable du traitement pour les données de ses employés, clients et sous-traitants. Hailite Manager et ses fournisseurs techniques traitent les données selon la configuration choisie. Je dois maintenir une politique de confidentialité et répondre aux demandes applicables.' : 'I understand that my company determines purposes and generally acts as controller for employee, client, and subcontractor data. Hailite Manager and technical providers process data according to the selected configuration. I must maintain a privacy policy and respond to applicable requests.'}</span></label>

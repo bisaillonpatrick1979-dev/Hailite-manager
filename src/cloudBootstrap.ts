@@ -167,6 +167,15 @@ export async function prepareCloudState(): Promise<void> {
     return;
   }
 
+  // Hors serveur, il n'y a personne à interroger : la fiche de compagnie est
+  // sur l'appareil et fait autorité. L'appel réussissait à retarder chaque
+  // démarrage d'un aller-retour réseau voué à l'échec.
+  const localCompanyInfo = readObject('gcp_companyInfo');
+  if (localCompanyInfo.dataStorageMode === 'local' || localCompanyInfo.dataStorageMode === 'personal_cloud') {
+    document.title = `${localCompanyInfo.name || 'Hailite Manager'} — Hailite Manager`;
+    return;
+  }
+
   try {
     const identityResponse = await apiFetch('/api/bootstrap', {
       headers: { Accept: 'application/json' },

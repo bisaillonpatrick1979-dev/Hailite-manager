@@ -144,7 +144,12 @@ export default function App() {
   const [cloudSyncing, setCloudSyncing] = useState(true);
   const [syncFailure, setSyncFailure] = useState<CloudSyncStatusDetail | null>(null);
   useEffect(() => {
-    const cloudAllowed = companyInfo.dataStorageMode !== 'local';
+    // Le nuage personnel est un mode hors serveur au même titre que « local » :
+    // il n'y a rien à interroger. Le compter comme un mode serveur relançait
+    // une hydratation toutes les quarante-cinq secondes contre un serveur
+    // inexistant, et faisait clignoter un avertissement de synchronisation.
+    const cloudAllowed = companyInfo.dataStorageMode !== 'local'
+      && companyInfo.dataStorageMode !== 'personal_cloud';
     setCloudSyncAllowed(cloudAllowed);
     if (!cloudAllowed) {
       setCloudSyncing(false);

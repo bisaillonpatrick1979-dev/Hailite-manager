@@ -25,7 +25,8 @@ import {
   rowToHRAlert, rowToExpense, rowToPayrollPayment, rowToDocument
 } from './apiClient';
 import { LOCAL_TEST_MODE, TEST_EMPLOYEES } from './testProfiles';
-import { browserStorageValue } from './securityStorage';
+import { browserStorageValue, readStoragePersistence } from './securityStorage';
+import { hashAccessCode, verifyAccessCode } from './localAuth';
 import type { DemoSandboxSummary } from './demoSandbox';
 import { USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
 import { applyReview, buildSubmittedCredential, type SubmissionInput } from '../credentialVerification';
@@ -892,6 +893,40 @@ function recalculateInvoicesForPunch(get: StoreGet, set: StoreSet, punchId: stri
 // les totaux calculés au premier rendu doivent déjà utiliser le bon fuseau.
 setAppTimeZone(getSavedState<CompanyInfo>('gcp_companyInfo', initialCompanyInfo).timeZone);
 
+/**
+ * Enregistre l'empreinte du NIP sur l'appareil, en mode hors serveur seulement.
+ *
+ * Le calcul est volontairement lent (210 000 tours), donc il ne peut pas être
+ * fait dans l'action synchrone qui enregistre la fiche : elle rendrait la main
+ * une demi-seconde plus tard et le bouton paraîtrait figé. La fiche est donc
+ * écrite tout de suite, et l'empreinte la rejoint juste après.
+ *
+ * En mode Supabase, cette fonction ne fait rien : c'est le serveur qui détient
+ * l'empreinte, et en garder une seconde ici créerait deux vérités.
+ */
+async function storeLocalAccessCode(employeeId: string, accessCode: string): Promise<void> {
+  if (!accessCode || readStoragePersistence() !== 'offline') return;
+  try {
+    const accessCodeHash = await hashAccessCode(accessCode);
+    const employees = useAppStore.getState().employees.map(
+      employee => employee.id === employeeId ? { ...employee, accessCodeHash, nip: '' } : employee
+    );
+    useAppStore.setState({ employees });
+    saveState('gcp_employees', employees);
+  } catch (error) {
+    // Un NIP refusé (trop court) ou une plateforme sans WebCrypto : la fiche
+    // reste créée, mais la personne ne pourra pas se connecter tant qu'un NIP
+    // valide n'aura pas été enregistré. Mieux vaut ça qu'une fiche perdue.
+    console.error('Le NIP n’a pas pu être enregistré sur cet appareil :', error);
+  }
+}
+
+// Le nuage personnel n'a pas plus de serveur que le mode local : dans les deux
+// cas il n'y a rien à interroger. Les confondre avec un mode serveur lançait
+// des hydratations contre le vide.
+const isServerBackedMode = (mode: unknown): boolean =>
+  mode !== 'local' && mode !== 'personal_cloud';
+
 export const useAppStore = create<AppState>((set, get) => ({
   // En production, les données métier partent vides et sont hydratées depuis le
   // serveur après authentification. Les jeux fictifs n'existent qu'en mode dev.
@@ -984,7 +1019,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       demoSandboxActive: false,
       demoSandboxSummary: null
     });
-    setCloudSyncAllowed(snapshot.companyInfo.dataStorageMode !== 'local');
+    setCloudSyncAllowed(isServerBackedMode(snapshot.companyInfo.dataStorageMode));
     await get().hydrateCloud();
   },
 
@@ -1006,6 +1041,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       return {
         success: false,
         message: currentLanguage === 'FR' ? 'Employé non trouvé.' : 'Employee not found.'
+      };
+    }
+
+    // Hors serveur, il n'y a personne à interroger : la vérification se fait
+    // sur l'appareil, contre l'empreinte dérivée du NIP. Ce chemin n'existe que
+    // pour le client qui a choisi de ne créer aucun compte chez personne; en
+    // mode Supabase, le serveur reste l'unique autorité.
+    if (readStoragePersistence() === 'offline') {
+      if (!(await verifyAccessCode(nip, emp.accessCodeHash))) {
+        return {
+          success: false,
+          message: currentLanguage === 'FR' ? 'NIP incorrect.' : 'Incorrect PIN.'
+        };
+      }
+      // Aucune remise à zéro des données ici, contrairement au chemin serveur :
+      // il n'y a pas d'hydratation qui suivrait pour les remettre.
+      set({ activeEmployee: { ...emp, nip: '' } });
+      return {
+        success: true,
+        message: currentLanguage === 'FR' ? `Bienvenue, ${emp.name} !` : `Welcome, ${emp.name}!`
       };
     }
 
@@ -1070,6 +1125,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     demoSnapshot = null;
     setDemoSandboxIsolation(false);
     void authLogout();
+    // Hors serveur, l'appareil est la seule copie : tout vider à la
+    // déconnexion effacerait l'entreprise, et l'écran de connexion n'aurait
+    // plus personne à proposer. On ne referme que la session.
+    if (readStoragePersistence() === 'offline') {
+      set({ activeEmployee: null, demoSandboxActive: false, demoSandboxSummary: null });
+      return;
+    }
+
     set({
       activeEmployee: null, employees: [], projects: [], punchSessions: [], invoices: [],
       catalogue: [], suppliers: [], inventory: [], toolAssets: [], toolTheftReports: [],
@@ -1102,6 +1165,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ employees: updated });
     saveState('gcp_employees', updated);
     if (!LOCAL_TEST_MODE) syncInsert('app_users', employeeToRow(employeeForServer));
+    void storeLocalAccessCode(newEmp.id, emp.nip);
 
     // Auto trigger alert
     get().addHRAlert({
@@ -1116,11 +1180,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateEmployee: (emp) => {
     const { employees, activeEmployee } = get();
     const employeeForServer = emp;
-    const safeEmployee = { ...emp, nip: '' };
+    // L'empreinte déjà enregistrée est conservée : une modification de fiche
+    // qui laisse le champ NIP vide ne doit pas verrouiller la personne dehors.
+    const previous = employees.find(e => e.id === emp.id);
+    const safeEmployee = {
+      ...emp,
+      nip: '',
+      accessCodeHash: emp.accessCodeHash || previous?.accessCodeHash
+    };
     const updated = employees.map(e => e.id === emp.id ? safeEmployee : e);
     set({ employees: updated });
     saveState('gcp_employees', updated);
     if (!LOCAL_TEST_MODE) syncUpdate('app_users', emp.id, employeeToRow(employeeForServer));
+    void storeLocalAccessCode(emp.id, emp.nip);
 
     if (activeEmployee && activeEmployee.id === emp.id) {
       set({ activeEmployee: safeEmployee });
@@ -1792,7 +1864,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const updated = { ...companyInfo, ...info };
     set({ companyInfo: updated });
     saveState('gcp_companyInfo', updated);
-    setCloudSyncAllowed(updated.dataStorageMode !== 'local');
+    setCloudSyncAllowed(isServerBackedMode(updated.dataStorageMode));
     // Les journées de travail suivent le fuseau de la compagnie dès qu'il est
     // défini; sinon celui de l'appareil continue de s'appliquer.
     setAppTimeZone(updated.timeZone);
