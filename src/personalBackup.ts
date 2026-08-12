@@ -366,34 +366,123 @@ export function scheduleConfiguredBackup(): void {
   }, 2500);
 }
 
-export async function importApplicationBackup(file: File): Promise<{ ok: boolean; count: number; message: string }> {
-  if (file.size > 30 * 1024 * 1024) return { ok: false, count: 0, message: 'Le fichier dépasse 30 Mo.' };
+// ---------------------------------------------------------------------------
+// Restauration
+// ---------------------------------------------------------------------------
+// Une sauvegarde qui ne se restaure pas n'est pas une sauvegarde. C'était
+// pourtant le cas : le fichier contenait toute l'entreprise, et la restauration
+// ne rendait que la langue, le thème et la voix. Quelqu'un qui perdait son
+// téléphone récupérait sa préférence d'affichage.
+//
+// La prudence d'origine était justifiée pour le mode Supabase : là, le serveur
+// fait autorité, et repeupler le stockage local créerait une copie fantôme qui
+// diverge en silence. Elle ne l'est pas en mode local ou nuage personnel, où le
+// stockage local EST la base de données — c'est toute la promesse faite au
+// client qui ne veut pas confier ses données à un tiers.
+//
+// La portée de la restauration dépend donc des deux modes en présence.
+
+export type RestoreScope = 'full' | 'preferences_only';
+
+/** Préférences d'affichage : sans danger, restaurées dans tous les cas. */
+const PREFERENCE_KEYS = new Set(['gcp_currentLanguage', 'gcp_currentTheme', 'gcp_aiVoiceEnabled']);
+
+/**
+ * Jusqu'où va la restauration.
+ *
+ * Complète seulement quand l'appareil ET la sauvegarde vivent hors serveur. Une
+ * sauvegarde faite en mode Supabase décrit un instantané dont le serveur est la
+ * source : la réinjecter localement ferait diverger deux copies. Dans ce cas la
+ * bonne manœuvre est de se reconnecter au serveur, pas d'importer un fichier.
+ *
+ * Un appareil fraîchement réinstallé n'a pas de configuration : il retombe sur
+ * « local », donc la restauration après perte de téléphone est bien complète.
+ */
+export function decideRestoreScope(
+  backupMode: unknown,
+  currentMode: AppStorageMode
+): RestoreScope {
+  const offServer = (mode: unknown) => mode === 'local' || mode === 'personal_cloud';
+  return offServer(currentMode) && offServer(backupMode) ? 'full' : 'preferences_only';
+}
+
+/**
+ * Nettoie une valeur avant de la réécrire. Le NIP n'atteint jamais le stockage
+ * local en fonctionnement normal — il est vidé avant l'enregistrement — mais un
+ * fichier peut avoir été modifié à la main. Une restauration ne doit jamais
+ * pouvoir réintroduire un code d'accès.
+ */
+export function sanitizeRestoredValue(key: string, value: unknown): unknown {
+  if (key !== 'gcp_employees' || !Array.isArray(value)) return value;
+  return value.map(entry => (
+    entry && typeof entry === 'object' ? { ...(entry as Record<string, unknown>), nip: '' } : entry
+  ));
+}
+
+/** Entrées réellement réécrites, selon la portée décidée. */
+export function restorableEntries(
+  data: Record<string, unknown>,
+  scope: RestoreScope
+): Array<[string, unknown]> {
+  return Object.entries(data)
+    .filter(([key]) => key.startsWith('gcp_'))
+    // Jetons de session et destination de sauvegarde de CET appareil : jamais
+    // écrasés par un fichier, même si quelqu'un les y a glissés.
+    .filter(([key]) => !EXCLUDED_KEYS.has(key))
+    .filter(([key]) => scope === 'full' || PREFERENCE_KEYS.has(key))
+    .map(([key, value]) => [key, sanitizeRestoredValue(key, value)]);
+}
+
+export interface RestoreResult {
+  ok: boolean;
+  count: number;
+  scope: RestoreScope;
+  message: string;
+}
+
+export async function importApplicationBackup(file: File): Promise<RestoreResult> {
+  const currentMode = getPersonalBackupConfig().mode;
+  if (file.size > 30 * 1024 * 1024) {
+    return { ok: false, count: 0, scope: 'preferences_only', message: 'Le fichier dépasse 30 Mo.' };
+  }
   try {
     const parsed = JSON.parse(await file.text());
     if (parsed?.format !== BACKUP_FORMAT || !parsed?.data || typeof parsed.data !== 'object') {
-      return { ok: false, count: 0, message: 'Ce fichier n’est pas une sauvegarde Hailite Manager valide.' };
+      return {
+        ok: false, count: 0, scope: 'preferences_only',
+        message: 'Ce fichier n’est pas une sauvegarde Hailite Manager valide.'
+      };
     }
     const storage = safeLocalStorage();
-    if (!storage) return { ok: false, count: 0, message: 'Le stockage local est indisponible.' };
-    // Une sauvegarde historique peut contenir des employés, NIP, NAS, paie ou
-    // clients. Elle ne doit plus repeupler localStorage. Seules les préférences
-    // visuelles explicitement non sensibles sont restaurées.
-    const allowedPreferences = new Set(['gcp_currentLanguage', 'gcp_currentTheme', 'gcp_aiVoiceEnabled']);
-    let count = 0;
-    for (const [key, value] of Object.entries(parsed.data)) {
-      if (!allowedPreferences.has(key)) continue;
-      storage.setItem(key, JSON.stringify(value));
-      count += 1;
+    if (!storage) {
+      return { ok: false, count: 0, scope: 'preferences_only', message: 'Le stockage local est indisponible.' };
     }
+
+    const scope = decideRestoreScope(parsed?.storage?.mode, currentMode);
+    const entries = restorableEntries(parsed.data as Record<string, unknown>, scope);
+    for (const [key, value] of entries) storage.setItem(key, JSON.stringify(value));
+
+    if (scope === 'full') {
+      return {
+        ok: entries.length > 0,
+        count: entries.length,
+        scope,
+        message: entries.length > 0
+          ? `${entries.length} ensemble(s) de données ont été restaurés. Rouvrez l’application pour les voir.`
+          : 'La sauvegarde ne contenait aucune donnée à restaurer.'
+      };
+    }
+
     return {
-      ok: count > 0,
-      count,
-      message: count > 0
-        ? `${count} préférence(s) non sensible(s) ont été restaurées.`
-        : 'Cette sauvegarde doit être importée après connexion par le service de migration sécurisé.'
+      ok: entries.length > 0,
+      count: entries.length,
+      scope,
+      message: entries.length > 0
+        ? `${entries.length} préférence(s) restaurées. Les données de cette sauvegarde appartiennent à un serveur : reconnectez-vous pour les retrouver.`
+        : 'Les données de cette sauvegarde appartiennent à un serveur : reconnectez-vous pour les retrouver.'
     };
   } catch {
-    return { ok: false, count: 0, message: 'Le fichier ne peut pas être lu.' };
+    return { ok: false, count: 0, scope: 'preferences_only', message: 'Le fichier ne peut pas être lu.' };
   }
 }
 

@@ -70,15 +70,37 @@ export default function LegacyDataImporter({ isFR, onImported }: LegacyDataImpor
 
   const restoreNative = async (file?: File) => {
     if (!file) return;
+    // Une restauration complète remplace ce qui est sur l'appareil. On ne fait
+    // pas ça sans le dire : quelqu'un qui a travaillé toute la semaine avant de
+    // penser à restaurer un vieux fichier perdrait sa semaine.
+    const confirmed = window.confirm(isFR
+      ? 'Restaurer cette sauvegarde remplacera les données actuellement sur cet appareil. Continuer?'
+      : 'Restoring this backup will replace the data currently on this device. Continue?');
+    if (!confirmed) {
+      if (backupRef.current) backupRef.current.value = '';
+      return;
+    }
+
     setBusy(true);
     const result = await importApplicationBackup(file);
     setBusy(false); setOk(result.ok);
+    if (backupRef.current) backupRef.current.value = '';
+
     setMessage(isFR
       ? result.message
-      : result.ok ? `${result.count} data sections restored.` : 'Invalid Hailite Manager backup file.');
+      : result.ok
+        ? (result.scope === 'full'
+            ? `${result.count} data sections restored. Reopen the application to see them.`
+            : `${result.count} preference(s) restored. This backup belongs to a server: sign in again to get your data back.`)
+        : 'Invalid Hailite Manager backup file.');
+
     if (result.ok) {
       setTotalImported(current => current + result.count);
       onImported?.(totalImported + result.count);
+      // Le magasin en mémoire a été construit au démarrage : sans rechargement,
+      // l'écran continuerait d'afficher l'ancien contenu et laisserait croire
+      // que la restauration n'a rien fait.
+      if (result.scope === 'full') window.setTimeout(() => window.location.reload(), 1500);
     }
   };
 
