@@ -22,11 +22,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Installer Chrome stable
+      - name: Installer Chrome (version épinglée)
         id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: stable
+          # Épinglé sur la version que puppeteer-core cible (PUPPETEER_REVISIONS).
+          # « stable » suivait le canal public : Chrome est passé de 141 à 151
+          # entre deux exécutions et le test a commencé à échouer dès le premier
+          # chargement de page, sans que rien n'ait changé dans l'application.
+          # Un test qui dépend d'un navigateur non épinglé ne dit plus si le
+          # code est bon — il dit quel Chrome est sorti ce matin.
+          # À relever en même temps que puppeteer-core.
+          chrome-version: 151.0.7922.47
       - name: Démarrer l’application de test
         env:
           VITE_LOCAL_TEST_MODE: 'true'
