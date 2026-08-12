@@ -2,9 +2,14 @@
 
 Application React/Vite avec API Express et stockage Supabase.
 
+**Vous venez d'acheter l'application ?** Le guide d'installation pas-à-pas est
+dans [`INSTALLATION.md`](INSTALLATION.md). Il ne demande aucune connaissance en
+informatique.
+
 ## Développement local
 
-Prérequis : Node.js 22 et une compagnie déjà provisionnée dans Supabase.
+Prérequis : Node.js 22 et une compagnie déjà provisionnée dans Supabase
+(voir `supabase/schema.sql` puis `supabase/provision.sql`).
 
 1. Copiez `.env.example` vers `.env` et configurez les variables serveur.
 2. Installez exactement les dépendances verrouillées avec `npm ci`.
