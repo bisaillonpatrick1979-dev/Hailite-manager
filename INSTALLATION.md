@@ -1,5 +1,12 @@
 # Installer Hailite Manager chez vous
 
+> **Vous voulez juste essayer l'application ?** Si quelqu'un vous a envoyé une
+> version d'essai, il n'y a rien à installer d'autre et rien à configurer :
+> ouvrez-la, elle part d'une base vierge et l'accès dure une semaine. Un bandeau
+> orange affiche les jours restants. Rien de ce que vous y entrez ne quitte
+> votre appareil.
+
+
 Ce guide s'adresse à la personne qui vient d'acheter l'application. Il ne
 demande aucune connaissance en informatique : tout se fait dans un navigateur,
 en copiant-collant.

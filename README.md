@@ -39,6 +39,39 @@ Les migrations Supabase se trouvent dans `supabase/migrations`. La migration de
 durcissement doit être revue puis appliquée avant de déployer le code qui dépend
 des colonnes `company_id`, du bucket privé et des fonctions transactionnelles.
 
+## Faire essayer l'application à quelqu'un
+
+Deux façons, selon ce que la personne doit voir.
+
+**Une version d'essai autonome** — elle installe, repart d'une base vierge, et
+l'accès s'arrête tout seul au bout de sept jours.
+
+```bash
+npm run android:trial-apk   # APK d'essai, à envoyer
+```
+
+Cette compilation ne contacte **aucun** serveur : ni le vôtre, ni un autre.
+C'est la propriété la plus importante, et elle est vérifiée à chaque
+changement par `npm run test:trial` (parcours navigateur, branché sur la CI).
+Sans ce garde, l'adresse de serveur figée dans l'application ferait lire vos
+données par la personne qui l'essaie.
+
+Le délai se change avec `VITE_TRIAL_DAYS` (voir `.env.trial`). Une variable
+absente ou illisible produit une application normale, jamais une application
+qui s'éteint sans que personne l'ait voulu.
+
+L'échéance repose sur l'horloge de l'appareil. Reculer l'horloge ne rallonge
+rien — la date la plus avancée jamais vue fait foi — mais désinstaller puis
+réinstaller repart à zéro. C'est une échéance de courtoisie, pas un verrou :
+seul un serveur pourrait faire mieux, et c'est précisément ce qu'on évite ici.
+
+**Un accès invité sur VOTRE serveur** — pour un sous-traitant de passage ou un
+employé temporaire qui doit voir de vraies données. Dans la fiche employé,
+remplissez « Fin d'accès » (bouton « 1 semaine »). Passé la date, la connexion
+est refusée et le profil disparaît de la liste. Attention : cette personne voit
+alors les données de votre entreprise — ce n'est pas une démonstration à
+l'aveugle.
+
 ## Application Android
 
 Le projet Capacitor se trouve dans `android/`. La version mobile embarque le

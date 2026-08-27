@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'rea
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders, setCloudSyncAllowed, type CloudSyncStatusDetail } from './apiClient';
+import { currentTrial, IS_TRIAL_BUILD } from './trialAccess';
+import { writePersonalBackupNow } from './personalBackup';
 
 // Identifiants locaux (les scripts de build ancrent la ligne d'import ci-dessus :
 // ne pas la modifier). Même format UUID que genId d'apiClient.
@@ -143,6 +145,15 @@ export default function App() {
   // Les données métier restent en mémoire et ne sont jamais mises en localStorage.
   const [cloudSyncing, setCloudSyncing] = useState(true);
   const [syncFailure, setSyncFailure] = useState<CloudSyncStatusDetail | null>(null);
+
+  // Version d'essai : l'état est réévalué régulièrement, sinon l'échéance ne
+  // serait constatée qu'au prochain rechargement de la page.
+  const [trial, setTrial] = useState(() => currentTrial());
+  useEffect(() => {
+    if (!IS_TRIAL_BUILD) return;
+    const timer = setInterval(() => setTrial(currentTrial()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     // Le nuage personnel est un mode hors serveur au même titre que « local » :
     // il n'y a rien à interroger. Le compter comme un mode serveur relançait
@@ -1354,8 +1365,45 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
   // avant un useEffect provoque « Rendered more hooks than during the previous
   // render » et un écran noir au moment de terminer la configuration.
+  // Fin d'une version d'essai. Le contrôle passe avant l'accueil : quelqu'un
+  // qui n'a jamais terminé la configuration ne doit pas pouvoir la recommencer
+  // indéfiniment pour repousser l'échéance.
+  if (trial.enabled && trial.expired) {
+    return (
+      <div className="min-h-screen bg-[#0B0D10] text-white flex items-center justify-center p-6">
+        <div className="max-w-md w-full rounded-3xl border border-orange-500/40 bg-orange-500/10 p-6 sm:p-8 text-center">
+          <Clock className="h-12 w-12 text-orange-300 mx-auto" />
+          <h1 className="mt-4 text-2xl font-black">{t.trialOverTitle}</h1>
+          <p className="mt-3 text-sm leading-relaxed text-gray-300">{t.trialOverBody}</p>
+          <p className="mt-4 text-xs leading-relaxed text-gray-400">{t.trialOverData}</p>
+          <button
+            type="button"
+            onClick={() => { void writePersonalBackupNow(true); }}
+            className="mt-5 min-h-12 w-full rounded-xl bg-orange-500 px-5 font-black text-white cursor-pointer"
+          >
+            {t.trialOverExport}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Le décompte doit être visible dès le premier écran : quelqu'un qui essaie
+  // l'application doit savoir combien de temps il lui reste avant de commencer
+  // à y entrer ses chantiers, pas après.
+  const trialBanner = trial.enabled ? (
+    <div className="fixed bottom-0 inset-x-0 z-50 bg-orange-500/95 px-4 py-1.5 text-center text-[11px] font-black uppercase tracking-wide text-white">
+      {fmt(t.trialDaysLeft, { days: String(trial.daysLeft) })}
+    </div>
+  ) : null;
+
   if (!isOnboarded || companyInfo.complianceVersion !== COMPLIANCE_VERSION) {
-    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
+    return (
+      <Suspense fallback={<LazySectionFallback />}>
+        <OnboardingScreen />
+        {trialBanner}
+      </Suspense>
+    );
   }
 
   return (
@@ -1363,6 +1411,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       id="main-scaffold-container"
       className={`min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 flex flex-col relative select-none ${demoSandboxActive ? 'pt-36 sm:pt-28' : 'pt-16'}`}
     >
+      {/* Le décompte reste visible en permanence, pour que personne ne
+          découvre l'échéance le matin où elle tombe. */}
+      {trialBanner}
+
       {activeEmployee && activeEmployee.privacyNoticeVersion !== USER_PRIVACY_NOTICE_VERSION && (
         <Suspense fallback={<LazySectionFallback />}>
           <UserPrivacyNotice

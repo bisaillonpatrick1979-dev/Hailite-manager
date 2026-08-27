@@ -13,3 +13,4 @@ coverage/
 android/keystore.properties
 android/*.jks
 android/*.keystore
+dist-trial/

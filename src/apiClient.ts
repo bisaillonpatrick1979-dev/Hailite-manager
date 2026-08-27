@@ -21,6 +21,7 @@ export interface CredentialInspection {
   provider: string;
 }
 import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
+import { IS_TRIAL_BUILD } from './trialAccess';
 import { apiFetch, isNativeRuntime } from './runtimeConfig';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -137,6 +138,11 @@ export function isDemoSandboxIsolationActive(): boolean { return demoSandboxIsol
 
 let cloudSyncAllowed = (() => {
   if (localTestModeEnabled()) return false;
+  // Une version d'essai ne parle à AUCUN serveur. L'adresse du serveur est
+  // figée dans l'application au moment de la compilation : sans ce garde, la
+  // copie envoyée à un inconnu pour l'essayer irait lire et écrire dans les
+  // données de l'entreprise qui la lui a envoyée.
+  if (IS_TRIAL_BUILD) return false;
   try {
     const company = JSON.parse(localStorage.getItem('gcp_companyInfo') || '{}');
     return ['supabase', 'hybrid', 'cloud'].includes(company?.dataStorageMode);
@@ -144,6 +150,9 @@ let cloudSyncAllowed = (() => {
 })();
 export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed && !demoSandboxIsolation; }
 export function setCloudSyncAllowed(allowed: boolean) {
+  // Même garde que ci-dessus : rien de ce qui se passe à l'écran ne doit
+  // pouvoir rallumer le réseau dans une version d'essai.
+  if (IS_TRIAL_BUILD) { cloudSyncAllowed = false; cloudEnabled = false; return; }
   cloudSyncAllowed = localTestModeEnabled() && !LOCAL_CLOUD_SYNC_TEST_MODE ? false : allowed;
   if (!cloudSyncAllowed || demoSandboxIsolation) cloudEnabled = false;
 }

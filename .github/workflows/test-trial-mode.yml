@@ -1,0 +1,56 @@
+name: Tester la version d'essai
+
+# La copie envoyée à quelqu'un qui veut essayer l'application doit être vierge,
+# ne parler à aucun serveur, et s'arrêter d'elle-même. La promesse critique est
+# la deuxième : l'adresse du serveur est figée dans l'application à la
+# compilation, donc une régression ferait lire les données de l'entreprise qui
+# l'a envoyée par la personne qui l'essaie. Ce parcours le vérifie à chaque
+# changement.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trial-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trial-mode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Installer Chrome (version épinglée)
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          # À relever en même temps que puppeteer-core, comme les autres
+          # parcours navigateur : un Chrome qui suit le canal public fait
+          # échouer le test sans qu'aucun code n'ait changé.
+          chrome-version: 151.0.7922.47
+      - name: Compiler et servir la version d'essai
+        run: |
+          npx vite build --mode trial --outDir dist-trial
+          npx vite preview --outDir dist-trial --port 4174 --host 127.0.0.1 > /tmp/hailite-trial.log 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4174/ > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/hailite-trial.log
+          exit 1
+      - name: Parcours de la version d'essai
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+          TRIAL_URL: http://127.0.0.1:4174
+        run: npm run test:trial

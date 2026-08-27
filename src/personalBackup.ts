@@ -43,6 +43,11 @@ const EXCLUDED_KEYS = new Set([
   'gcp_authToken',
   'gcp_auth_token',
   'gcp_ai_token',
+  // Bornes de la version d'essai. Sans cette exclusion, restaurer une vieille
+  // sauvegarde remettrait le compte à rebours à zéro — et la sauvegarde d'un
+  // essai, importée dans une version achetée, y réintroduirait une échéance.
+  'gcp_trialStartedAt',
+  'gcp_trialLastSeenAt',
   CONFIG_KEY
 ]);
 

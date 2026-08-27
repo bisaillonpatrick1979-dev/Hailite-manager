@@ -9,7 +9,6 @@ import {
   type BackupConnectionMethod,
   type PersonalCloudProvider
 } from '../personalBackup';
-import { LOCAL_TEST_MODE } from '../testProfiles';
 
 const PROVIDERS: Array<{ id: PersonalCloudProvider; fr: string; en: string; icon: string }> = [
   { id: 'google_drive', fr: 'Google Drive', en: 'Google Drive', icon: '🔺' },
@@ -36,6 +35,8 @@ interface StorageDestinationSetupProps {
   connectionMethod?: BackupConnectionMethod;
   onConnectionMethodChange: (method?: BackupConnectionMethod) => void;
   cloudRegion: string;
+  /** Faux dans une version d'essai : il n'y a aucun serveur à proposer. */
+  allowServerMode?: boolean;
 }
 
 export default function StorageDestinationSetup({
@@ -52,7 +53,8 @@ export default function StorageDestinationSetup({
   onSetupReadyChange,
   connectionMethod,
   onConnectionMethodChange,
-  cloudRegion
+  cloudRegion,
+  allowServerMode = true
 }: StorageDestinationSetupProps) {
   const importRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
@@ -123,7 +125,7 @@ export default function StorageDestinationSetup({
   return (
     <div className="space-y-5">
       <div className="grid gap-3 md:grid-cols-3">
-        {LOCAL_TEST_MODE && <button
+        <button
           type="button"
           onClick={() => selectMode('local')}
           className={`min-h-44 rounded-2xl border p-4 text-left transition ${mode === 'local' ? 'border-cyan-300 bg-cyan-500/15' : 'border-slate-700 bg-slate-900'}`}
@@ -135,9 +137,9 @@ export default function StorageDestinationSetup({
               ? 'Les données restent dans l’application sur cet appareil. Un fichier de sauvegarde séparé est créé pour la récupération.'
               : 'Data stays in the app on this device. A separate backup file is created for recovery.'}
           </p>
-        </button>}
+        </button>
 
-        <button
+        {allowServerMode && <button
           type="button"
           onClick={() => selectMode('supabase')}
           className={`min-h-44 rounded-2xl border p-4 text-left transition ${mode === 'supabase' ? 'border-cyan-300 bg-cyan-500/15' : 'border-slate-700 bg-slate-900'}`}
@@ -149,9 +151,9 @@ export default function StorageDestinationSetup({
               ? 'Synchronisation gérée par Hailite Manager entre les appareils autorisés. Aucun dossier personnel à choisir.'
               : 'Hailite Manager-managed synchronization across authorized devices. No personal folder to choose.'}
           </p>
-        </button>
+        </button>}
 
-        {LOCAL_TEST_MODE && <button
+        <button
           type="button"
           onClick={() => selectMode('personal_cloud')}
           className={`min-h-44 rounded-2xl border p-4 text-left transition ${mode === 'personal_cloud' ? 'border-cyan-300 bg-cyan-500/15' : 'border-slate-700 bg-slate-900'}`}
@@ -163,7 +165,7 @@ export default function StorageDestinationSetup({
               ? 'Vous choisissez le fournisseur, le dossier et le nom du fichier. L’application n’accède qu’à l’emplacement autorisé.'
               : 'Choose the provider, folder, and file name. The app only accesses the location you authorize.'}
           </p>
-        </button>}
+        </button>
       </div>
 
       {mode === 'supabase' ? (
@@ -180,7 +182,7 @@ export default function StorageDestinationSetup({
             </div>
           </div>
         </div>
-      ) : LOCAL_TEST_MODE ? (
+      ) : (
         <div className="space-y-4 rounded-2xl border border-slate-700 bg-slate-950 p-4 sm:p-5">
           {mode === 'personal_cloud' && (
             <div>
@@ -274,7 +276,7 @@ export default function StorageDestinationSetup({
             </p>
           </div>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
