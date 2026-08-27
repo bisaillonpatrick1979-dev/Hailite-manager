@@ -61,7 +61,7 @@ export function authHeaders(): Record<string, string> {
   return nativeSessionToken ? { Authorization: `Bearer ${nativeSessionToken}` } : {};
 }
 
-export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
+export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable' | 'expired';
 
 // Identité renvoyée par la connexion. Les trois champs de consentement sont
 // inclus pour que le client sache immédiatement si les avis ont déjà été
@@ -92,6 +92,9 @@ export async function authLogin(employeeId: string, nip: string):
     }
     if (res.status === 401) return { status: 'invalid' };
     if (res.status === 429) return { status: 'throttled' };
+    // Accès à durée limitée arrivé à échéance : ce n'est ni un mauvais NIP ni
+    // une panne, et le message doit le dire.
+    if (res.status === 403) return { status: 'expired' };
     return { status: 'unavailable' };
   } catch {
     return { status: 'unavailable' };
@@ -446,7 +449,8 @@ export function employeeToRow(e: Employee, companyId?: string) {
     pay_frequency: e.payFrequency, pay_period_start: e.payPeriodStart || null, annual_salary: e.annualSalary,
     credentials: e.credentials || [], business_logo: e.businessLogo,
     privacy_notice_version: e.privacyNoticeVersion, privacy_notice_acknowledged_at: e.privacyNoticeAcknowledgedAt || null,
-    location_notice_acknowledged_at: e.locationNoticeAcknowledgedAt || null
+    location_notice_acknowledged_at: e.locationNoticeAcknowledgedAt || null,
+    access_expires_at: e.accessExpiresAt || null
   };
 }
 
@@ -468,7 +472,8 @@ export function rowToEmployee(r: any): Employee {
     credentials: Array.isArray(r.credentials) ? r.credentials : [], businessLogo: r.business_logo || undefined,
     privacyNoticeVersion: r.privacy_notice_version || undefined,
     privacyNoticeAcknowledgedAt: r.privacy_notice_acknowledged_at || undefined,
-    locationNoticeAcknowledgedAt: r.location_notice_acknowledged_at || undefined
+    locationNoticeAcknowledgedAt: r.location_notice_acknowledged_at || undefined,
+    accessExpiresAt: r.access_expires_at || undefined
   };
 }
 

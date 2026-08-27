@@ -1104,6 +1104,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         message: currentLanguage === 'FR' ? 'NIP incorrect.' : 'Incorrect PIN.'
       };
     }
+    if (server.status === 'expired') {
+      return {
+        success: false,
+        message: currentLanguage === 'FR'
+          ? 'Votre accès temporaire est arrivé à échéance. Contactez l’administrateur.'
+          : 'Your temporary access has expired. Contact the administrator.'
+      };
+    }
     if (server.status === 'throttled') {
       return {
         success: false,

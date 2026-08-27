@@ -131,6 +131,12 @@ export const translations = {
     grossAccumulated: "Valeur brute accumulée",
     // Bandeau financier du tableau de bord (revenu / coûts / marge)
     labourCostTile: "Coût main-d'œuvre",
+    // Accès à durée limitée
+    accessExpiryLabel: "Fin d'accès (facultatif)",
+    accessExpiryHint: "Vide : accès permanent. Une date : le profil ne peut plus se connecter après, et disparaît de la liste.",
+    accessExpirySet: "Accès jusqu'au {date} inclusivement.",
+    accessExpiryOneWeek: "1 semaine",
+    accessExpiryClear: "Retirer la limite",
     // Heures supplémentaires et arrondi
     otDailyLabel: "Seuil quotidien (h)",
     otDailyHint: "Au-delà de ce nombre d'heures dans une journée, le taux majoré s'applique.",
@@ -1575,6 +1581,12 @@ export const translations = {
     grossAccumulated: "Accumulated gross value",
     // Dashboard finance strip (revenue / costs / margin)
     labourCostTile: "Labour cost",
+    // Time-limited access
+    accessExpiryLabel: "Access ends (optional)",
+    accessExpiryHint: "Empty: permanent access. With a date: the profile can no longer sign in after it, and drops off the list.",
+    accessExpirySet: "Access through {date} inclusive.",
+    accessExpiryOneWeek: "1 week",
+    accessExpiryClear: "Remove limit",
     // Overtime and rounding
     otDailyLabel: "Daily threshold (h)",
     otDailyHint: "Beyond this many hours in one day, the premium rate applies.",
