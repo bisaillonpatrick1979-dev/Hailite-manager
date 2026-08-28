@@ -146,6 +146,15 @@ export default function App() {
   const [cloudSyncing, setCloudSyncing] = useState(true);
   const [syncFailure, setSyncFailure] = useState<CloudSyncStatusDetail | null>(null);
 
+  // Jours entiers restants avant la fin d'un accès temporaire. Zéro ou moins
+  // veut dire échu : le serveur refusera la connexion, quoi qu'affiche l'écran.
+  const accessDaysLeft = (expiresAt: string): number => {
+    const fin = new Date(expiresAt).getTime();
+    if (!Number.isFinite(fin)) return 0;
+    const restant = fin - Date.now();
+    return restant <= 0 ? 0 : Math.ceil(restant / 86_400_000);
+  };
+
   // Version d'essai : l'état est réévalué régulièrement, sinon l'échéance ne
   // serait constatée qu'au prochain rechargement de la page.
   const [trial, setTrial] = useState(() => currentTrial());
@@ -5746,7 +5755,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 annualSalary: emp.annualSalary || 0,
                                 hireDate: emp.hireDate || '2026-06-03',
                                 avatar: emp.avatar || '',
-                                credentials: emp.credentials || []
+                                credentials: emp.credentials || [],
+                                accessExpiresAt: emp.accessExpiresAt || ''
                               });
                             }
 
@@ -5769,6 +5779,27 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               {t.salariedTag} {emp.annualSalary ? `(${emp.annualSalary.toLocaleString()} $)` : ''}
                                             </span>
                                           )}
+                                          {/* Accès temporaire : visible dans la liste, sinon il
+                                              faut ouvrir chaque fiche pour savoir qui expire
+                                              et quand. */}
+                                          {emp.accessExpiresAt && (() => {
+                                            const restant = accessDaysLeft(emp.accessExpiresAt);
+                                            const echu = restant <= 0;
+                                            return (
+                                              <span
+                                                className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase border ${echu
+                                                  ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                                  : 'bg-orange-500/10 text-orange-400 border-orange-500/20'}`}
+                                                title={fmt(t.accessExpirySet, {
+                                                  date: new Date(emp.accessExpiresAt).toLocaleDateString(dateLocale)
+                                                })}
+                                              >
+                                                {echu
+                                                  ? t.accessExpiredTag
+                                                  : fmt(t.accessExpiryDaysTag, { days: String(restant) })}
+                                              </span>
+                                            );
+                                          })()}
                                           {empTeam && (
                                             <span 
                                               className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase border" 
@@ -5900,6 +5931,57 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                           value={editEmployeeForm.nip}
                                           onChange={(e) => setEditEmployeeForm({ ...editEmployeeForm, nip: e.target.value })}
                                         />
+                                      </div>
+
+                                      {/* Fin d'accès. Le champ existait seulement à la
+                                          création : impossible de prolonger ni de retirer
+                                          la limite d'un invité qui décide de rester. */}
+                                      <div>
+                                        <label className="text-[9px] text-gray-500 uppercase font-mono">{t.accessExpiryLabel}</label>
+                                        <input
+                                          type="date"
+                                          min={todayKey()}
+                                          className="w-full mt-1 p-1.5 bg-[#12141C] text-white text-xs font-mono rounded border border-gray-800 text-left"
+                                          value={editEmployeeForm.accessExpiresAt ? editEmployeeForm.accessExpiresAt.slice(0, 10) : ''}
+                                          onChange={(e) => setEditEmployeeForm({
+                                            ...editEmployeeForm,
+                                            // Fin de la journée choisie : un accès « jusqu'au 19 »
+                                            // doit fonctionner toute la journée du 19.
+                                            accessExpiresAt: e.target.value
+                                              ? new Date(`${e.target.value}T23:59:59`).toISOString()
+                                              : ''
+                                          })}
+                                        />
+                                        <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const fin = new Date();
+                                              fin.setDate(fin.getDate() + 7);
+                                              fin.setHours(23, 59, 59, 0);
+                                              setEditEmployeeForm({ ...editEmployeeForm, accessExpiresAt: fin.toISOString() });
+                                            }}
+                                            className="min-h-11 px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] font-black uppercase cursor-pointer"
+                                          >
+                                            {t.accessExpiryOneWeek}
+                                          </button>
+                                          {editEmployeeForm.accessExpiresAt && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditEmployeeForm({ ...editEmployeeForm, accessExpiresAt: '' })}
+                                              className="min-h-11 px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] font-black uppercase cursor-pointer"
+                                            >
+                                              {t.accessExpiryClear}
+                                            </button>
+                                          )}
+                                        </div>
+                                        <span className="text-[8px] text-gray-500 block italic leading-tight mt-1">
+                                          {editEmployeeForm.accessExpiresAt
+                                            ? fmt(t.accessExpirySet, {
+                                                date: new Date(editEmployeeForm.accessExpiresAt).toLocaleDateString(dateLocale)
+                                              })
+                                            : t.accessExpiryHint}
+                                        </span>
                                       </div>
                                       <div>
                                         <label className="text-[9px] text-gray-500 uppercase font-mono">{t.hourlyRateDollarLabel}</label>
@@ -6104,7 +6186,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                               employeeProvince: editEmployeeForm.employeeProvince,
                                               payFrequency: editEmployeeForm.payFrequency,
                                               annualSalary: editEmployeeForm.annualSalary,
-                                              credentials: editEmployeeForm.credentials || []
+                                              credentials: editEmployeeForm.credentials || [],
+                                              // Vide = accès permanent. Il faut donc envoyer
+                                              // « undefined » et non la chaîne vide, sinon
+                                              // retirer la limite ne l'enlèverait jamais.
+                                              accessExpiresAt: editEmployeeForm.accessExpiresAt || undefined
                                             });
                                             setEditingEmployeeId(null);
                                             setEditEmployeeForm(null);

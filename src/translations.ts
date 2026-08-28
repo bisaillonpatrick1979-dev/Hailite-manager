@@ -137,6 +137,8 @@ export const translations = {
     accessExpirySet: "Accès jusqu'au {date} inclusivement.",
     accessExpiryOneWeek: "1 semaine",
     accessExpiryClear: "Retirer la limite",
+    accessExpiryDaysTag: "Accès {days} j",
+    accessExpiredTag: "Accès échu",
     // Fin d'une version d'essai
     trialOverTitle: "Votre essai est terminé",
     trialOverBody: "Merci d'avoir essayé Hailite Manager. Pour continuer à l'utiliser, procurez-vous la version complète auprès de la personne qui vous a envoyé cette application.",
@@ -1593,6 +1595,8 @@ export const translations = {
     accessExpirySet: "Access through {date} inclusive.",
     accessExpiryOneWeek: "1 week",
     accessExpiryClear: "Remove limit",
+    accessExpiryDaysTag: "Access {days}d",
+    accessExpiredTag: "Access ended",
     // Trial expiry
     trialOverTitle: "Your trial has ended",
     trialOverBody: "Thanks for trying Hailite Manager. To keep using it, get the full version from whoever sent you this app.",
