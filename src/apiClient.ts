@@ -21,6 +21,7 @@ export interface CredentialInspection {
   provider: string;
 }
 import { LOCAL_CLOUD_SYNC_TEST_MODE, LOCAL_TEST_MODE } from './testProfiles';
+import { IS_TRIAL_BUILD } from './trialAccess';
 import { apiFetch, isNativeRuntime } from './runtimeConfig';
 
 // Génère un identifiant compatible avec les colonnes uuid de Supabase (les anciens
@@ -61,7 +62,7 @@ export function authHeaders(): Record<string, string> {
   return nativeSessionToken ? { Authorization: `Bearer ${nativeSessionToken}` } : {};
 }
 
-export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable';
+export type AuthLoginStatus = 'ok' | 'invalid' | 'throttled' | 'unavailable' | 'expired';
 
 // Identité renvoyée par la connexion. Les trois champs de consentement sont
 // inclus pour que le client sache immédiatement si les avis ont déjà été
@@ -92,6 +93,9 @@ export async function authLogin(employeeId: string, nip: string):
     }
     if (res.status === 401) return { status: 'invalid' };
     if (res.status === 429) return { status: 'throttled' };
+    // Accès à durée limitée arrivé à échéance : ce n'est ni un mauvais NIP ni
+    // une panne, et le message doit le dire.
+    if (res.status === 403) return { status: 'expired' };
     return { status: 'unavailable' };
   } catch {
     return { status: 'unavailable' };
@@ -134,6 +138,11 @@ export function isDemoSandboxIsolationActive(): boolean { return demoSandboxIsol
 
 let cloudSyncAllowed = (() => {
   if (localTestModeEnabled()) return false;
+  // Une version d'essai ne parle à AUCUN serveur. L'adresse du serveur est
+  // figée dans l'application au moment de la compilation : sans ce garde, la
+  // copie envoyée à un inconnu pour l'essayer irait lire et écrire dans les
+  // données de l'entreprise qui la lui a envoyée.
+  if (IS_TRIAL_BUILD) return false;
   try {
     const company = JSON.parse(localStorage.getItem('gcp_companyInfo') || '{}');
     return ['supabase', 'hybrid', 'cloud'].includes(company?.dataStorageMode);
@@ -141,6 +150,9 @@ let cloudSyncAllowed = (() => {
 })();
 export function isCloudEnabled() { return cloudEnabled && cloudSyncAllowed && !demoSandboxIsolation; }
 export function setCloudSyncAllowed(allowed: boolean) {
+  // Même garde que ci-dessus : rien de ce qui se passe à l'écran ne doit
+  // pouvoir rallumer le réseau dans une version d'essai.
+  if (IS_TRIAL_BUILD) { cloudSyncAllowed = false; cloudEnabled = false; return; }
   cloudSyncAllowed = localTestModeEnabled() && !LOCAL_CLOUD_SYNC_TEST_MODE ? false : allowed;
   if (!cloudSyncAllowed || demoSandboxIsolation) cloudEnabled = false;
 }
@@ -446,7 +458,8 @@ export function employeeToRow(e: Employee, companyId?: string) {
     pay_frequency: e.payFrequency, pay_period_start: e.payPeriodStart || null, annual_salary: e.annualSalary,
     credentials: e.credentials || [], business_logo: e.businessLogo,
     privacy_notice_version: e.privacyNoticeVersion, privacy_notice_acknowledged_at: e.privacyNoticeAcknowledgedAt || null,
-    location_notice_acknowledged_at: e.locationNoticeAcknowledgedAt || null
+    location_notice_acknowledged_at: e.locationNoticeAcknowledgedAt || null,
+    access_expires_at: e.accessExpiresAt || null
   };
 }
 
@@ -468,7 +481,8 @@ export function rowToEmployee(r: any): Employee {
     credentials: Array.isArray(r.credentials) ? r.credentials : [], businessLogo: r.business_logo || undefined,
     privacyNoticeVersion: r.privacy_notice_version || undefined,
     privacyNoticeAcknowledgedAt: r.privacy_notice_acknowledged_at || undefined,
-    locationNoticeAcknowledgedAt: r.location_notice_acknowledged_at || undefined
+    locationNoticeAcknowledgedAt: r.location_notice_acknowledged_at || undefined,
+    accessExpiresAt: r.access_expires_at || undefined
   };
 }
 

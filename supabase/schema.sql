@@ -173,6 +173,10 @@ create table if not exists public.app_users (
   privacy_notice_version text,
   privacy_notice_acknowledged_at timestamp with time zone,
   location_notice_acknowledged_at timestamp with time zone,
+  -- Fin d'un accès à durée limitée (invité, employé temporaire). Nul = accès
+  -- permanent. Passé cette date, la connexion est refusée et le profil sort de
+  -- l'annuaire public.
+  access_expires_at timestamp with time zone,
   constraint app_users_pkey primary key (id)
 );
 
@@ -350,7 +354,36 @@ create table if not exists public.production_entries (
   material_name text,
   unit_price numeric,
   emoji text,
+  -- Production payée à la pièce : montant calculé, d'où vient le taux, et
+  -- validation administrative avant de basculer dans une facture de paie.
+  amount numeric,
+  catalog_item_id uuid,
+  rate_source text,
+  approval_status text default 'pending'::text not null,
+  approved_by uuid,
+  approved_at timestamp with time zone,
+  rejected_reason text,
+  payroll_entry_id uuid,
   constraint production_entries_pkey primary key (id)
+);
+
+-- --- Taux de rémunération par chantier ---------------------------------------
+-- Un sous-traitant peut être payé à un taux différent selon le chantier et
+-- selon le matériau. Sans ligne pour une personne, le taux par défaut du
+-- chantier (user_id nul) s'applique.
+create table if not exists public.project_pay_rates (
+  id uuid default gen_random_uuid() not null,
+  company_id uuid not null,
+  project_id uuid not null,
+  user_id uuid,
+  catalog_item_id uuid,
+  label text not null,
+  unit text default 'pi2'::text not null,
+  rate numeric default 0 not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
+  constraint project_pay_rates_pkey primary key (id),
+  constraint project_pay_rates_rate_check check (rate >= 0::numeric)
 );
 
 create table if not exists public.shift_assignments (
@@ -562,6 +595,11 @@ create table if not exists public.payroll_entries (
   issuer_logo text,
   recipient_name text,
   local_tax_amount numeric,
+  -- Facturation à la pièce : base de rémunération et quantité produite, quand
+  -- le sous-traitant est payé au pied carré plutôt qu'à l'heure.
+  pay_basis text default 'hourly'::text not null,
+  production_quantity numeric,
+  project_id uuid,
   constraint payroll_entries_pkey primary key (id)
 );
 
@@ -914,6 +952,14 @@ begin
       ('supplier_order_items', 'supplier_order_items_order_company_fkey', 'foreign key (order_id, company_id) references public.supplier_orders(id, company_id) on delete cascade'),
       ('tool_assets', 'tool_assets_company_id_fkey', 'foreign key (company_id) references public.companies(id) on delete cascade'),
       ('tool_theft_reports', 'tool_theft_reports_company_id_fkey', 'foreign key (company_id) references public.companies(id) on delete cascade'),
+      ('payroll_entries', 'payroll_entries_project_id_fkey', 'foreign key (project_id) references public.projects(id) on delete set null'),
+      ('production_entries', 'production_entries_approved_by_fkey', 'foreign key (approved_by) references public.app_users(id) on delete set null'),
+      ('production_entries', 'production_entries_catalog_item_id_fkey', 'foreign key (catalog_item_id) references public.catalog_items(id) on delete set null'),
+      ('production_entries', 'production_entries_payroll_entry_id_fkey', 'foreign key (payroll_entry_id) references public.payroll_entries(id) on delete set null'),
+      ('project_pay_rates', 'project_pay_rates_company_id_fkey', 'foreign key (company_id) references public.companies(id) on delete cascade'),
+      ('project_pay_rates', 'project_pay_rates_project_id_fkey', 'foreign key (project_id) references public.projects(id) on delete cascade'),
+      ('project_pay_rates', 'project_pay_rates_user_id_fkey', 'foreign key (user_id) references public.app_users(id) on delete cascade'),
+      ('project_pay_rates', 'project_pay_rates_catalog_item_id_fkey', 'foreign key (catalog_item_id) references public.catalog_items(id) on delete set null'),
       ('weekly_goals', 'weekly_goals_company_id_fkey', 'foreign key (company_id) references public.companies(id) on delete cascade'),
       ('weekly_goals', 'weekly_goals_employee_cascade_fkey', 'foreign key (employee_id) references public.app_users(id) on delete cascade'),
       ('weekly_goals', 'weekly_goals_employee_company_fkey', 'foreign key (employee_id, company_id) references public.app_users(id, company_id) on delete cascade')
@@ -937,6 +983,7 @@ create index if not exists audit_logs_at_idx on public.audit_logs (at desc);
 create index if not exists audit_logs_user_idx on public.audit_logs (user_id);
 create index if not exists audit_logs_target_idx on public.audit_logs (target, action);
 create index if not exists auth_login_attempts_blocked_idx on public.auth_login_attempts (blocked_until) where blocked_until is not null;
+create index if not exists app_users_access_expires_at_idx on public.app_users (access_expires_at) where access_expires_at is not null;
 
 create index if not exists change_orders_project_idx on public.change_orders (project_id, created_at desc);
 create index if not exists change_orders_status_idx on public.change_orders (company_id, status);
@@ -964,6 +1011,11 @@ create index if not exists project_tasks_company_project_idx on public.project_t
 create index if not exists project_tools_company_id_idx on public.project_tools (company_id);
 create index if not exists project_tools_company_project_idx on public.project_tools (company_id, project_id);
 
+create index if not exists production_entries_by_project on public.production_entries (project_id, entry_date);
+create index if not exists production_entries_billable on public.production_entries (company_id, user_id, approval_status) where payroll_entry_id is null;
+create index if not exists project_pay_rates_lookup on public.project_pay_rates (project_id, user_id);
+create unique index if not exists project_pay_rates_default_uniq on public.project_pay_rates (project_id, label) where user_id is null;
+create unique index if not exists project_pay_rates_named_uniq on public.project_pay_rates (project_id, user_id, label) where user_id is not null;
 create index if not exists punches_approval_status_idx on public.punches (approval_status);
 
 create index if not exists safety_records_company_idx on public.safety_records (company_id, date desc);
@@ -1030,7 +1082,7 @@ begin
     'change_orders', 'payroll_entries', 'payroll_payments', 'expenses',
     'weekly_goals', 'motivation_teams', 'motivation_goals', 'hr_alerts',
     'tool_assets', 'tool_theft_reports', 'insurance_claims', 'leads',
-    'safety_records'
+    'safety_records', 'project_pay_rates'
   ]
   loop
     if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = t) then

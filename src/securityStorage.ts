@@ -26,7 +26,11 @@ const SAFE_KEYS = new Set([
   'gcp_isOnboarded',
   'gcp_companyInfo',
   'gcp_aiVoiceEnabled',
-  'gcp_chunkReloadedAt'
+  'gcp_chunkReloadedAt',
+  // Bornes de la version d'essai. Elles doivent survivre à une déconnexion et
+  // au mode serveur, sinon l'essai repartirait à zéro au moindre changement.
+  'gcp_trialStartedAt',
+  'gcp_trialLastSeenAt'
 ]);
 
 // Familles de clés autorisées par préfixe, quand l'identifiant fait partie du

@@ -17,7 +17,7 @@ import {
   AppRole, AuthContext, AuthedRequest,
   requireAuth, attachAuthOptional, verifyCredentials, signSession,
   isLoginThrottled, recordLoginFailure, clearLoginFailures, logAudit,
-  createLoginHandle, hashPin, SESSION_COOKIE_NAME
+  createLoginHandle, hashPin, SESSION_COOKIE_NAME, accessExpiryMs
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
 import { MAX_COMPANY_USERS } from './companyLimits.js';
@@ -816,6 +816,14 @@ export function registerApiRoutes(app: express.Express): void {
         if (result.reason === 'unavailable') {
           return res.status(503).json({ error: 'Authentification indisponible', code: 'AUTH_UNAVAILABLE' });
         }
+        // Accès à durée limitée arrivé à échéance. On le dit, plutôt que de
+        // laisser croire à un NIP fautif : la personne referait son code
+        // indéfiniment sans comprendre. Aucune tentative n'est comptabilisée,
+        // le compte n'étant pas en cause.
+        if (result.reason === 'expired') {
+          logAudit(null, 'login_expired', 'auth');
+          return res.status(403).json({ error: 'Votre accès temporaire est arrivé à échéance.', code: 'ACCESS_EXPIRED' });
+        }
         await Promise.all([recordLoginFailure(throttleKey), recordLoginFailure(ipThrottleKey)]);
         logAudit(null, 'login_failed', 'auth');
         return res.status(401).json({ error: 'NIP incorrect', code: 'INVALID_CREDENTIALS' });
@@ -1142,7 +1150,7 @@ export function registerApiRoutes(app: express.Express): void {
         // Même plafond que la recherche de connexion : un compte absent de
         // l'annuaire ne peut pas être choisi à l'écran de connexion, et les
         // deux listes doivent donc s'arrêter au même endroit.
-        .select('id, full_name, avatar, is_active')
+        .select('id, full_name, avatar, is_active, access_expires_at')
         .eq('company_id', companyId)
         .limit(MAX_COMPANY_USERS);
       if (error) throw error;
@@ -1150,6 +1158,12 @@ export function registerApiRoutes(app: express.Express): void {
         enabled: true,
         users: (data || [])
           .filter((u: any) => u.is_active !== false)
+          // Un accès échu disparaît de la liste : proposer un profil qui ne
+          // peut plus ouvrir de session ne ferait qu'égarer la personne.
+          .filter((u: any) => {
+            const expiry = accessExpiryMs(u.access_expires_at);
+            return expiry === null || expiry > Date.now();
+          })
           .map((u: any) => ({
             id: createLoginHandle(companyId, String(u.id)),
             name: u.full_name || '',

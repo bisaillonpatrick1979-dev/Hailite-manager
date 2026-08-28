@@ -23,6 +23,8 @@ export interface AuthContext {
   companyId: string;
   role: AppRole;
   name: string;
+  /** Fin d'un accès à durée limitée, en millisecondes. Absent = accès permanent. */
+  accessExpiresAt?: number;
 }
 
 // Rôles hérités de l'ancienne version de l'app encore présents en base
@@ -58,6 +60,17 @@ const SESSION_SECRET: string = (() => {
 })();
 
 const SESSION_TTL_SECONDS = 4 * 60 * 60; // 4 h
+
+/**
+ * Fin d'un accès à durée limitée, en millisecondes, ou null s'il est permanent.
+ * Une valeur illisible est traitée comme permanente : une date corrompue ne
+ * doit pas verrouiller quelqu'un dehors sans explication.
+ */
+export function accessExpiryMs(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = new Date(value as string).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
 export const SESSION_COOKIE_NAME = 'gcp_session';
 
 // ---------------------------------------------------------------------------
@@ -80,7 +93,13 @@ export function createLoginHandle(companyId: string, userId: string): string {
 
 export function signSession(ctx: AuthContext): { token: string; expiresAt: number } {
   const now = Math.floor(Date.now() / 1000);
-  const exp = now + SESSION_TTL_SECONDS;
+  // Un jeton ne survit jamais à l'accès qu'il représente. Sans ce plafond, un
+  // invité connecté juste avant l'échéance garderait la main quatre heures de
+  // plus — et refuser la connexion suivante ne servirait à rien.
+  const ttlLimit = ctx.accessExpiresAt !== undefined
+    ? Math.min(SESSION_TTL_SECONDS, Math.floor(ctx.accessExpiresAt / 1000) - now)
+    : SESSION_TTL_SECONDS;
+  const exp = now + Math.max(0, ttlLimit);
   const header = b64urlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = b64urlJson({
     sub: ctx.userId,
@@ -210,7 +229,7 @@ export async function clearLoginFailures(key: string): Promise<void> {
 export interface CredentialCheck {
   ok: boolean;
   ctx?: AuthContext;
-  reason?: 'unavailable' | 'invalid' | 'inactive';
+  reason?: 'unavailable' | 'invalid' | 'inactive' | 'expired';
 }
 
 const PIN_RE = /^\d{4}$/;
@@ -245,7 +264,7 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
   // pourrait être hors de portée sans qu'on le sache.
   const { data: users, error } = await supabase
     .from('app_users')
-    .select('id, full_name, role, company_id, access_code_hash, is_active')
+    .select('id, full_name, role, company_id, access_code_hash, is_active, access_expires_at')
     .eq('company_id', companyId)
     .eq('is_active', true)
     .limit(MAX_COMPANY_USERS + 1);
@@ -271,6 +290,15 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
   if (error || !user) return { ok: false, reason: 'invalid' };
   if (user.is_active === false) return { ok: false, reason: 'inactive' };
 
+  // Accès à durée limitée (invité, sous-traitant de passage, essai). Le refus
+  // se produit AVANT la vérification du NIP : inutile de faire travailler
+  // bcrypt pour un accès de toute façon terminé, et la réponse ne révèle pas
+  // si le NIP fourni était bon.
+  const expiresAt = accessExpiryMs(user.access_expires_at);
+  if (expiresAt !== null && expiresAt <= Date.now()) {
+    return { ok: false, reason: 'expired' };
+  }
+
   const stored = String(user.access_code_hash || '');
   const verified = await verifyPin(nip, stored);
   if (!verified.match) return { ok: false, reason: 'invalid' };
@@ -292,7 +320,8 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
       userId: String(user.id),
       companyId: String(companyId),
       role: normalizeRole(user.role),
-      name: String(user.full_name || '')
+      name: String(user.full_name || ''),
+      accessExpiresAt: expiresAt ?? undefined
     }
   };
 }

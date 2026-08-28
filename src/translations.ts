@@ -131,6 +131,18 @@ export const translations = {
     grossAccumulated: "Valeur brute accumulée",
     // Bandeau financier du tableau de bord (revenu / coûts / marge)
     labourCostTile: "Coût main-d'œuvre",
+    // Accès à durée limitée
+    accessExpiryLabel: "Fin d'accès (facultatif)",
+    accessExpiryHint: "Vide : accès permanent. Une date : le profil ne peut plus se connecter après, et disparaît de la liste.",
+    accessExpirySet: "Accès jusqu'au {date} inclusivement.",
+    accessExpiryOneWeek: "1 semaine",
+    accessExpiryClear: "Retirer la limite",
+    // Fin d'une version d'essai
+    trialOverTitle: "Votre essai est terminé",
+    trialOverBody: "Merci d'avoir essayé Hailite Manager. Pour continuer à l'utiliser, procurez-vous la version complète auprès de la personne qui vous a envoyé cette application.",
+    trialOverData: "Vos données sont restées sur cet appareil et n'ont jamais été envoyées ailleurs. Vous pouvez les enregistrer avant de désinstaller : le fichier se rouvrira dans la version complète.",
+    trialOverExport: "Enregistrer mes données",
+    trialDaysLeft: "Version d'essai — {days} jour(s) restant(s)",
     // Heures supplémentaires et arrondi
     otDailyLabel: "Seuil quotidien (h)",
     otDailyHint: "Au-delà de ce nombre d'heures dans une journée, le taux majoré s'applique.",
@@ -1575,6 +1587,18 @@ export const translations = {
     grossAccumulated: "Accumulated gross value",
     // Dashboard finance strip (revenue / costs / margin)
     labourCostTile: "Labour cost",
+    // Time-limited access
+    accessExpiryLabel: "Access ends (optional)",
+    accessExpiryHint: "Empty: permanent access. With a date: the profile can no longer sign in after it, and drops off the list.",
+    accessExpirySet: "Access through {date} inclusive.",
+    accessExpiryOneWeek: "1 week",
+    accessExpiryClear: "Remove limit",
+    // Trial expiry
+    trialOverTitle: "Your trial has ended",
+    trialOverBody: "Thanks for trying Hailite Manager. To keep using it, get the full version from whoever sent you this app.",
+    trialOverData: "Your data stayed on this device and was never sent anywhere else. You can save it before uninstalling: the file will reopen in the full version.",
+    trialOverExport: "Save my data",
+    trialDaysLeft: "Trial version — {days} day(s) left",
     // Overtime and rounding
     otDailyLabel: "Daily threshold (h)",
     otDailyHint: "Beyond this many hours in one day, the premium rate applies.",

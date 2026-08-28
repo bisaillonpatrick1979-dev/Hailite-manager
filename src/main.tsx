@@ -2,6 +2,7 @@ import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { prepareCloudState } from './cloudBootstrap';
 import { purgeLegacySensitiveStorage } from './securityStorage';
+import { armTrial } from './trialAccess';
 import { LOCAL_TEST_MODE } from './testProfiles';
 import { isNativeRuntime } from './runtimeConfig';
 import './index.css';
@@ -176,6 +177,10 @@ async function loadRouteComponent(): Promise<React.ComponentType> {
 async function startApplication() {
   // Retire les anciennes sessions, NIP et données métier avant que Zustand ne
   // puisse les relire. En production, seules les préférences non sensibles restent.
+  // Le compte à rebours de l'essai démarre au tout premier lancement, avant
+  // tout affichage : sans ça, la date de départ dépendrait du moment où la
+  // personne ouvre tel ou tel écran.
+  armTrial();
   purgeLegacySensitiveStorage(LOCAL_TEST_MODE);
   await prepareCloudState();
 

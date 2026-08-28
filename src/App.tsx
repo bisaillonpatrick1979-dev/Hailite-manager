@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'rea
 import { motion, useDragControls } from 'motion/react';
 import useAppStore from './store';
 import { authHeaders, setCloudSyncAllowed, type CloudSyncStatusDetail } from './apiClient';
+import { currentTrial, IS_TRIAL_BUILD } from './trialAccess';
+import { writePersonalBackupNow } from './personalBackup';
 
 // Identifiants locaux (les scripts de build ancrent la ligne d'import ci-dessus :
 // ne pas la modifier). Même format UUID que genId d'apiClient.
@@ -143,6 +145,15 @@ export default function App() {
   // Les données métier restent en mémoire et ne sont jamais mises en localStorage.
   const [cloudSyncing, setCloudSyncing] = useState(true);
   const [syncFailure, setSyncFailure] = useState<CloudSyncStatusDetail | null>(null);
+
+  // Version d'essai : l'état est réévalué régulièrement, sinon l'échéance ne
+  // serait constatée qu'au prochain rechargement de la page.
+  const [trial, setTrial] = useState(() => currentTrial());
+  useEffect(() => {
+    if (!IS_TRIAL_BUILD) return;
+    const timer = setInterval(() => setTrial(currentTrial()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     // Le nuage personnel est un mode hors serveur au même titre que « local » :
     // il n'y a rien à interroger. Le compter comme un mode serveur relançait
@@ -312,6 +323,8 @@ export default function App() {
     annualSalary: number;
     // Surcharges d'heures supplémentaires. 0 = suivre la règle de la compagnie.
     overtimeExempt: boolean;
+    // Accès à durée limitée : vide = permanent.
+    accessExpiresAt: string;
     overtimeDailyHoursOverride: number;
     overtimeWeeklyHoursOverride: number;
     overtimeMultiplierOverride: number;
@@ -335,6 +348,7 @@ export default function App() {
     payFrequency: 'weekly',
     annualSalary: 0,
     overtimeExempt: false,
+    accessExpiresAt: '',
     overtimeDailyHoursOverride: 0,
     overtimeWeeklyHoursOverride: 0,
     overtimeMultiplierOverride: 0,
@@ -1351,8 +1365,45 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
   // avant un useEffect provoque « Rendered more hooks than during the previous
   // render » et un écran noir au moment de terminer la configuration.
+  // Fin d'une version d'essai. Le contrôle passe avant l'accueil : quelqu'un
+  // qui n'a jamais terminé la configuration ne doit pas pouvoir la recommencer
+  // indéfiniment pour repousser l'échéance.
+  if (trial.enabled && trial.expired) {
+    return (
+      <div className="min-h-screen bg-[#0B0D10] text-white flex items-center justify-center p-6">
+        <div className="max-w-md w-full rounded-3xl border border-orange-500/40 bg-orange-500/10 p-6 sm:p-8 text-center">
+          <Clock className="h-12 w-12 text-orange-300 mx-auto" />
+          <h1 className="mt-4 text-2xl font-black">{t.trialOverTitle}</h1>
+          <p className="mt-3 text-sm leading-relaxed text-gray-300">{t.trialOverBody}</p>
+          <p className="mt-4 text-xs leading-relaxed text-gray-400">{t.trialOverData}</p>
+          <button
+            type="button"
+            onClick={() => { void writePersonalBackupNow(true); }}
+            className="mt-5 min-h-12 w-full rounded-xl bg-orange-500 px-5 font-black text-white cursor-pointer"
+          >
+            {t.trialOverExport}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Le décompte doit être visible dès le premier écran : quelqu'un qui essaie
+  // l'application doit savoir combien de temps il lui reste avant de commencer
+  // à y entrer ses chantiers, pas après.
+  const trialBanner = trial.enabled ? (
+    <div className="fixed bottom-0 inset-x-0 z-50 bg-orange-500/95 px-4 py-1.5 text-center text-[11px] font-black uppercase tracking-wide text-white">
+      {fmt(t.trialDaysLeft, { days: String(trial.daysLeft) })}
+    </div>
+  ) : null;
+
   if (!isOnboarded || companyInfo.complianceVersion !== COMPLIANCE_VERSION) {
-    return <Suspense fallback={<LazySectionFallback />}><OnboardingScreen /></Suspense>;
+    return (
+      <Suspense fallback={<LazySectionFallback />}>
+        <OnboardingScreen />
+        {trialBanner}
+      </Suspense>
+    );
   }
 
   return (
@@ -1360,6 +1411,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       id="main-scaffold-container"
       className={`min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 flex flex-col relative select-none ${demoSandboxActive ? 'pt-36 sm:pt-28' : 'pt-16'}`}
     >
+      {/* Le décompte reste visible en permanence, pour que personne ne
+          découvre l'échéance le matin où elle tombe. */}
+      {trialBanner}
+
       {activeEmployee && activeEmployee.privacyNoticeVersion !== USER_PRIVACY_NOTICE_VERSION && (
         <Suspense fallback={<LazySectionFallback />}>
           <UserPrivacyNotice
@@ -6095,12 +6150,63 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">{t.hireDateLabel}</label>
-                              <input 
+                              <input
                                 type="date"
                                 className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
                                 value={newEmployeeForm.hireDate || "2026-06-03"}
                                 onChange={(e) => setNewEmployeeForm({ ...newEmployeeForm, hireDate: e.target.value })}
                               />
+                            </div>
+
+                            {/* Accès à durée limitée : pour montrer l'application à
+                                quelqu'un sans avoir à se souvenir de lui retirer son
+                                accès plus tard. Vide = accès permanent. */}
+                            <div>
+                              <label className="text-[9px] text-gray-500 uppercase font-mono">{t.accessExpiryLabel}</label>
+                              <input
+                                type="date"
+                                min={todayKey()}
+                                className="w-full mt-1 p-1.5 bg-gray-900 text-white text-xs font-mono rounded border border-gray-800 text-left"
+                                value={newEmployeeForm.accessExpiresAt ? newEmployeeForm.accessExpiresAt.slice(0, 10) : ''}
+                                onChange={(e) => setNewEmployeeForm({
+                                  ...newEmployeeForm,
+                                  // Fin de la journée choisie : un accès « jusqu'au 19 »
+                                  // doit fonctionner toute la journée du 19.
+                                  accessExpiresAt: e.target.value
+                                    ? new Date(`${e.target.value}T23:59:59`).toISOString()
+                                    : ''
+                                })}
+                              />
+                              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const fin = new Date();
+                                    fin.setDate(fin.getDate() + 7);
+                                    fin.setHours(23, 59, 59, 0);
+                                    setNewEmployeeForm({ ...newEmployeeForm, accessExpiresAt: fin.toISOString() });
+                                  }}
+                                  className="min-h-11 px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] font-black uppercase cursor-pointer"
+                                >
+                                  {t.accessExpiryOneWeek}
+                                </button>
+                                {newEmployeeForm.accessExpiresAt && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setNewEmployeeForm({ ...newEmployeeForm, accessExpiresAt: '' })}
+                                    className="min-h-11 px-3 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-[10px] font-black uppercase cursor-pointer"
+                                  >
+                                    {t.accessExpiryClear}
+                                  </button>
+                                )}
+                              </div>
+                              <span className="text-[8px] text-gray-500 block italic leading-tight mt-1">
+                                {newEmployeeForm.accessExpiresAt
+                                  ? fmt(t.accessExpirySet, {
+                                      date: new Date(newEmployeeForm.accessExpiresAt).toLocaleDateString(dateLocale)
+                                    })
+                                  : t.accessExpiryHint}
+                              </span>
                             </div>
                             <div>
                               <label className="text-[9px] text-gray-500 uppercase font-mono">{t.hourlyRateDollarLabel}</label>
@@ -6400,6 +6506,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                                 payFrequency: newEmployeeForm.payFrequency,
                                 annualSalary: newEmployeeForm.annualSalary,
                                 overtimeExempt: newEmployeeForm.overtimeExempt,
+                                accessExpiresAt: newEmployeeForm.accessExpiresAt || undefined,
                                 overtimeDailyHoursOverride: newEmployeeForm.overtimeDailyHoursOverride || undefined,
                                 overtimeWeeklyHoursOverride: newEmployeeForm.overtimeWeeklyHoursOverride || undefined,
                                 overtimeMultiplierOverride: newEmployeeForm.overtimeMultiplierOverride || undefined,

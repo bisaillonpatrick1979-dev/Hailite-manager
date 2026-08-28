@@ -90,6 +90,10 @@ export interface Employee {
   privacyNoticeVersion?: string;
   privacyNoticeAcknowledgedAt?: string;
   locationNoticeAcknowledgedAt?: string;
+  // Accès à durée limitée (invité, employé temporaire). Vide = permanent.
+  // Passé cette date, le serveur refuse la connexion et le profil sort de
+  // la liste de connexion. C'est le serveur qui tranche, jamais le client.
+  accessExpiresAt?: string;
 }
 
 export interface ProjectTask {

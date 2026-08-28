@@ -1,6 +1,7 @@
 import { LOCAL_TEST_DATA_VERSION, LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET, TEST_DATASET_SUMMARY } from './testDataset';
 import { browserStorageValue } from './securityStorage';
+import { IS_TRIAL_BUILD } from './trialAccess';
 import { apiFetch } from './runtimeConfig';
 import { resolveOnboardingState } from './onboardingState';
 
@@ -166,6 +167,12 @@ export async function prepareCloudState(): Promise<void> {
     }
     return;
   }
+
+  // Une version d'essai ne contacte aucun serveur, dès le tout premier
+  // démarrage : à cet instant le mode de stockage n'est pas encore choisi, et
+  // sans ce garde la copie envoyée à un inconnu irait interroger le serveur de
+  // l'entreprise qui la lui a envoyée.
+  if (IS_TRIAL_BUILD) return;
 
   // Hors serveur, il n'y a personne à interroger : la fiche de compagnie est
   // sur l'appareil et fait autorité. L'appel réussissait à retarder chaque

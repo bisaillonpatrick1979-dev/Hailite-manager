@@ -9,6 +9,7 @@ import LegacyDataImporter from './LegacyDataImporter';
 import LegalLinks from './LegalLinks';
 import { savePersonalBackupConfig, type AppStorageMode, type BackupConnectionMethod, type PersonalCloudProvider } from '../personalBackup';
 import { LOCAL_TEST_MODE } from '../testProfiles';
+import { IS_TRIAL_BUILD } from '../trialAccess';
 import {
   Building2, Check, ChevronLeft, ChevronRight, Database,
   Globe2, MapPin, Palette, ReceiptText, ShieldCheck, Trash, Upload
@@ -65,7 +66,12 @@ export default function OnboardingScreen() {
   const [taxNum2, setTaxNum2] = useState(companyInfo.qstNumber || '');
   const [taxConfirmed, setTaxConfirmed] = useState(false);
 
-  const initialStorageMode: AppStorageMode = !LOCAL_TEST_MODE
+  const initialStorageMode: AppStorageMode = IS_TRIAL_BUILD
+    // Une version d'essai n'a aucun serveur à proposer : l'adresse figée dans
+    // l'application est celle de l'entreprise qui l'a envoyée. On part donc du
+    // nuage personnel, et le choix « serveur » n'est pas offert.
+    ? 'personal_cloud'
+    : !LOCAL_TEST_MODE
     ? 'supabase'
     : companyInfo.dataStorageMode === 'local'
     ? 'local'
@@ -324,6 +330,7 @@ export default function OnboardingScreen() {
               connectionMethod={backupConnectionMethod}
               onConnectionMethodChange={setBackupConnectionMethod}
               cloudRegion={CLOUD_REGION}
+              allowServerMode={!IS_TRIAL_BUILD}
             />
             {offlineMode && (
               <div className="rounded-2xl border border-orange-500/40 bg-orange-500/10 p-5">
