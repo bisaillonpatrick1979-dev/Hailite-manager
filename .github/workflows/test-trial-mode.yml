@@ -40,6 +40,7 @@ jobs:
       - name: Compiler et servir la version d'essai
         run: |
           npx vite build --mode trial --outDir dist-trial
+          node scripts/assert-trial-build.mjs dist-trial
           npx vite preview --outDir dist-trial --port 4174 --host 127.0.0.1 > /tmp/hailite-trial.log 2>&1 &
           for attempt in {1..60}; do
             if curl --fail --silent http://127.0.0.1:4174/ > /dev/null; then

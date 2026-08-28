@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=dist/server.mjs",
     "build:vercel": "npm run typecheck && vite build",
-    "build:trial": "VITE_TRIAL_DAYS=7 npm run typecheck && VITE_TRIAL_DAYS=7 vite build --mode trial && cap sync android",
+    "build:trial": "npm run typecheck && vite build --mode trial --outDir dist-trial && node scripts/assert-trial-build.mjs dist-trial && vite build --mode trial && node scripts/assert-trial-build.mjs dist && cap sync android",
     "android:trial-apk": "npm run build:trial && cd android && ./gradlew assembleDebug",
     "build:mobile": "npm run typecheck && vite build --mode mobile && cap sync android",
     "android:sync": "npm run build:mobile",
