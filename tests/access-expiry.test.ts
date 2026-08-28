@@ -92,6 +92,27 @@ test('la date fait l’aller-retour entre l’application et la base', () => {
   assert.match(client, /accessExpiresAt: r\.access_expires_at \|\| undefined/, 'lecture');
 });
 
+test('la limite se pose ET se retire depuis les deux formulaires', () => {
+  // Elle n'existait qu'à la création. Impossible, donc, de prolonger l'accès
+  // d'un invité qui décide d'acheter, ni de le retirer : il aurait fallu
+  // supprimer la personne et la recréer, en perdant son historique.
+  const app = read('src/App.tsx');
+  assert.match(app, /newEmployeeForm\.accessExpiresAt/, 'formulaire de création');
+  assert.match(app, /editEmployeeForm\.accessExpiresAt/, 'formulaire de modification');
+
+  // « Vide » doit vraiment effacer la limite en base. Sans le repli sur
+  // undefined, une chaîne vide serait enregistrée telle quelle.
+  assert.match(app, /accessExpiresAt: editEmployeeForm\.accessExpiresAt \|\| undefined/);
+});
+
+test('un accès temporaire se voit dans la liste, sans ouvrir la fiche', () => {
+  // Sans repère visible, personne ne sait qui expire ni quand — et l'échéance
+  // se découvre le matin où la personne ne peut plus entrer.
+  const app = read('src/App.tsx');
+  assert.match(app, /emp\.accessExpiresAt && \(\(\) =>/, 'insigne dans la liste');
+  assert.match(app, /accessExpiredTag/, 'cas échu distingué du cas en cours');
+});
+
 test('la migration crée une colonne nullable, sans toucher aux comptes existants', () => {
   const sql = read('supabase/migrations/20260812090000_add_access_expiry.sql');
   // La déclaration de colonne elle-même ne doit porter aucune contrainte :
