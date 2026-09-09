@@ -6,6 +6,12 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+// Les builds ordinaires restent sur les valeurs écrites dans defaultConfig.
+// Le workflow de publication peut les remplacer sans modifier le dépôt juste
+// avant un envoi sur Google Play.
+def requestedVersionCode = project.findProperty('releaseVersionCode')
+def requestedVersionName = project.findProperty('releaseVersionName')
+
 android {
     namespace = "ca.hailite.manager"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -15,10 +21,16 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
+        if (requestedVersionCode != null) {
+            versionCode requestedVersionCode.toString().toInteger()
+        }
+        if (requestedVersionName != null) {
+            versionName requestedVersionName.toString()
+        }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+             // Default: https://android.googlesource.com/platforms/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
