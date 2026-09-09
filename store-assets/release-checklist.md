@@ -22,7 +22,10 @@ This separates work that can be completed in the repository from actions that re
 - [ ] Create the Google Play Console owner account and complete identity/business verification.
 - [ ] Choose the correct account type. Do not claim to be an organization unless the business meets Google’s organization requirements.
 - [ ] If using a newly created personal account, plan the required closed test: at least 12 opted-in testers continuously for 14 days before production access.
-- [ ] Choose the commercial model before publishing: paid download, free trial, subscription, or business licence. Subscriptions and digital in-app purchases require Google Play Billing implementation and testing.
+- [x] Commercial model chosen: **paid download**, a single price set in the console. Google collects and remits, so no Google Play Billing code is required and none is present.
+- [ ] Set up the Google Payments merchant profile. A paid app cannot be published without it, and it is verified separately from the developer account, so start it early.
+- [ ] Keep the app free of any other digital sale. Adding a subscription, an unlock, or a link to an outside payment page later would make Google Play Billing mandatory and can get a published app removed. Invoicing a construction client for work done is not an in-app purchase and does not fall under this rule.
+- [ ] Note that Google no longer offers a built-in trial for paid apps. The separate trial build in this repository (`.env.trial`) is how a prospect tries the app; it is distributed outside the store and must never be sold.
 - [ ] Create the upload keystore once, store it in two secure backups, and never commit it.
 - [ ] Enrol in Play App Signing and keep the upload key separate from the app-signing key.
 - [ ] Enter the final privacy, Data safety, target-audience, content-rating, ads, and account-deletion declarations.
