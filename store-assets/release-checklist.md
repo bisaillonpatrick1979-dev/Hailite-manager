@@ -26,9 +26,10 @@ This separates work that can be completed in the repository from actions that re
 - [ ] Create the upload keystore once, store it in two secure backups, and never commit it.
 - [ ] Enrol in Play App Signing and keep the upload key separate from the app-signing key.
 - [ ] Enter the final privacy, Data safety, target-audience, content-rating, ads, and account-deletion declarations.
+- [ ] Fill in **App access**. Every screen of this app sits behind a PIN, so a reviewer who is given nothing sees only the login list and cannot test anything. Reviews are refused for exactly this. Supply a working profile name and its PIN, valid on the production server, not expiring, and note that no other step is required to reach the whole app. If that demo profile is given a guest expiry date, the review fails the day it lapses.
 - [ ] Verify that `info@hailitexteriors.ca` exists and is actively monitored, or replace it everywhere before submission.
 - [ ] Have the privacy policy, terms, payroll/tax wording, and retention periods reviewed for the actual countries sold into.
-- [ ] Test the release on at least one low-end Android 7/8 device or emulator and one current Android 16 device, plus the owner’s Samsung device.
+- [ ] Test the release on at least one low-end Android 7/8 device or emulator and one current Android 16 device, plus the owner’s Samsung device. On the Android 15+ device, confirm the clock and battery do not sit on top of the header, and that the bottom bar clears the gesture bar: from API 35 the system draws the app under both bars.
 - [ ] Run the closed/internal track, collect consented tester feedback, fix crashes, then promote the exact tested AAB.
 
 ## Repeat for every release

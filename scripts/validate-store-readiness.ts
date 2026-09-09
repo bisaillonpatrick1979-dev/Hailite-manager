@@ -149,6 +149,49 @@ for (const screenshot of [
   dimensions(`store-assets/google-play/screenshots/${screenshot}`, 1080, 1920);
 }
 
+// Bord à bord imposé à partir d'Android 15 (niveau 35+). L'application vise le
+// niveau 36 : elle dessine donc sous les barres système. Capacitor ne fournit
+// la mesure de ces bandes que si la fenêtre est déclarée « viewport-fit=cover »,
+// et il reste à les réserver des deux côtés — le haut a été oublié une fois, la
+// barre de navigation passait sous l'horloge.
+includes('index.html', 'viewport-fit=cover', 'la fenêtre est déclarée bord à bord (sans quoi les encarts valent zéro)');
+const styles = read('src/index.css');
+check(
+  /#navbar-scaffold\s*\{[^}]*env\(safe-area-inset-top/.test(styles),
+  'la barre du haut réserve la bande de la barre d’état'
+);
+check(
+  /#main-scaffold-container\s*\{[^}]*env\(safe-area-inset-top/.test(styles),
+  'le contenu est décalé sous la barre du haut, encart compris'
+);
+check(
+  /#fixed-bottom-navigation-main\s*\{[^}]*env\(safe-area-inset-bottom/.test(styles),
+  'la barre du bas réserve la bande de la barre de gestes'
+);
+// Les bandeaux ancrés en haut (démonstration, échec de synchronisation, témoin
+// de sauvegarde) suivaient la barre par une valeur figée : ils seraient passés
+// sous l'horloge dès que la barre s'est décalée.
+for (const utilityClass of ['pinned-under-topbar', 'pinned-below-statusbar']) {
+  check(
+    new RegExp(`\\.${utilityClass}\\s*\\{[^}]*env\\(safe-area-inset-top`).test(styles),
+    `la classe ${utilityClass} suit la bande de la barre d’état`
+  );
+  includes('src/App.tsx', utilityClass, `${utilityClass} est réellement posée sur un bandeau`);
+}
+check(
+  !/className="[^"]*\btop-16\b/.test(read('src/App.tsx')),
+  'aucun bandeau n’est encore ancré à une hauteur de barre figée'
+);
+
+// Les bibliothèques natives doivent s'aligner sur des pages de 16 Ko depuis
+// novembre 2025. L'application n'embarque aucun .so : la règle est satisfaite
+// d'office, et ce contrôle le restera tant que personne n'en ajoute sans le
+// vérifier.
+const nativeLibs = fs.existsSync(file('android/app/src/main/jniLibs'))
+  ? fs.readdirSync(file('android/app/src/main/jniLibs'))
+  : [];
+check(nativeLibs.length === 0, 'aucune bibliothèque native à réaligner sur les pages de 16 Ko');
+
 const runtime = read('src/runtimeConfig.ts');
 check(runtime.includes("headers.set('X-Hailite-Client', nativePlatform)"), 'le client natif s’identifie explicitement');
 check(runtime.includes("credentials: isNativeRuntime ? 'omit'"), 'le client natif ne dépend pas des cookies WebView');

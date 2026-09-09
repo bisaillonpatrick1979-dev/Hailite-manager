@@ -1418,7 +1418,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   return (
     <div 
       id="main-scaffold-container"
-      className={`min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 flex flex-col relative select-none ${demoSandboxActive ? 'pt-36 sm:pt-28' : 'pt-16'}`}
+      // Le décalage du haut est posé dans index.css : il doit s'ajouter à
+      // l'encart de la barre d'état, que seul le CSS connaît (env()).
+      data-demo-sandbox={demoSandboxActive ? 'true' : 'false'}
+      className="min-h-screen bg-[#0F1115] text-[#E0E2E6] font-sans pb-24 flex flex-col relative select-none"
     >
       {/* Le décompte reste visible en permanence, pour que personne ne
           découvre l'échéance le matin où elle tombe. */}
@@ -1434,12 +1437,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         </Suspense>
       )}
       {!demoSandboxActive && cloudSyncing && (
-        <div className="fixed top-1 right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
+        <div className="pinned-below-statusbar fixed right-1 z-[100] px-2 py-1 rounded bg-black/60 text-[10px] font-mono text-orange-400 tracking-wide pointer-events-none">
           {t.cloudSyncing}
         </div>
       )}
       {!demoSandboxActive && syncFailure && (
-        <div className="fixed top-16 left-0 right-0 z-[90] flex items-center justify-between gap-3 border-b border-red-500/40 bg-red-950/95 px-4 py-2 text-xs text-red-100 shadow-lg">
+        <div className="pinned-under-topbar fixed left-0 right-0 z-[90] flex items-center justify-between gap-3 border-b border-red-500/40 bg-red-950/95 px-4 py-2 text-xs text-red-100 shadow-lg">
           <span className="min-w-0 break-words">
             {currentLanguage === 'FR' ? 'Sauvegarde nuage échouée' : 'Cloud save failed'}
             {' — '}{syncFailure.label}.{' '}
@@ -1565,7 +1568,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       </nav>
 
       {demoSandboxActive && (
-        <div className="fixed left-0 right-0 top-16 z-[39] flex min-h-12 flex-col items-center justify-between gap-2 border-b border-amber-300/40 bg-amber-950/95 px-4 py-2 text-center shadow-xl sm:flex-row sm:text-left">
+        <div className="pinned-under-topbar fixed left-0 right-0 z-[39] flex min-h-12 flex-col items-center justify-between gap-2 border-b border-amber-300/40 bg-amber-950/95 px-4 py-2 text-center shadow-xl sm:flex-row sm:text-left">
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-wider text-amber-200">
               🧪 {currentLanguage === 'FR' ? 'Mode Démo 5 ans — données fictives' : '5-year Demo Mode — fictional data'}
