@@ -16,7 +16,8 @@ import {
   inspectionVerdict,
   parseCredentialReading,
   MAX_CREDENTIAL_PHOTO_BYTES,
-  CREDENTIAL_READING_INSTRUCTION
+  CREDENTIAL_READING_INSTRUCTION,
+  isAcceptedCredentialPhoto
 } from '../credentialVerification';
 import type { EmployeeCredential } from '../src/types';
 
@@ -281,4 +282,29 @@ test('une réponse hostile ne peut pas injecter de champs inattendus', () => {
   assert.equal((parsed as any)?.verificationStatus, undefined);
   assert.equal((parsed as any)?.verifiedBy, undefined);
   assert.deepEqual(parsed?.unreadable, undefined, 'une liste sans texte utilisable est ignorée');
+});
+
+// ---------------------------------------------------------------------------
+// Le type de la pièce jointe
+// ---------------------------------------------------------------------------
+
+test('une pièce jointe qui n’est pas une image est refusée', () => {
+  // Le poids était borné, le type ne l'était pas : n'importe quelle donnée
+  // encodée passait, y compris du HTML.
+  const problems = validateSubmission({
+    type: 'whmis', name: 'SIMDUT', issuer: 'X', credentialNumber: '1',
+    issuedDate: '2026-01-01', expiryDate: '2027-01-01', renewalReminderDays: 30,
+    photoFront: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+    photoBack: 'data:image/png;base64,iVBORw0KGgo='
+  } as never);
+  assert.ok(problems.some(p => p.field === 'photoFront'), 'le recto doit être refusé');
+});
+
+test('les formats d’image usuels passent', () => {
+  for (const mime of ['image/jpeg', 'image/png', 'image/webp']) {
+    assert.equal(isAcceptedCredentialPhoto(`data:${mime};base64,iVBORw0KGgo=`), true, mime);
+  }
+  assert.equal(isAcceptedCredentialPhoto(undefined), true, 'une photo absente n’est pas un mauvais format');
+  assert.equal(isAcceptedCredentialPhoto('data:image/svg+xml;base64,PHN2Zz4='), false,
+    'le SVG peut porter du script : il reste dehors');
 });

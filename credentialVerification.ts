@@ -209,6 +209,22 @@ export interface SubmissionProblem {
  *  envoi accidentel de photo pleine résolution fasse gonfler la fiche. */
 export const MAX_CREDENTIAL_PHOTO_BYTES = 1_500_000;
 
+/**
+ * Formats acceptés pour la photo d'une carte.
+ *
+ * Le poids était borné, le type ne l'était pas : n'importe quelle donnée
+ * encodée passait, y compris du HTML. Les deux écrans qui affichent ces photos
+ * les placent dans un `<img>`, où un document HTML ne s'exécute pas — mais rien
+ * ne garantit qu'un futur écran fera de même, et une pièce jointe soumise par
+ * un travailleur ne doit pas pouvoir être autre chose qu'une image. Même liste
+ * que les photos de chantier (voir decodeImageDataUrl dans apiRoutes.ts).
+ */
+const CREDENTIAL_PHOTO_RE = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+
+export function isAcceptedCredentialPhoto(value: string | undefined): boolean {
+  return !value || CREDENTIAL_PHOTO_RE.test(value);
+}
+
 export function dataUrlByteLength(value: string | undefined): number {
   if (!value) return 0;
   const comma = value.indexOf(',');
@@ -251,6 +267,15 @@ export function validateSubmission(input: SubmissionInput): SubmissionProblem[] 
       messageFR: 'Indiquez la date d’expiration, ou cochez « n’expire pas ».',
       messageEN: 'Enter the expiry date, or tick “does not expire”.'
     });
+  }
+  for (const [field, photo] of [['photoFront', input.photoFront], ['photoBack', input.photoBack]] as const) {
+    if (photo && !isAcceptedCredentialPhoto(photo)) {
+      problems.push({
+        field: field as SubmissionProblem['field'],
+        messageFR: 'Ce fichier n’est pas une photo. Utilisez une image JPEG, PNG ou WEBP.',
+        messageEN: 'That file is not a photo. Use a JPEG, PNG or WEBP image.'
+      });
+    }
   }
   const weight = dataUrlByteLength(input.photoFront) + dataUrlByteLength(input.photoBack);
   if (weight > MAX_CREDENTIAL_PHOTO_BYTES * 2) {
