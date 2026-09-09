@@ -21,6 +21,7 @@ import {
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
 import { MAX_COMPANY_USERS } from './companyLimits.js';
+import { guardWorkerWrite } from './writeGuards.js';
 import {
   applyReview, buildSubmittedCredential, canReviewCredential, compareReadingToDeclared,
   inspectionVerdict, parseCredentialReading, validateSubmission,
@@ -1672,6 +1673,19 @@ export function registerApiRoutes(app: express.Express): void {
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
       }
+      // Le rattachement vient d'être vérifié; les colonnes que seul le serveur
+      // ou la gestion possède sont maintenant retirées. Sans cela, il suffisait
+      // de créer un pointage déjà approuvé, ou déclaré dans la zone.
+      if (!isManager(auth.role)) {
+        const guard = guardWorkerWrite(table, payload, null);
+        if (guard.rejected) {
+          logAudit(auth, 'write_rejected_value', table, null, guard.rejected);
+          return res.status(403).json({ error: 'Cette valeur est réservée à la gestion' });
+        }
+        if (guard.attempted.length > 0) {
+          logAudit(auth, 'write_blocked_columns', table, null, { columns: guard.attempted });
+        }
+      }
       const { data, error } = await supabase.from(table).insert(payload).select().single();
       if (error) throw error;
       logAudit(auth, 'insert', table, data?.id ?? null, { fields: Object.keys(payload) });
@@ -1712,6 +1726,19 @@ export function registerApiRoutes(app: express.Express): void {
       alignLegacyUserColumns(table, payload);
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
+      }
+      // Le rattachement vient d'être vérifié; les colonnes que seul le serveur
+      // ou la gestion possède sont maintenant retirées. Sans cela, il suffisait
+      // de créer un pointage déjà approuvé, ou déclaré dans la zone.
+      if (!isManager(auth.role)) {
+        const guard = guardWorkerWrite(table, payload, null);
+        if (guard.rejected) {
+          logAudit(auth, 'write_rejected_value', table, null, guard.rejected);
+          return res.status(403).json({ error: 'Cette valeur est réservée à la gestion' });
+        }
+        if (guard.attempted.length > 0) {
+          logAudit(auth, 'write_blocked_columns', table, null, { columns: guard.attempted });
+        }
       }
       if (!(await parentBelongsToCompany(table, payload, auth.companyId))) {
         return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
@@ -1795,6 +1822,20 @@ export function registerApiRoutes(app: express.Express): void {
       // Empêche toute réaffectation de tenant ou de clé primaire via PATCH.
       delete payload.company_id;
       delete payload[idColumn];
+      // La matrice décide quelles LIGNES un rôle peut écrire; elle ne dit rien
+      // des COLONNES. Sans ce filtre, un employé pouvait approuver son propre
+      // pointage, effacer un refus de géorepérage ou déclarer sa facture payée
+      // en appelant l'API directement.
+      if (!isManager(auth.role)) {
+        const guard = guardWorkerWrite(table, payload, existing as Record<string, unknown>);
+        if (guard.rejected) {
+          logAudit(auth, 'write_rejected_value', table, id, guard.rejected);
+          return res.status(403).json({ error: 'Cette valeur est réservée à la gestion' });
+        }
+        if (guard.attempted.length > 0) {
+          logAudit(auth, 'write_blocked_columns', table, id, { columns: guard.attempted });
+        }
+      }
       // Si la modification touche la personne rattachée, les deux colonnes
       // héritées doivent bouger ensemble (voir alignLegacyUserColumns).
       alignLegacyUserColumns(table, payload);
