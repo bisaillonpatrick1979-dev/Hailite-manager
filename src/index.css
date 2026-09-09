@@ -97,6 +97,51 @@ textarea:focus-visible {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* BORD À BORD — Android 15 et suivants
+   À partir d'Android 15, une application qui vise le niveau 35 ou plus dessine
+   obligatoirement sous les barres système : l'horloge et la batterie se posent
+   par-dessus le haut de la page. Capacitor 8 nous donne la mesure de cette
+   bande (il exige « viewport-fit=cover », présent dans index.html), mais c'est
+   à nous de la réserver.
+   Le bas l'était déjà. Le haut ne l'était pas : la barre de navigation, fixée à
+   l'ordonnée zéro sur une hauteur figée de 4 rem, se retrouvait recouverte —
+   son logo et son menu passaient sous l'horloge. On lui ajoute donc la bande,
+   et on décale le contenu d'autant. */
+#navbar-scaffold {
+  height: calc(4rem + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Tout ce qui est ancré au haut de l'écran suit la même bande. Deux repères :
+   sous la barre de navigation pour les bandeaux pleine largeur, et juste sous
+   la barre d'état pour le témoin de synchronisation, qui se logeait dans le
+   coin — donc exactement là où l'heure s'affiche. */
+.pinned-under-topbar {
+  top: calc(4rem + env(safe-area-inset-top, 0px));
+}
+
+.pinned-below-statusbar {
+  top: calc(0.25rem + env(safe-area-inset-top, 0px));
+}
+
+/* Ce décalage vivait dans les classes Tailwind du conteneur. Il est ici parce
+   qu'il doit s'ADDITIONNER à l'encart, ce qu'une classe utilitaire ne sait pas
+   faire. Les valeurs reprennent exactement les anciennes : 4 rem en temps
+   normal, 9 rem (7 rem sur grand écran) quand la bannière d'essai s'affiche. */
+#main-scaffold-container {
+  padding-top: calc(4rem + env(safe-area-inset-top, 0px));
+}
+
+#main-scaffold-container[data-demo-sandbox='true'] {
+  padding-top: calc(9rem + env(safe-area-inset-top, 0px));
+}
+
+@media (min-width: 640px) {
+  #main-scaffold-container[data-demo-sandbox='true'] {
+    padding-top: calc(7rem + env(safe-area-inset-top, 0px));
+  }
+}
+
 @media (max-width: 768px), (pointer: coarse) {
   button,
   [role="button"],
