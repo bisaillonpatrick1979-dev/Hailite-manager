@@ -29,10 +29,6 @@ jobs:
     env:
       VERSION_CODE: ${{ inputs.version_code }}
       VERSION_NAME: ${{ inputs.version_name }}
-      ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
-      ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
-      ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
-      ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v7
@@ -50,6 +46,11 @@ jobs:
 
       - name: Validate release inputs and signing secrets
         shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::version_code doit être un entier positif."; exit 1; }
@@ -72,20 +73,29 @@ jobs:
       - name: Build and sync mobile application
         run: npm run build:mobile
 
-      - name: Restore upload keystore
+      - name: Restore and validate upload keystore
         working-directory: android
         shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           printf '%s' "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > hailite-manager-upload.jks
           chmod 600 hailite-manager-upload.jks
-          cat > keystore.properties <<EOF
-          storeFile=../hailite-manager-upload.jks
-          storePassword=$ANDROID_UPLOAD_STORE_PASSWORD
-          keyAlias=$ANDROID_UPLOAD_KEY_ALIAS
-          keyPassword=$ANDROID_UPLOAD_KEY_PASSWORD
-          EOF
+          {
+            printf 'storeFile=../hailite-manager-upload.jks\n'
+            printf 'storePassword=%s\n' "$ANDROID_UPLOAD_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_UPLOAD_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_UPLOAD_KEY_PASSWORD"
+          } > keystore.properties
           chmod 600 keystore.properties
+          keytool -list \
+            -keystore hailite-manager-upload.jks \
+            -alias "$ANDROID_UPLOAD_KEY_ALIAS" \
+            -storepass "$ANDROID_UPLOAD_STORE_PASSWORD" >/dev/null
 
       - name: Build signed release bundle
         working-directory: android
@@ -94,7 +104,7 @@ jobs:
           -PreleaseVersionCode="$VERSION_CODE"
           -PreleaseVersionName="$VERSION_NAME"
 
-      - name: Verify AAB signature and version
+      - name: Verify AAB signature and checksum
         working-directory: android
         shell: bash
         run: |
@@ -102,9 +112,6 @@ jobs:
           AAB="app/build/outputs/bundle/release/app-release.aab"
           test -s "$AAB"
           jarsigner -verify -verbose -certs "$AAB" >/dev/null
-          ./gradlew --no-daemon :app:properties \
-            -PreleaseVersionCode="$VERSION_CODE" \
-            -PreleaseVersionName="$VERSION_NAME" >/dev/null
           sha256sum "$AAB" | tee app-release.aab.sha256
 
       - name: Upload signed Play bundle
