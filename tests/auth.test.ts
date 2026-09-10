@@ -25,7 +25,10 @@ test('les sessions signées refusent toute altération', () => {
     name: 'Test'
   };
   const { token } = auth.signSession(context);
-  assert.deepEqual(auth.verifySession(token), context);
+  // Le confinement du profil de révision fait partie du contexte relu, et vaut
+  // explicitement faux pour un compte ordinaire : un drapeau de sécurité ne
+  // doit jamais être « absent, donc probablement faux ».
+  assert.deepEqual(auth.verifySession(token), { ...context, isReviewAccount: false });
   assert.equal(auth.verifySession(`${token.slice(0, -1)}x`), null);
 });
 
@@ -38,7 +41,7 @@ test('une application native peut authentifier ses requêtes avec Bearer', () =>
   };
   const { token } = auth.signSession(context);
   const request = { headers: { authorization: `Bearer ${token}` } } as any;
-  assert.deepEqual(auth.extractAuth(request), context);
+  assert.deepEqual(auth.extractAuth(request), { ...context, isReviewAccount: false });
   request.headers.authorization = `Bearer ${token.slice(0, -1)}x`;
   assert.equal(auth.extractAuth(request), null);
 });

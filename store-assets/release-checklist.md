@@ -16,6 +16,7 @@ This separates work that can be completed in the repository from actions that re
 - [x] PWA manifest and offline shell for installation outside an app store.
 - [x] Store icon, feature graphic, listing copy, and Data safety draft.
 - [x] Automated Web verification and Android APK/AAB build workflow.
+- [x] Confined store-review profile: an account flagged `is_review_account` signs in normally, lands on the built-in five-year fictional dataset, and is refused every company-data route by the server (`reviewAccount.ts`), so a reviewer can exercise the whole app without seeing real jobs, employees, or pay rates. The database forbids giving it an expiry date.
 - [x] Manual signed-release workflow: `.github/workflows/android-release.yml` builds a versioned release AAB, verifies its signature, and publishes the AAB plus its SHA-256 as protected GitHub Actions artifacts. Signing material remains outside the repository.
 
 ## Must be completed by the owner before sale
@@ -36,7 +37,7 @@ This separates work that can be completed in the repository from actions that re
   - `ANDROID_UPLOAD_KEY_PASSWORD` — key password.
 - [ ] Enrol in Play App Signing. For a new Play app, Google Play App Signing is the normal signing path; the developer still signs the uploaded AAB with the separate upload key.
 - [ ] Enter the final privacy, Data safety, target-audience, content-rating, ads, and account-deletion declarations.
-- [ ] Fill in **App access**. Every screen of this app sits behind a PIN, so a reviewer who is given nothing sees only the login list and cannot test anything. Supply a working profile name and its PIN, valid on the production server, not expiring, and state clearly that no other step is required to reach the app. Do not give the review profile a guest expiry date.
+- [ ] Create the review profile, then fill in **App access**. Every screen of this app sits behind a PIN, so a reviewer who is given nothing sees only the login list and cannot test anything. Run `supabase/create-review-account.sql` against the production database, changing the example PIN first, then give Google that profile name and PIN and state that no other step is required to reach the app. The profile is confined: it opens on the built-in five-year fictional dataset, and the server refuses it every company-data route, so the reviewer never sees real jobs, employees, or pay rates. It cannot be given an expiry date — the database rejects that combination, because the review would otherwise fail on the day it lapsed. Keep the profile for as long as the app is published: Google can re-review on any update.
 - [ ] Verify that `info@hailitexteriors.ca` exists and is actively monitored, or replace it everywhere before submission.
 - [ ] Have the privacy policy, terms, payroll/tax wording, and retention periods reviewed for the actual countries sold into.
 - [ ] Test the release on at least one low-end Android 7/8 device or emulator and one current Android 16 device, plus the owner’s Samsung device. On the Android 15+ device, confirm the clock and battery do not sit on top of the header, and that the bottom bar clears the gesture bar: from API 35 the system draws the app under both bars.

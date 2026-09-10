@@ -74,6 +74,13 @@ export interface AuthLoginUser {
   privacyNoticeVersion?: string;
   privacyNoticeAcknowledgedAt?: string;
   locationNoticeAcknowledgedAt?: string;
+  /**
+   * Profil de démonstration remis à un examinateur de boutique : l'application
+   * lui présente le jeu de données fictives au lieu de l'entreprise. Le serveur
+   * lui refuse déjà les vraies données — ce drapeau évite seulement de lui
+   * montrer une application vide.
+   */
+  isReviewAccount?: boolean;
 }
 
 // Connexion vérifiée côté serveur : le cookie HttpOnly est mémorisé par le navigateur.

@@ -192,6 +192,31 @@ const nativeLibs = fs.existsSync(file('android/app/src/main/jniLibs'))
   : [];
 check(nativeLibs.length === 0, 'aucune bibliothèque native à réaligner sur les pages de 16 Ko');
 
+// Profil de démonstration remis à l'examinateur de la boutique. Il part chez un
+// inconnu : le confinement doit tenir côté serveur, pas seulement à l'écran.
+check(fs.existsSync(file('reviewAccount.ts')), 'le module de confinement du profil de révision existe');
+check(
+  fs.existsSync(file('supabase/migrations/20260910090000_add_review_account.sql')),
+  'la migration du profil de révision existe'
+);
+check(
+  fs.existsSync(file('supabase/create-review-account.sql')),
+  'la requête de création du profil de révision est fournie'
+);
+const reviewGuard = read('reviewAccount.ts');
+for (const prefix of ['/api/db', '/api/hydrate', '/api/files', '/api/projects', '/api/credentials', '/api/chat']) {
+  check(reviewGuard.includes(`'${prefix}'`), `le confinement couvre ${prefix}`);
+}
+includes('apiRoutes.ts', 'reviewAccountMayCall(req.path)', 'le garde de confinement est branché sur le serveur');
+includes('apiRoutes.ts', "logAudit(auth, 'review_account_blocked'", 'un accès refusé au profil de révision est journalisé');
+includes('auth.ts', 'is_review_account', 'la connexion lit le marqueur de révision en base');
+// Une échéance sur ce compte ferait échouer la révision le jour où elle tombe.
+includes(
+  'supabase/migrations/20260910090000_add_review_account.sql',
+  'check (not is_review_account or access_expires_at is null)',
+  'la base refuse un profil de révision qui expire'
+);
+
 const runtime = read('src/runtimeConfig.ts');
 check(runtime.includes("headers.set('X-Hailite-Client', nativePlatform)"), 'le client natif s’identifie explicitement');
 check(runtime.includes("credentials: isNativeRuntime ? 'omit'"), 'le client natif ne dépend pas des cookies WebView');

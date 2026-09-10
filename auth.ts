@@ -25,6 +25,12 @@ export interface AuthContext {
   name: string;
   /** Fin d'un accès à durée limitée, en millisecondes. Absent = accès permanent. */
   accessExpiresAt?: number;
+  /**
+   * Profil de démonstration remis à un examinateur de boutique. Il ouvre une
+   * session normale, mais le serveur lui refuse toute donnée d'entreprise
+   * (voir reviewAccount.ts) : l'application lui présente un jeu fictif.
+   */
+  isReviewAccount?: boolean;
 }
 
 // Rôles hérités de l'ancienne version de l'app encore présents en base
@@ -106,6 +112,10 @@ export function signSession(ctx: AuthContext): { token: string; expiresAt: numbe
     company_id: ctx.companyId,
     role: ctx.role,
     name: ctx.name,
+    // Le confinement voyage dans le jeton signé. Le relire en base à chaque
+    // appel coûterait une requête par requête; le déduire du client serait
+    // le laisser décider s'il doit être confiné.
+    ...(ctx.isReviewAccount ? { rev: true } : {}),
     iat: now,
     exp
   });
@@ -129,7 +139,8 @@ export function verifySession(token: string): AuthContext | null {
       userId: String(data.sub),
       companyId: String(data.company_id),
       role: normalizeRole(data.role),
-      name: String(data.name || '')
+      name: String(data.name || ''),
+      isReviewAccount: data.rev === true
     };
   } catch {
     return null;
@@ -264,7 +275,7 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
   // pourrait être hors de portée sans qu'on le sache.
   const { data: users, error } = await supabase
     .from('app_users')
-    .select('id, full_name, role, company_id, access_code_hash, is_active, access_expires_at')
+    .select('id, full_name, role, company_id, access_code_hash, is_active, access_expires_at, is_review_account')
     .eq('company_id', companyId)
     .eq('is_active', true)
     .limit(MAX_COMPANY_USERS + 1);
@@ -321,7 +332,8 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
       companyId: String(companyId),
       role: normalizeRole(user.role),
       name: String(user.full_name || ''),
-      accessExpiresAt: expiresAt ?? undefined
+      accessExpiresAt: expiresAt ?? undefined,
+      isReviewAccount: (user as { is_review_account?: boolean }).is_review_account === true
     }
   };
 }

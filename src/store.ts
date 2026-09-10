@@ -973,7 +973,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   activateDemoSandbox: async () => {
     const state = get();
-    if (!state.activeEmployee || state.activeEmployee.role !== 'admin') return false;
+    // Le mode démo est réservé à l'administration — et au profil de révision,
+    // dont c'est le seul environnement. Sans cette seconde porte, un compte de
+    // révision créé avec un autre rôle ouvrirait une application vide, et
+    // l'examinateur refuserait la soumission sans qu'on sache pourquoi.
+    const allowed = state.activeEmployee
+      && (state.activeEmployee.role === 'admin' || state.activeEmployee.isReviewAccount === true);
+    if (!allowed) return false;
     if (!demoSnapshot) demoSnapshot = captureDemoSnapshot(state);
     const { createFiveYearDemoDataset } = await import('./demoSandbox');
     const demo = createFiveYearDemoDataset(demoSnapshot.activeEmployee || state.activeEmployee);
@@ -981,7 +987,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     setDemoSandboxIsolation(true);
     set({
       ...data,
-      activeEmployee,
+      // Le jeu fictif apporte son propre administrateur. Le marqueur de
+      // révision, lui, décrit QUI est connecté et doit survivre : sans lui,
+      // quitter le mode démo relancerait une synchronisation que le serveur
+      // refuse, et l'examinateur se retrouverait devant une application vide.
+      activeEmployee: { ...activeEmployee, isReviewAccount: state.activeEmployee.isReviewAccount === true },
       demoSandboxActive: true,
       demoSandboxSummary: summary,
       offlineSyncStatus: 'offline'
@@ -1079,7 +1089,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         nip: '',
         privacyNoticeVersion: server.user.privacyNoticeVersion || undefined,
         privacyNoticeAcknowledgedAt: server.user.privacyNoticeAcknowledgedAt || undefined,
-        locationNoticeAcknowledgedAt: server.user.locationNoticeAcknowledgedAt || undefined
+        locationNoticeAcknowledgedAt: server.user.locationNoticeAcknowledgedAt || undefined,
+        isReviewAccount: server.user.isReviewAccount === true
       };
       set({
         activeEmployee: authenticatedEmployee,
@@ -1089,8 +1100,22 @@ export const useAppStore = create<AppState>((set, get) => ({
         insuranceClaims: [], leads: [], shiftAssignments: [], safetyRecords: [],
         payrollPayments: [], motivationTeams: [], motivationGoals: [], weeklyGoals: []
       });
-      // Recharge les données maintenant que la session est établie
-      void get().hydrateCloud();
+      // Un profil de révision ne charge jamais l'entreprise : le serveur le lui
+      // refuserait de toute façon, et il verrait une application vide. On le
+      // pose directement dans le jeu de données fictives de cinq ans, seul
+      // moyen pour un examinateur de boutique de voir une application qui
+      // fonctionne sans exposer les vrais chantiers ni les vrais salaires.
+      if (server.user.isReviewAccount) {
+        // Coupé AVANT la construction du jeu fictif, qui est asynchrone. Sans
+        // cela, la synchronisation lancée au montage part pendant ce temps et
+        // se fait refuser par le serveur : sans danger, mais l'examinateur voit
+        // des erreurs dans la console et l'audit se remplit de refus.
+        setDemoSandboxIsolation(true);
+        void get().activateDemoSandbox();
+      } else {
+        // Recharge les données maintenant que la session est établie
+        void get().hydrateCloud();
+      }
       return {
         success: true,
         message: currentLanguage === 'FR'

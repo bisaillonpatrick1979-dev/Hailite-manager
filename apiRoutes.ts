@@ -17,8 +17,9 @@ import {
   AppRole, AuthContext, AuthedRequest,
   requireAuth, attachAuthOptional, verifyCredentials, signSession,
   isLoginThrottled, recordLoginFailure, clearLoginFailures, logAudit,
-  createLoginHandle, hashPin, SESSION_COOKIE_NAME, accessExpiryMs
+  createLoginHandle, hashPin, SESSION_COOKIE_NAME, accessExpiryMs, extractAuth
 } from './auth.js';
+import { reviewAccountMayCall } from './reviewAccount.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
 import { MAX_COMPANY_USERS } from './companyLimits.js';
 import { guardWorkerWrite } from './writeGuards.js';
@@ -863,7 +864,11 @@ export function registerApiRoutes(app: express.Express): void {
           role: ctx.role,
           privacyNoticeVersion: (consent as any)?.privacy_notice_version || '',
           privacyNoticeAcknowledgedAt: (consent as any)?.privacy_notice_acknowledged_at || '',
-          locationNoticeAcknowledgedAt: (consent as any)?.location_notice_acknowledged_at || ''
+          locationNoticeAcknowledgedAt: (consent as any)?.location_notice_acknowledged_at || '',
+          // Dit au client de présenter le jeu fictif. Ce n'est qu'un confort
+          // d'affichage : le refus des données réelles est déjà posé côté
+          // serveur, et ne dépend pas de ce que le client fera de ce drapeau.
+          isReviewAccount: ctx.isReviewAccount === true
         },
         // L'app native ne peut pas utiliser le cookie SameSite du domaine web.
         // Son jeton de quatre heures reste uniquement en mémoire JavaScript et
@@ -929,6 +934,26 @@ export function registerApiRoutes(app: express.Express): void {
       console.error('Error on /api/auth/privacy-notice:', error);
       return res.status(500).json({ error: 'Les confirmations n’ont pas pu être enregistrées' });
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Confinement du compte de révision
+  // -------------------------------------------------------------------------
+  // Posé ici, AVANT toute route qui touche aux données de l'entreprise, et
+  // relisant la session lui-même plutôt que `req.auth` : il ne dépend donc ni
+  // de l'ordre des intergiciels, ni du fait qu'une route exige ou non une
+  // session. Le profil remis à un examinateur de boutique bascule à l'écran
+  // sur un jeu de données fictives; ce garde est ce qui rend le confinement
+  // réel, y compris pour un appel direct à l'API avec son jeton.
+  app.use((req: AuthedRequest, res, next) => {
+    const auth = req.auth || extractAuth(req);
+    if (!auth?.isReviewAccount) return next();
+    if (reviewAccountMayCall(req.path)) return next();
+    logAudit(auth, 'review_account_blocked', 'auth', undefined, { path: req.path });
+    return res.status(403).json({
+      error: 'Ce profil de démonstration n’accède pas aux données de l’entreprise',
+      code: 'REVIEW_ACCOUNT_SANDBOX'
+    });
   });
 
   // -------------------------------------------------------------------------
