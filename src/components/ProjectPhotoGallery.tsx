@@ -6,12 +6,13 @@
 // client, et le matériel de vente pour le prochain contrat.
 //
 // Les photos sont réduites côté client avant l'envoi (comme les reçus), datées,
-// signées du nom de l'employé et localisées quand le GPS répond — une photo
+// signées du nom de l'employé et localisées sur demande explicite — une photo
 // datée et localisée a une valeur probante bien supérieure.
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useAppStore from '../store';
 import { translations } from '../translations';
 import { compressImageFile } from '../imageUtils';
+import { hasLocationNotice, requestForegroundPosition, type ForegroundPosition } from '../location';
 import type { Project, ProjectPhoto, ProjectPhotoPhase } from '../types';
 import { Camera, ChevronDown, ChevronUp, Images, Printer, Trash, X } from 'lucide-react';
 
@@ -40,6 +41,8 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
   const [pending, setPending] = useState<string | null>(null);
   const [pendingPhase, setPendingPhase] = useState<ProjectPhotoPhase>('during');
   const [caption, setCaption] = useState('');
+  const [includeLocation, setIncludeLocation] = useState(false);
+  const pendingId = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [viewer, setViewer] = useState<ProjectPhoto | null>(null);
@@ -72,22 +75,14 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
         ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
         : 'bg-amber-500/15 text-amber-300 border-amber-500/30';
 
-  // Position GPS : demandée dès la prise de la photo et déposée ici, pour que
-  // l'enregistrement reste instantané. Sur un chantier, un bouton qui met six
-  // secondes à répondre passe pour un bogue — la position est un bonus, jamais
-  // une condition.
-  const positionRef = useRef<{ latitude?: number; longitude?: number }>({});
-
-  const readPosition = (): Promise<{ latitude?: number; longitude?: number }> =>
-    new Promise(resolve => {
-      if (!navigator.geolocation) return resolve({});
-      const done = (value: { latitude?: number; longitude?: number }) => resolve(value);
-      navigator.geolocation.getCurrentPosition(
-        pos => done({ latitude: Number(pos.coords.latitude.toFixed(6)), longitude: Number(pos.coords.longitude.toFixed(6)) }),
-        () => done({}),
-        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
-      );
-    });
+  useEffect(() => {
+    pendingId.current += 1;
+    setPending(null);
+    setCaption('');
+    setIncludeLocation(false);
+    setBusy(false);
+    return () => { pendingId.current += 1; };
+  }, [activeEmployee?.id, project.id]);
 
   const handleFile = async (file?: File) => {
     if (!file) return;
@@ -96,36 +91,57 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
       setError(t.photoUnsupported);
       return;
     }
+    const id = ++pendingId.current;
+    setIncludeLocation(false);
     setBusy(true);
     try {
-      setPending(await compressImageFile(file, 1600, 0.82));
-      // La localisation part en arrière-plan pendant que l'utilisateur choisit
-      // la phase et saisit sa note.
-      positionRef.current = {};
-      readPosition().then(pos => { positionRef.current = pos; });
+      const image = await compressImageFile(file, 1600, 0.82);
+      if (id === pendingId.current) setPending(image);
     } catch {
-      setError(t.photoProcessFailed);
+      if (id === pendingId.current) setError(t.photoProcessFailed);
     } finally {
-      setBusy(false);
+      if (id === pendingId.current) setBusy(false);
     }
   };
 
-  const savePending = () => {
-    if (!pending || busy) return;
-    addProjectPhoto({
-      projectId: project.id,
-      phase: pendingPhase,
-      imageUrl: pending,
-      caption: caption.trim() || undefined,
-      takenAt: new Date().toISOString(),
-      takenById: activeEmployee?.id,
-      takenByName: activeEmployee?.name,
-      ...positionRef.current
-    });
-    setPending(null);
-    setCaption('');
-    positionRef.current = {};
-    setOpen(true);
+  const savePending = async () => {
+    if (!pending || busy || !activeEmployee) return;
+    const id = pendingId.current;
+    const employeeId = activeEmployee.id;
+    const isCurrent = () => id === pendingId.current
+      && useAppStore.getState().activeEmployee?.id === employeeId;
+    setError('');
+    setBusy(true);
+    try {
+      let position: Partial<ForegroundPosition> = {};
+      if (includeLocation) {
+        position = await requestForegroundPosition(() => isCurrent()
+          && hasLocationNotice(useAppStore.getState().activeEmployee));
+      }
+      if (!isCurrent()) return;
+      addProjectPhoto({
+        projectId: project.id,
+        phase: pendingPhase,
+        imageUrl: pending,
+        caption: caption.trim() || undefined,
+        takenAt: new Date().toISOString(),
+        takenById: activeEmployee.id,
+        takenByName: activeEmployee.name,
+        ...position
+      });
+      setBusy(false);
+      pendingId.current += 1;
+      setPending(null);
+      setCaption('');
+      setIncludeLocation(false);
+      setOpen(true);
+    } catch {
+      if (isCurrent()) setError(isFR
+        ? 'Position indisponible. Réessayez ou décochez la localisation pour enregistrer la photo sans GPS.'
+        : 'Location unavailable. Retry or uncheck location to save the photo without GPS.');
+    } finally {
+      if (isCurrent()) setBusy(false);
+    }
   };
 
   // Feuille imprimable : ce qu'on remet à un assureur ou qu'on joint à un dossier.
@@ -209,8 +225,15 @@ export default function ProjectPhotoGallery({ project, defaultOpen = false, comp
       </div>
       <input value={caption} onChange={e => setCaption(e.target.value)} placeholder={t.photoCaptionPh}
         className="w-full p-2.5 bg-gray-900 rounded-lg border border-gray-800 text-white text-xs" />
+      <label className="flex items-start gap-2 rounded-lg border border-gray-700 p-3 text-sm text-gray-300">
+        <input type="checkbox" checked={includeLocation} disabled={busy}
+          onChange={event => setIncludeLocation(event.target.checked)} className="mt-0.5 h-5 w-5 shrink-0" />
+        <span>{isFR
+          ? 'Ajouter ma position actuelle à cette photo. Elle sera enregistrée dans le dossier du chantier et visible aux personnes autorisées à consulter ce dossier.'
+          : 'Add my current location to this photo. It will be saved in the job record and visible to people authorized to view that record.'}</span>
+      </label>
       <div className="flex gap-2">
-        <button type="button" onClick={() => { setPending(null); setCaption(''); }}
+        <button type="button" onClick={() => { pendingId.current += 1; setPending(null); setCaption(''); setIncludeLocation(false); setBusy(false); }}
           className="px-4 py-2.5 bg-gray-800 text-gray-300 text-xs font-black rounded-lg border border-gray-700">
           {t.modalCancelBtn}
         </button>

@@ -34,11 +34,24 @@ function contentSecurityPolicyOrigin(apiBaseUrl: string): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, 'VITE_');
+  if (mode === 'mobile' && Number(env.VITE_TRIAL_DAYS) > 0) {
+    throw new Error('A mobile release must not contain a trial expiry. Remove VITE_TRIAL_DAYS or build with --mode trial.');
+  }
   return {
     plugins: [
       react(),
       tailwindcss(),
-      contentSecurityPolicyOrigin(String(env.VITE_API_BASE_URL || '').trim())
+      contentSecurityPolicyOrigin(String(env.VITE_API_BASE_URL || '').trim()),
+      {
+        name: 'hailite-build-provenance',
+        generateBundle() {
+          this.emitFile({
+            type: 'asset',
+            fileName: 'build-provenance.json',
+            source: JSON.stringify({ mode, trial: Number(env.VITE_TRIAL_DAYS) > 0 })
+          });
+        }
+      }
     ],
     resolve: {
       alias: {
