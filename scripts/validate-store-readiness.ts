@@ -107,7 +107,7 @@ for (const legalPage of ['public/privacy.html', 'public/terms.html', 'public/acc
   includes(legalPage, 'info@hailitexteriors.ca', `${legalPage} contient le contact public`);
   check(!/TODO|CHANGE_ME|example\.com/i.test(read(legalPage)), `${legalPage} ne contient aucun espace réservé`);
 }
-includes('public/privacy.html', 'precise or approximate location only during a requested punch', 'la politique anglaise explique la localisation au pointage');
+includes('public/privacy.html', 'precise or approximate location during a requested punch or GPS refresh', 'la politique anglaise explique les usages de localisation sur demande');
 includes('public/privacy.html', 'does not retain the raw audio recording', 'la politique anglaise explique le traitement de la dictée');
 includes('public/privacy.html', 'Nous ne vendons pas les renseignements personnels', 'la politique française explique l’absence de vente');
 includes('store-assets/google-play/data-safety-draft.md', 'Yes (potentially ephemeral)', 'le brouillon Data safety déclare prudemment la dictée vocale');
@@ -127,7 +127,7 @@ check(!/READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|MANAGE_EXTERNAL_STORAGE/.te
 check(androidManifest.includes('android:allowBackup="false"'), 'sauvegarde Android automatique désactivée');
 check(androidManifest.includes('android:usesCleartextTraffic="false"'), 'trafic Android en clair bloqué');
 const gradle = read('android/app/build.gradle');
-check(/versionCode\s+1\b/.test(gradle), 'Android versionCode 1');
+check(gradle.includes('versionCode releaseVersionCode.toInteger()') && gradle.includes('2100000000L'), 'Android versionCode configurable et borné');
 check(/versionName\s+"1\.0\.0"/.test(gradle), 'Android versionName 1.0.0');
 check(gradle.includes('minifyEnabled true') && gradle.includes('shrinkResources true'), 'optimisation du build Android release activée');
 check(gradle.includes("rootProject.file('keystore.properties')"), 'signature Android externe au dépôt');
@@ -184,20 +184,20 @@ check(
 );
 
 // Les bibliothèques natives doivent s'aligner sur des pages de 16 Ko depuis
-// novembre 2025. L'application n'embarque aucun .so : la règle est satisfaite
-// d'office, et ce contrôle le restera tant que personne n'en ajoute sans le
-// vérifier.
+// novembre 2025. Ce contrôle porte seulement sur les sources. Le workflow
+// doit aussi inspecter les .so des dépendances dans l'AAB final.
 const nativeLibs = fs.existsSync(file('android/app/src/main/jniLibs'))
   ? fs.readdirSync(file('android/app/src/main/jniLibs'))
   : [];
-check(nativeLibs.length === 0, 'aucune bibliothèque native à réaligner sur les pages de 16 Ko');
+check(nativeLibs.length === 0, 'aucune bibliothèque native ajoutée aux sources');
+includes('.github/workflows/android.yml', 'python3 scripts/verify-android-artifact.py', 'le bundle final et le manifeste fusionné sont inspectés');
 
 const runtime = read('src/runtimeConfig.ts');
 check(runtime.includes("headers.set('X-Hailite-Client', nativePlatform)"), 'le client natif s’identifie explicitement');
 check(runtime.includes("credentials: isNativeRuntime ? 'omit'"), 'le client natif ne dépend pas des cookies WebView');
 includes('auth.ts', 'authorization.match(/^Bearer', 'le serveur accepte un jeton Bearer natif');
 includes('apiRoutes.ts', '...(nativeClient ? { sessionToken: token } : {})', 'le jeton natif n’est pas renvoyé au navigateur Web');
-includes('src/hooks/useGeofencing.ts', 'activeEmployee?.locationNoticeAcknowledgedAt', 'la permission GPS attend l’avis au personnel');
+includes('src/location.ts', 'employee?.privacyNoticeVersion === USER_PRIVACY_NOTICE_VERSION', 'la permission GPS attend la version courante de l’avis au personnel');
 includes('src/App.tsx', 'Confidentialité et compte', 'les réglages donnent accès à la confidentialité et à la suppression');
 excludes('src/apiClient.ts', "fetch('/api/", 'apiClient passe par le transport unifié');
 excludes('src/App.tsx', "fetch('/api/", 'App passe par le transport unifié');

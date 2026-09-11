@@ -34,7 +34,9 @@ Fonctions principales :
 - interface complète en français et en anglais;
 - assistant IA facultatif, réservé aux rôles autorisés.
 
-La localisation n’est consultée qu’au moment d’un pointage lorsque l’entreprise active le géorepérage et présente l’avis requis au personnel. Aucun suivi GPS continu en arrière-plan n’est demandé.
+Après l’avis au personnel, le GPS est consulté à votre demande : pointage ou rafraîchissement avec géorepérage activé, définition d’un chantier ou ajout facultatif de votre position actuelle à une photo. Aucun suivi GPS continu en arrière-plan.
+
+L’utilisation locale est disponible. La synchronisation entre appareils et l’assistant IA nécessitent un accès au serveur configuré par l’administrateur de votre entreprise et une connexion Internet. L’achat du téléchargement ne crée pas automatiquement un compte infonuagique pour une nouvelle entreprise.
 
 Hailite Manager est un outil de gestion. Les montants, taxes, retenues, règles du travail et documents importants doivent être vérifiés par l’entreprise et ses professionnels qualifiés.
 

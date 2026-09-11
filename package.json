@@ -16,6 +16,7 @@
     "android:open": "cap open android",
     "android:apk": "npm run build:mobile && cd android && ./gradlew assembleDebug",
     "android:bundle": "npm run build:mobile && cd android && ./gradlew bundleRelease",
+    "android:release": "npm run build:mobile && cd android && ./gradlew bundleRelease -PrequireReleaseSigning=true",
     "store:screenshots": "node scripts/capture-store-screenshots.mjs",
     "test:trial": "node scripts/test-trial-mode.mjs",
     "test:offline": "node scripts/test-offline-mode.mjs",
