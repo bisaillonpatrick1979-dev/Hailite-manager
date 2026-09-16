@@ -71,7 +71,7 @@ export default function UserPrivacyNotice({ companyInfo, currentLanguage, onAcce
 
           <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 space-y-2">
             <h3 className="font-black text-amber-300 flex items-center gap-2"><MapPin className="w-5 h-5" />3. {t('Localisation', 'Location')}</h3>
-            <p>{t('Lorsque le géorepérage est activé, votre position est consultée au moment du pointage afin de vérifier la proximité du chantier. L’application n’annonce pas un suivi continu en arrière-plan. La compagnie doit vous informer de sa base juridique et de ses règles internes applicables.', 'When geofencing is enabled, your location is checked at punch time to verify proximity to the job site. The application does not represent that it performs continuous background tracking. The company must inform you of its applicable legal basis and internal rules.')}</p>
+            <p>{t('Lorsque le géorepérage est activé, votre position est consultée à votre demande lors du pointage ou du rafraîchissement GPS. Vous pouvez aussi choisir d’ajouter votre position actuelle à une photo ou de définir celle d’un chantier. La position est enregistrée avec le dossier concerné et visible aux personnes autorisées à le consulter; un simple rafraîchissement reste en mémoire sur l’appareil. L’application ne suit pas votre position en continu ni en arrière-plan. Vous pouvez refuser la permission dans les réglages de l’appareil; un pointage sans GPS devra être approuvé par le bureau et les photos peuvent être enregistrées sans position. La compagnie doit vous informer de sa base juridique et de ses règles internes applicables.', 'When geofencing is enabled, location is checked on your request at punch time or when refreshing GPS. You can also choose to add your current location to a photo or set a job site location. Location is stored with the relevant record and visible to people authorized to view it; a standalone refresh stays in device memory. The app does not track location continuously or in the background. You can deny permission in device settings; punches without GPS require office approval and photos can be saved without location. The company must inform you of its applicable legal basis and internal rules.')}</p>
           </div>
 
           <div className="rounded-2xl bg-slate-950 border border-slate-700 p-4 space-y-2">
@@ -91,7 +91,7 @@ export default function UserPrivacyNotice({ companyInfo, currentLanguage, onAcce
 
           <label className="flex items-start gap-3 rounded-2xl border border-slate-600 bg-slate-950 p-4 cursor-pointer">
             <input type="checkbox" checked={locationNotice} onChange={event => setLocationNotice(event.target.checked)} className="mt-1 w-5 h-5 accent-cyan-500" />
-            <span className="font-bold">{t('Je comprends que la localisation peut être consultée au moment du pointage lorsque cette fonction est activée.', 'I understand that location may be checked at punch time when this feature is enabled.')}</span>
+            <span className="font-bold">{t('J’ai compris les usages de localisation décrits ci-dessus. La permission de l’appareil et l’ajout du GPS aux photos restent des choix distincts.', 'I understand the location uses described above. Device permission and adding GPS to photos remain separate choices.')}</span>
           </label>
         </div>
 

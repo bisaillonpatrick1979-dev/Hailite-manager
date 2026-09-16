@@ -5,6 +5,7 @@ import {
 import useAppStore from '../store';
 import type { Project, ProjectTask, ProjectTool } from '../types';
 import { checkProjectClosure } from '../invoiceCompliance';
+import { hasLocationNotice, requestForegroundPosition } from '../location';
 
 const ProjectTasksAndTools = lazy(() => import('./ProjectTasksAndTools'));
 const ProjectPhotoGallery = lazy(() => import('./ProjectPhotoGallery'));
@@ -165,19 +166,17 @@ export default function ProjectDirectoryManager() {
 
   const capturePosition = () => {
     if (!editForm) return;
-    if (!navigator.geolocation) {
-      alert(isFR ? 'La géolocalisation n’est pas prise en charge sur cet appareil.' : 'Geolocation is not supported on this device.');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      position => setEditForm(current => current ? {
-        ...current,
-        latitude: Number(position.coords.latitude.toFixed(6)),
-        longitude: Number(position.coords.longitude.toFixed(6))
-      } : current),
-      error => alert(isFR ? `Impossible de lire la position : ${error.message}` : `Unable to read location: ${error.message}`),
-      { enableHighAccuracy: true }
-    );
+    const employeeId = activeEmployee?.id;
+    void requestForegroundPosition(() => {
+      const current = useAppStore.getState().activeEmployee;
+      return !!employeeId && current?.id === employeeId && hasLocationNotice(current);
+    }).then(position => setEditForm(current => current ? {
+      ...current,
+      latitude: Number(position.latitude.toFixed(6)),
+      longitude: Number(position.longitude.toFixed(6))
+    } : current)).catch(error => {
+      if (error?.code !== 'cancelled') alert(isFR ? `Impossible de lire la position : ${error.message}` : `Unable to read location: ${error.message}`);
+    });
   };
 
   return (

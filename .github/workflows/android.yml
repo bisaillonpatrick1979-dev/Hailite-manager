@@ -35,7 +35,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Validate store configuration
-        run: npm run store:validate
+        run: |
+          npm run store:validate
+          python3 -m unittest discover -s tests -p 'test_android_artifact.py'
       - name: Build and sync mobile application
         run: npm run build:mobile
       - name: Verify Android project and build artifacts
@@ -48,6 +50,8 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+      - name: Inspect the merged release and actual AAB
+        run: python3 scripts/verify-android-artifact.py
       - name: Upload unsigned release AAB
         uses: actions/upload-artifact@v7
         with:

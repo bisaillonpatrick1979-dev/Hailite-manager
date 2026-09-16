@@ -6,10 +6,22 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
-// Les builds ordinaires restent sur les valeurs écrites dans defaultConfig.
-// Le workflow de publication peut les remplacer sans modifier le dépôt juste
-// avant un envoi sur Google Play.
-def requestedVersionCode = project.findProperty('releaseVersionCode')
+// CI can still build an explicitly unsigned verification bundle. The store
+// release command must fail closed when the protected upload key is absent.
+if (project.findProperty('requireReleaseSigning') == 'true') {
+    if (!keystorePropertiesFile.exists() || ['keyAlias', 'keyPassword', 'storeFile', 'storePassword'].any {
+        !keystoreProperties[it]?.trim()
+    }) {
+        throw new GradleException('Release signing is required. Configure android/keystore.properties with the protected upload key.')
+    }
+}
+
+def releaseVersionCode = (project.findProperty('releaseVersionCode') ?: '1').toString()
+if (!(releaseVersionCode ==~ /[1-9][0-9]{0,9}/) || releaseVersionCode.toLong() > 2100000000L) {
+    throw new GradleException('releaseVersionCode must be an integer between 1 and 2100000000.')
+}
+
+// Displayed version can be chosen in the manual release workflow.
 def requestedVersionName = project.findProperty('releaseVersionName')
 
 android {
@@ -19,18 +31,15 @@ android {
         applicationId "ca.hailite.manager"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        versionCode releaseVersionCode.toInteger()
         versionName "1.0.0"
-        if (requestedVersionCode != null) {
-            versionCode requestedVersionCode.toString().toInteger()
-        }
         if (requestedVersionName != null) {
             versionName requestedVersionName.toString()
         }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platforms/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }

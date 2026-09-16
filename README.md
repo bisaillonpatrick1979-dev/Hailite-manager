@@ -82,12 +82,18 @@ elle n’utilise pas une URL WebView distante en production.
 npm run build:mobile
 npm run android:apk
 npm run android:bundle
+# Signed release; fails if the protected upload key is missing:
+npm run android:release
 ```
 
 Le workflow GitHub `Android` compile et vérifie automatiquement un APK de test
 installable et un AAB de release non signé. Pour une publication, copiez
 `android/keystore.properties.example` vers `android/keystore.properties`, créez
 une clé d’envoi protégée et ne commitez jamais cette clé ni ses mots de passe.
+Le workflow manuel **Android signed release** prépare un AAB signé et vérifié
+avec un `versionCode` inédit, sans publier l’application. Sa configuration et
+les points encore nécessaires dans Play Console sont décrits dans
+[`store-assets/google-play/audit-2026-09-09.md`](store-assets/google-play/audit-2026-09-09.md).
 
 Les textes, visuels, déclarations de données et étapes de publication se trouvent
 dans `store-assets/`. La politique publique est servie à `/privacy.html` et le

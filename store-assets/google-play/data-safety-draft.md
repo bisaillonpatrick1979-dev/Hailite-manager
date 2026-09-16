@@ -8,10 +8,10 @@ Status: technical draft for version 1.0.0. Reconfirm every answer in Play Consol
 |---|---|---|
 | Does the app collect or share required user data types? | Yes, collects | Business records are sent to the configured cloud when cloud mode is selected. |
 | Is all user data encrypted in transit? | Yes | Production API and providers use HTTPS/TLS; Android blocks cleartext traffic. |
-| Can users request deletion? | Yes | In-app administrator deletion plus the public deletion-request page. |
+| Can users request deletion? | Yes | In-app link to the public deletion-request page, accessible to every user; verified requests must be processed by the operator. |
 | Does the app contain ads? | No | No advertising SDK or behavioural advertising. |
 | Is data sold? | No | No sale of personal information. |
-| Is location collected in the background? | No | Only foreground checks initiated for punch/geotag features. |
+| Is location collected in the background? | No | Only user-initiated foreground punch/refresh, job-location and optional photo-geotag checks. |
 
 ## Data types
 
@@ -26,11 +26,11 @@ Status: technical draft for version 1.0.0. Reconfirm every answer in Play Consol
 | User IDs | Yes | No* | Yes | Authentication, authorization, and record ownership. |
 | Other personal info | Yes | No* | Optional | Role, worker type, qualifications, signatures, and company-entered records. |
 | Financial info | Yes | No* | Feature-dependent | Pay rates, payroll records, expenses, invoices, taxes, and payment details entered by the business. |
-| Precise location | Yes | No* | Optional | Foreground punch proximity and optional job-photo geotag. No background collection. |
+| Precise location | Yes | No* | Optional | Foreground punch proximity, job-location setup and explicitly selected photo geotags. Standalone refresh stays in memory. No background collection. |
 | Approximate location | Yes | No* | Optional | Same foreground features when only coarse permission is granted. |
 | Photos | Yes | No* | Optional | Profile images, job photos, claims, and document attachments. |
 | Files and documents | Yes | No* | Optional | Contracts, invoices, credentials, safety and project documents. |
-| Other user-generated content | Yes | No* | Optional | Notes, descriptions, tasks, signatures, prompts, and AI assistant attachments. |
+| Other user-generated content | Yes | No* | Optional | Notes, descriptions, tasks, signatures, prompts, AI assistant attachments, and explicitly submitted AI response reports (response, reason, optional comment). |
 | App interactions | Limited | No* | Security/operation | Authorized actions and audit-related business events; no advertising profile. |
 | Crash logs / diagnostics | Yes | No* | Automatic | Reliability, security, and troubleshooting through hosting logs. |
 | Device or other identifiers | Yes | No* | Automatic | IP/device-related request information used for security and service delivery. |
@@ -38,13 +38,13 @@ Status: technical draft for version 1.0.0. Reconfirm every answer in Play Consol
 | Audio / voice recordings | Yes (potentially ephemeral) | No* | Optional | User-initiated voice input may transmit speech to the device/browser recognition service for real-time transcription. Hailite Manager does not retain the raw recording as a business record. Confirm the final Android speech provider and mark ephemeral processing in Play Console when applicable. |
 | Browsing history, health, fitness, messages, calendar | No | No | — | No direct device collection for these Play categories in version 1.0.0. |
 
-`*` Data is processed by contracted infrastructure and, only when an authorized administrator invokes it, the configured AI provider. This draft treats those transfers as service-provider processing rather than “sharing”; the final console declaration must match the signed terms and real deployment.
+`*` Data is processed by contracted infrastructure and, when a user invokes an authorized AI feature, the configured AI provider. Office roles can use business-management context; other workers have a restricted technical assistant. This draft treats those transfers as service-provider processing rather than “sharing”; the final console declaration must match the signed terms and real deployment.
 
 ## Retention and deletion
 
 - Configurable default business-record retention: 84 months, subject to the customer’s legal obligations.
-- Session token lifetime: 4 hours; the mobile token is kept only in application memory and cleared on logout/app termination.
-- Deletion path in app: authorized administrator removes the relevant employee/user profile and associated records as allowed by the business workflow.
+- Session token maximum lifetime: 4 hours; the mobile token is kept only in application memory and cleared on logout/app termination. The server also checks the current account on each authenticated request, immediately refusing deleted, disabled or expired accounts.
+- Deletion request path in app: settings/legal links open the public request page. Every user may submit a request without an administrator account. The operator must verify the request and remove/anonymize the account and associated data; merely disabling a profile does not complete deletion.
 - External deletion URL: `https://hailite-manager.vercel.app/account-deletion.html`.
 - Some payroll, tax, safety, contractual, or evidentiary records may be isolated and retained where legally required.
 

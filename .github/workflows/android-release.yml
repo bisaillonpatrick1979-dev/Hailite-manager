@@ -4,14 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version_code:
-        description: "versionCode Google Play (entier strictement croissant)"
+        description: 'Unused Google Play versionCode (positive integer)'
         required: true
-        default: "1"
         type: string
       version_name:
-        description: "versionName affiché (ex. 1.0.0)"
+        description: 'Displayed versionName (for example 1.0.0)'
         required: true
-        default: "1.0.0"
+        default: '1.0.0'
         type: string
 
 permissions:
@@ -23,109 +22,96 @@ concurrency:
 
 jobs:
   release:
-    name: Build signed Play AAB
+    name: Prepare signed AAB for Play testing
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      VERSION_CODE: ${{ inputs.version_code }}
-      VERSION_NAME: ${{ inputs.version_name }}
-
+    # Configure required reviewers and allowed branches on this environment.
+    environment: google-play-release
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
-
       - name: Validate release inputs and signing secrets
-        shell: bash
         env:
-          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
-          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
-          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
-          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          RELEASE_VERSION_CODE: ${{ inputs.version_code }}
+          RELEASE_VERSION_NAME: ${{ inputs.version_name }}
+          UPLOAD_KEY_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
         run: |
-          set -euo pipefail
-          [[ "$VERSION_CODE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::version_code doit être un entier positif."; exit 1; }
-          (( VERSION_CODE <= 2100000000 )) || { echo "::error::version_code dépasse la limite Google Play de 2100000000."; exit 1; }
-          [[ -n "$VERSION_NAME" ]] || { echo "::error::version_name est requis."; exit 1; }
-          for name in ANDROID_UPLOAD_KEYSTORE_BASE64 ANDROID_UPLOAD_STORE_PASSWORD ANDROID_UPLOAD_KEY_ALIAS ANDROID_UPLOAD_KEY_PASSWORD; do
-            [[ -n "${!name}" ]] || { echo "::error::Secret GitHub manquant: $name"; exit 1; }
-          done
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Verify code and store readiness
+          python3 - <<'PY'
+          import os, re
+          value = os.environ['RELEASE_VERSION_CODE']
+          if not re.fullmatch(r'[1-9][0-9]{0,9}', value) or int(value) > 2100000000:
+              raise SystemExit('Invalid versionCode')
+          name = os.environ['RELEASE_VERSION_NAME']
+          if not name.strip() or len(name) > 64 or any(ord(c) < 32 for c in name):
+              raise SystemExit('Invalid versionName')
+          if any(not os.environ.get(key) for key in ['UPLOAD_KEY_BASE64', 'UPLOAD_STORE_PASSWORD', 'UPLOAD_KEY_ALIAS', 'UPLOAD_KEY_PASSWORD']):
+              raise SystemExit('Missing Android upload-key secrets in google-play-release')
+          PY
+      - name: Install and validate
         run: |
+          npm ci
           npm run typecheck
           npm run lint
           npm test
           npm run store:validate
-
-      - name: Build and sync mobile application
+          npm run audit
+          python3 -m unittest discover -s tests -p 'test_android_artifact.py'
+      - name: Build the complete mobile application
         run: npm run build:mobile
-
-      - name: Restore and validate upload keystore
-        working-directory: android
-        shell: bash
+      - name: Restore protected upload key
         env:
-          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
-          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
-          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
-          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          UPLOAD_KEY_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
         run: |
-          set -euo pipefail
-          printf '%s' "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > hailite-manager-upload.jks
-          chmod 600 hailite-manager-upload.jks
-          {
-            printf 'storeFile=../hailite-manager-upload.jks\n'
-            printf 'storePassword=%s\n' "$ANDROID_UPLOAD_STORE_PASSWORD"
-            printf 'keyAlias=%s\n' "$ANDROID_UPLOAD_KEY_ALIAS"
-            printf 'keyPassword=%s\n' "$ANDROID_UPLOAD_KEY_PASSWORD"
-          } > keystore.properties
-          chmod 600 keystore.properties
-          keytool -list \
-            -keystore hailite-manager-upload.jks \
-            -alias "$ANDROID_UPLOAD_KEY_ALIAS" \
-            -storepass "$ANDROID_UPLOAD_STORE_PASSWORD" >/dev/null
-
-      - name: Build signed release bundle
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          names = ['UPLOAD_KEY_BASE64', 'UPLOAD_STORE_PASSWORD', 'UPLOAD_KEY_ALIAS', 'UPLOAD_KEY_PASSWORD']
+          if any(not os.environ.get(name) for name in names):
+              raise SystemExit('Missing Android upload-key secrets in google-play-release')
+          os.umask(0o077)
+          key = Path(os.environ['RUNNER_TEMP']) / 'hailite-upload.jks'
+          key.write_bytes(base64.b64decode(os.environ['UPLOAD_KEY_BASE64'], validate=True))
+          def escape(value):
+              return ''.join('\\u%04x' % int.from_bytes(value.encode('utf-16-be')[i:i+2], 'big') for i in range(0, len(value.encode('utf-16-be')), 2))
+          values = {'storeFile': str(key), 'storePassword': os.environ['UPLOAD_STORE_PASSWORD'],
+                    'keyAlias': os.environ['UPLOAD_KEY_ALIAS'], 'keyPassword': os.environ['UPLOAD_KEY_PASSWORD']}
+          Path('android/keystore.properties').write_text('\n'.join(k + '=' + escape(v) for k, v in values.items()) + '\n')
+          PY
+          keytool -list -keystore "$RUNNER_TEMP/hailite-upload.jks" -alias "$UPLOAD_KEY_ALIAS" -storepass:env UPLOAD_STORE_PASSWORD >/dev/null
+      - name: Build signed release
         working-directory: android
-        run: >-
-          ./gradlew --no-daemon lintRelease testDebugUnitTest bundleRelease
-          -PreleaseVersionCode="$VERSION_CODE"
-          -PreleaseVersionName="$VERSION_NAME"
-
-      - name: Verify AAB signature and checksum
-        working-directory: android
-        shell: bash
+        env:
+          RELEASE_VERSION_CODE: ${{ inputs.version_code }}
+          RELEASE_VERSION_NAME: ${{ inputs.version_name }}
+        run: ./gradlew --no-daemon lintRelease testDebugUnitTest bundleRelease -PrequireReleaseSigning=true "-PreleaseVersionCode=$RELEASE_VERSION_CODE" "-PreleaseVersionName=$RELEASE_VERSION_NAME"
+      - name: Verify the exact signed AAB
         run: |
-          set -euo pipefail
-          AAB="app/build/outputs/bundle/release/app-release.aab"
-          test -s "$AAB"
-          jarsigner -verify -verbose -certs "$AAB" >/dev/null
-          sha256sum "$AAB" | tee app-release.aab.sha256
-
-      - name: Upload signed Play bundle
+          python3 scripts/verify-android-artifact.py --require-signed > android-artifact-report.json
+          sha256sum android/app/build/outputs/bundle/release/app-release.aab > android-aab.sha256
+      - name: Upload signed AAB and verification report
         uses: actions/upload-artifact@v7
         with:
-          name: hailite-manager-v${{ inputs.version_name }}-signed-aab
+          name: hailite-manager-play-${{ inputs.version_code }}
           path: |
             android/app/build/outputs/bundle/release/app-release.aab
-            android/app-release.aab.sha256
+            android-artifact-report.json
+            android-aab.sha256
           if-no-files-found: error
-          retention-days: 30
-
+          retention-days: 14
       - name: Remove signing material
         if: always()
-        working-directory: android
-        shell: bash
-        run: rm -f keystore.properties hailite-manager-upload.jks
+        run: rm -f android/keystore.properties "$RUNNER_TEMP/hailite-upload.jks"

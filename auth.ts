@@ -344,29 +344,79 @@ export function extractAuth(req: express.Request): AuthContext | null {
     .map(value => value.trim())
     .find(value => value.startsWith(`${SESSION_COOKIE_NAME}=`));
   if (!cookie) return null;
-  const token = decodeURIComponent(cookie.slice(SESSION_COOKIE_NAME.length + 1));
-  return verifySession(token);
-}
-
-// Exige une session valide. Toutes les routes de données passent par ici.
-export function requireAuth(req: AuthedRequest, res: express.Response, next: express.NextFunction): void {
-  const ctx = extractAuth(req);
-  if (!ctx) {
-    res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
-    return;
+  try {
+    const token = decodeURIComponent(cookie.slice(SESSION_COOKIE_NAME.length + 1));
+    return verifySession(token);
+  } catch {
+    return null;
   }
-  req.auth = ctx;
-  next();
 }
 
-// Variante pour /api/chat : identité exigée dès que le cloud est configuré ;
-// en mode purement local (Supabase absent), le chat reste accessible mais sans
-// aucune action (les tools ne sont jamais proposés sans rôle vérifié).
-export function attachAuthOptional(req: AuthedRequest, _res: express.Response, next: express.NextFunction): void {
-  const ctx = extractAuth(req);
-  if (ctx) req.auth = ctx;
-  next();
+export interface SessionAccount {
+  id: string;
+  company_id: string;
+  full_name: string | null;
+  role: string | null;
+  is_active: boolean;
+  access_expires_at?: string | null;
 }
+
+type SessionAccountLookup = (context: AuthContext) => Promise<SessionAccount | null>;
+
+const lookupSessionAccount: SessionAccountLookup = async context => {
+  if (!supabaseEnabled || !supabase) {
+    // Local development tests have no database. Production must fail closed.
+    return process.env.NODE_ENV === 'production' ? null : {
+      id: context.userId, company_id: context.companyId, full_name: context.name,
+      role: context.role, is_active: true
+    };
+  }
+  const { data, error } = await supabase.from('app_users')
+    .select('id, company_id, full_name, role, is_active, access_expires_at')
+    .eq('id', context.userId)
+    .eq('company_id', context.companyId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+};
+
+// A signed JWT proves who signed in, not whether their account still exists.
+// Read the current account for every authenticated request: no four-hour
+// access window after deletion/deactivation, role change or shortened expiry.
+export function createSessionMiddleware(required: boolean, lookup: SessionAccountLookup = lookupSessionAccount): express.RequestHandler {
+  return async (req: AuthedRequest, res, next) => {
+    delete req.auth;
+    const context = extractAuth(req);
+    if (context) {
+      try {
+        const account = await lookup(context);
+        const expiry = accessExpiryMs(account?.access_expires_at);
+        if (account && account.id === context.userId && account.company_id === context.companyId
+          && account.is_active === true && (expiry === null || expiry > Date.now())) {
+          req.auth = {
+            ...context,
+            role: normalizeRole(account.role),
+            name: account.full_name || '',
+            ...(expiry === null ? {} : { accessExpiresAt: expiry })
+          };
+        }
+      } catch {
+        res.status(503).json({ error: 'Vérification de session indisponible', code: 'AUTH_UNAVAILABLE' });
+        return;
+      }
+    }
+    if (!req.auth && (required || context)) {
+      res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
+      return;
+    }
+    next();
+  };
+}
+
+export const requireAuth = createSessionMiddleware(true);
+// Anonymous local development remains possible; authenticated AI requests
+// receive the same revocation checks as data routes.
+export const attachAuthOptional = createSessionMiddleware(false);
 
 // ---------------------------------------------------------------------------
 // Journal d'audit (best effort : ne bloque jamais la requête)

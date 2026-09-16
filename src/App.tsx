@@ -4,6 +4,7 @@ import useAppStore from './store';
 import { authHeaders, setCloudSyncAllowed, type CloudSyncStatusDetail } from './apiClient';
 import { currentTrial, IS_TRIAL_BUILD } from './trialAccess';
 import { writePersonalBackupNow } from './personalBackup';
+import AiContentReport from './components/AiContentReport';
 
 // Identifiants locaux (les scripts de build ancrent la ligne d'import ci-dessus :
 // ne pas la modifier). Même format UUID que genId d'apiClient.
@@ -25,6 +26,7 @@ import { canUseGeofenceBypass, useGeofencing } from './hooks/useGeofencing';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { apiFetch } from './runtimeConfig';
 import { COMPLIANCE_VERSION, USER_PRIVACY_NOTICE_VERSION } from '../privacyVersions';
+import { hasLocationNotice, requestForegroundPosition } from './location';
 import {
   CANADIAN_REGIONS, US_REGIONS, TaxRegion,
   getRegionPayrollMeta, regionWithPreposition, CA_FEDERAL_BRACKETS, CA_PROVINCIAL_BRACKETS, CA_PROVINCIAL_FALLBACK_RATE, computeBracketTax
@@ -443,7 +445,7 @@ export default function App() {
   // Intelligent floating AI Agent state
   const [aiChatOpen, setAiChatOpen] = useState<boolean>(false);
   const [aiMessage, setAiMessage] = useState<string>('');
-  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string; pdfName?: string; sourceLabel?: string }>>([
+  const [aiHistory, setAiHistory] = useState<Array<{ role: 'user' | 'assistant'; text: string; simulated?: boolean; imagePreviewUrl?: string; pdfName?: string; sourceLabel?: string; provider?: string }>>([
     { role: 'assistant', text: t.aiWarmWelcome }
   ]);
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -793,7 +795,7 @@ export default function App() {
   };
 
   const handlePunchInStart = () => {
-    if (!activeEmployee || !homePunchProject) return;
+    if (!activeEmployee || !homePunchProject || isChecking) return;
 
     // Garde-fou appareil partagé : le chantier présélectionné doit être actif
     // et assigné à l'utilisateur courant (les admins voient tous les chantiers).
@@ -1249,7 +1251,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           : undefined;
         setAiHistory(prev => [
           ...prev,
-          { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel },
+          { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel, provider: data.provider },
           ...notes.map(note => ({ role: 'assistant' as const, text: note }))
         ]);
         speakAiResponse(displayText);
@@ -1757,9 +1759,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       ? 'bg-orange-500'
                       : isChecking
                         ? 'bg-amber-400 animate-pulse'
-                        : gpsError || !coords
+                        : gpsError
                           ? 'bg-red-500'
-                          : 'bg-green-500'
+                          : !coords ? 'bg-gray-500' : 'bg-green-500'
                   }`}></span>
                   <span className="text-xs text-orange-400 font-bold uppercase tracking-wide">
                     {t.geoProximityLabel}{' '}
@@ -1767,9 +1769,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       ? t.simulatedOnSite
                       : isChecking
                         ? t.checkingGPS
-                        : gpsError || !coords
+                        : gpsError
                           ? t.gpsError
-                          : t.realGPS}
+                          : !coords ? t.gpsNotRequested : t.realGPS}
                   </span>
                 </div>
                 
@@ -2058,6 +2060,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           if (activePunchSession) {
                             setShowPunchOutModal(true);
                           } else {
+                            checkLocation();
                             setShowPunchInModal(true);
                           }
                         }}
@@ -2172,9 +2175,9 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                             ? t.distanceFromSiteDemo
                             : isChecking
                               ? t.checkingGPS
-                              : gpsError || !coords
+                              : gpsError
                                 ? t.gpsError
-                                : t.gpsActive}
+                                : !coords ? t.gpsNotRequested : t.gpsActive}
                         </span>
                       </div>
                     </div>
@@ -3028,20 +3031,20 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <button
                           type="button"
                           onClick={() => {
-                            if (!navigator.geolocation) {
-                              alert(t.geoNotSupported);
-                              return;
-                            }
-                            navigator.geolocation.getCurrentPosition((pos) => {
+                            const employeeId = activeEmployee?.id;
+                            void requestForegroundPosition(() => {
+                              const current = useAppStore.getState().activeEmployee;
+                              return !!employeeId && current?.id === employeeId && hasLocationNotice(current);
+                            }).then(pos => {
                               setNewProjectForm(prev => ({
                                 ...prev,
-                                latitude: Number(pos.coords.latitude.toFixed(6)),
-                                longitude: Number(pos.coords.longitude.toFixed(6))
+                                latitude: Number(pos.latitude.toFixed(6)),
+                                longitude: Number(pos.longitude.toFixed(6))
                               }));
-                              alert(fmt(t.positionCaptured, { lat: pos.coords.latitude.toFixed(6), lon: pos.coords.longitude.toFixed(6) }));
-                            }, (err) => {
-                              alert(fmt(t.gpsCaptureError, { msg: err.message }));
-                            }, { enableHighAccuracy: true });
+                              alert(fmt(t.positionCaptured, { lat: pos.latitude.toFixed(6), lon: pos.longitude.toFixed(6) }));
+                            }).catch((err) => {
+                              if (err?.code !== 'cancelled') alert(fmt(t.gpsCaptureError, { msg: err.message }));
+                            });
                           }}
                           className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black rounded-lg transition"
                         >
@@ -7462,6 +7465,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         ⚡ {chat.sourceLabel}
                       </span>
                     )}
+                    {chat.role === 'assistant' && chat.provider && !chat.simulated && <AiContentReport
+                      language={currentLanguage} response={chat.text} provider={chat.provider} source="main" />}
                   </div>
                 </div>
               ))}
@@ -8013,10 +8018,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
               </button>
               <button 
                 onClick={handlePunchInStart}
-                disabled={!homePunchProject || (homePayMode !== 'surface' && homeRateCustom <= 0)}
+                disabled={isChecking || !homePunchProject || (homePayMode !== 'surface' && homeRateCustom <= 0)}
                 className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-xs font-black rounded-lg transition cursor-pointer disabled:opacity-40"
               >
-                {t.modalConfirmBtn}
+                {isChecking ? t.checkingGPS : t.modalConfirmBtn}
               </button>
             </div>
           </div>

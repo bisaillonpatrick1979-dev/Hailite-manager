@@ -20,6 +20,7 @@ import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { apiFetch } from './runtimeConfig';
 import { Camera, Check, Download, LogOut, Mic, Send, Volume2, VolumeX, X } from 'lucide-react';
 import { todayKey } from './localTime';
+import AiContentReport from './components/AiContentReport';
 
 interface ChatEntry {
   role: 'user' | 'assistant';
@@ -28,6 +29,7 @@ interface ChatEntry {
   pdfName?: string;
   simulated?: boolean;
   sourceLabel?: string;
+  provider?: string;
 }
 
 interface Attachment { dataUrl: string; mimeType: string; name: string }
@@ -404,7 +406,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
           : undefined;
         setHistory(prev => [
           ...prev,
-          { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel },
+          { role: 'assistant', text: displayText, simulated: data.simulated, sourceLabel, provider: data.provider },
           ...notes.map((note: string) => ({ role: 'assistant' as const, text: note }))
         ]);
         speakResponse([displayText, ...notes].join(' '));
@@ -506,7 +508,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
 
   if (!isAdmin) {
     return (
-      <main className="min-h-[100dvh] bg-[#0A0D12] text-white flex flex-col items-center justify-center gap-6 px-6 py-8">
+      <main className="min-h-[100dvh] bg-[#0A0D12] text-white flex flex-col items-center justify-center gap-6 px-6"
+        style={{ paddingTop: 'calc(2rem + env(safe-area-inset-top, 0px))', paddingBottom: 'calc(2rem + env(safe-area-inset-bottom, 0px))' }}>
         <div className="text-center">
           <div className="text-5xl mb-3">🤖</div>
           <h1 className="text-2xl font-black">{isFR ? 'Assistant IA' : 'AI Assistant'}</h1>
@@ -564,7 +567,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   }
 
   return (
-    <main className="h-[100dvh] bg-[#0A0D12] text-white flex flex-col">
+    <main className="h-[100dvh] bg-[#0A0D12] text-white flex flex-col"
+      style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
       {/* En-tête */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-[#16191F]">
         <div className="flex items-center gap-2.5">
@@ -624,6 +628,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
             {entry.text}
             {entry.sourceLabel && <div className="text-[9px] text-gray-500 font-mono mt-1.5">{entry.sourceLabel}</div>}
             {entry.simulated && <div className="text-[9px] text-amber-400 font-mono mt-1.5">{isFR ? 'mode simulation (aucune clé serveur)' : 'simulation mode (no server key)'}</div>}
+            {entry.role === 'assistant' && entry.provider && !entry.simulated && <AiContentReport
+              language={currentLanguage} response={entry.text} provider={entry.provider} source="assistant" />}
           </div>
         ))}
         {busy && (

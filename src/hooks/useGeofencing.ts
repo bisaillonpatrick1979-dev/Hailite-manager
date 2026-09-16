@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Capacitor } from '@capacitor/core';
-import { Geolocation } from '@capacitor/geolocation';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { hasLocationNotice, requestForegroundPosition } from '../location';
 import useAppStore from '../store';
 
 // Le contournement du géorepérage sert uniquement aux essais visuels locaux.
@@ -53,7 +52,20 @@ export function useGeofencing() {
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState<boolean>(false);
 
+  const requestId = useRef(0);
+
   const checkLocation = useCallback(() => {
+    const id = ++requestId.current;
+    const employeeId = activeEmployee?.id;
+    const isStillAllowed = () => {
+      const state = useAppStore.getState();
+      return id === requestId.current && !!employeeId
+        && state.activeEmployee?.id === employeeId
+        && hasLocationNotice(state.activeEmployee) && state.companyInfo.geofencingEnabled;
+    };
+    if (!isStillAllowed()) return;
+    // A new punch must not reuse an earlier site's cached position.
+    setCoords(null);
     setIsChecking(true);
     setGpsError(null);
 
@@ -84,47 +96,22 @@ export function useGeofencing() {
       setIsChecking(false);
     };
 
-    if (Capacitor.isNativePlatform()) {
-      void (async () => {
-        try {
-          let permission = await Geolocation.checkPermissions();
-          if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
-            permission = await Geolocation.requestPermissions({ permissions: ['location', 'coarseLocation'] });
-          }
-          if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
-            rejectPosition({ code: 'denied', message: 'Location permission denied' });
-            return;
-          }
-          const position = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
-          acceptPosition(position.coords.latitude, position.coords.longitude);
-        } catch (error: any) {
-          rejectPosition({ code: error?.code, message: error?.message });
-        }
-      })();
-      return;
-    }
-
-    if (!navigator.geolocation) {
-      rejectPosition({ code: 'unavailable', message: 'Geolocation is not supported' });
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        acceptPosition(position.coords.latitude, position.coords.longitude);
-      },
-      (error) => {
-        rejectPosition({ code: error.code, message: error.message });
-      },
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
-  }, []);
+    void requestForegroundPosition(isStillAllowed).then(position => {
+      if (isStillAllowed()) acceptPosition(position.latitude, position.longitude);
+    }).catch(error => {
+      if (isStillAllowed()) rejectPosition(error);
+    });
+  }, [activeEmployee?.id]);
 
   useEffect(() => {
-    if (companyInfo.geofencingEnabled && activeEmployee?.locationNoticeAcknowledgedAt) {
-      checkLocation();
-    }
-  }, [companyInfo.geofencingEnabled, activeEmployee?.locationNoticeAcknowledgedAt, checkLocation]);
+    // Reset only: opening the app or accepting the notice must not read GPS.
+    requestId.current += 1;
+    setCoords(null);
+    setGpsError(null);
+    setIsChecking(false);
+    return () => { requestId.current += 1; };
+  }, [companyInfo.geofencingEnabled, activeEmployee?.id,
+    activeEmployee?.privacyNoticeVersion, activeEmployee?.locationNoticeAcknowledgedAt]);
 
   // Evaluates punchability on a certain project
   const evaluateProjectGeofence = useCallback((projectId: string) => {

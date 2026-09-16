@@ -33,7 +33,9 @@ Key features:
 - complete French and English interface;
 - optional AI assistant for authorized roles.
 
-Location is checked only at punch time when the organization enables geofencing and presents the required workforce notice. The app does not request continuous background GPS tracking.
+After the workforce notice, GPS is checked on your request: a punch or refresh with geofencing enabled, setting a job site location, or optionally adding your current location to a photo. No continuous background GPS tracking.
+
+Local use is available. Cross-device synchronization and the AI assistant require server access configured by your organization's administrator and an Internet connection. Buying the download does not automatically create a cloud account for a new organization.
 
 Hailite Manager is a management tool. The organization and its qualified professionals must verify amounts, taxes, deductions, labour rules, and important documents.
 
