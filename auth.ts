@@ -236,6 +236,9 @@ const PIN_RE = /^\d{4}$/;
 const LOGIN_HANDLE_RE = /^[A-Za-z0-9_-]{43}$/;
 const BCRYPT_RE = /^\$2[aby]\$/;
 const BCRYPT_ROUNDS = 12;
+// bcrypt hash of a non-PIN string — used only to keep login latency similar
+// when no account matches the opaque handle (avoids handle enumeration via timing).
+const LOGIN_TIMING_DUMMY_HASH = '$2b$12$PUCGvlPG37hVlaxSyPPVgeQnSJrdqezKIxuKSlSrgxTPSZwXQdxRa';
 
 export async function hashPin(pin: string): Promise<string> {
   if (!PIN_RE.test(pin)) throw new Error('Le NIP doit contenir exactement quatre chiffres');
@@ -287,7 +290,12 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
     return { ok: false, reason: 'unavailable' };
   }
 
-  if (error || !user) return { ok: false, reason: 'invalid' };
+  // Keep bcrypt cost even when the handle is unknown, so timing does not
+  // distinguish "invalid handle" (fast) from "wrong PIN" (slow).
+  if (error || !user) {
+    await bcrypt.compare(nip, LOGIN_TIMING_DUMMY_HASH);
+    return { ok: false, reason: 'invalid' };
+  }
   if (user.is_active === false) return { ok: false, reason: 'inactive' };
 
   // Accès à durée limitée (invité, sous-traitant de passage, essai). Le refus

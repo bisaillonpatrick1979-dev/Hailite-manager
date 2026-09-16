@@ -52,3 +52,11 @@ test('l’annuaire utilise une référence opaque et stable', () => {
   assert.equal(handle.includes(companyId), false);
   assert.equal(handle.includes(userId), false);
 });
+
+test('le hash fictif de timing refuse tout NIP et a le coût bcrypt attendu', async () => {
+  // Same constant as auth.ts LOGIN_TIMING_DUMMY_HASH — keep in sync.
+  const dummy = '$2b$12$PUCGvlPG37hVlaxSyPPVgeQnSJrdqezKIxuKSlSrgxTPSZwXQdxRa';
+  assert.match(dummy, /^\$2[aby]\$12\$/);
+  assert.deepEqual(await auth.verifyPin('0000', dummy), { match: false, legacyPlaintext: false });
+  assert.deepEqual(await auth.verifyPin('9999', dummy), { match: false, legacyPlaintext: false });
+});
