@@ -407,6 +407,45 @@ function applyTenantWriteScope(query: any, table: string, auth: AuthContext): an
 // ---------------------------------------------------------------------------
 // Instruction système de l'assistant IA
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Limite de débit de l'assistant
+// ---------------------------------------------------------------------------
+// Chaque appel coûte de l'argent au propriétaire de la clé. Sans plafond, un
+// script — ou une boucle de rafraîchissement mal réglée — pouvait vider son
+// crédit en quelques minutes.
+//
+// Ce compteur vit en mémoire. Sur Vercel, chaque instance a le sien : le
+// plafond réel est donc « 20 par minute PAR INSTANCE », pas 20 en absolu.
+// C'est un garde-fou contre l'emballement, pas une limite contractuelle; un
+// vrai plafond exigerait un compteur partagé (base ou Redis), comme celui de
+// la connexion qui vit dans auth_login_attempts.
+const CHAT_RATE_LIMIT = 20;
+const CHAT_RATE_WINDOW_MS = 60_000;
+const CHAT_RATE_MAX_KEYS = 5000;
+const MAX_CHAT_MESSAGE_LENGTH = 8000;
+
+const chatRateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function chatRateLimited(key: string, now: number = Date.now()): boolean {
+  // La carte ne doit pas enfler sans fin. On jette d'abord les fenêtres
+  // expirées; si ça ne suffit pas, on repart à zéro — perdre un décompte est
+  // moins grave que de laisser la mémoire filer.
+  if (chatRateBuckets.size > CHAT_RATE_MAX_KEYS) {
+    for (const [existing, bucket] of chatRateBuckets) {
+      if (bucket.resetAt <= now) chatRateBuckets.delete(existing);
+    }
+    if (chatRateBuckets.size > CHAT_RATE_MAX_KEYS) chatRateBuckets.clear();
+  }
+
+  const bucket = chatRateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    chatRateBuckets.set(key, { count: 1, resetAt: now + CHAT_RATE_WINDOW_MS });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > CHAT_RATE_LIMIT;
+}
+
 function buildSystemInstruction(regionLabel?: string, language?: string): string {
   const location = regionLabel && regionLabel.trim() ? regionLabel.trim() : 'Amérique du Nord';
   // Langue de réponse : suit la langue choisie dans l'application (FR par défaut)
@@ -1224,11 +1263,33 @@ export function registerApiRoutes(app: express.Express): void {
   // -------------------------------------------------------------------------
   app.post('/api/chat', attachAuthOptional, async (req: AuthedRequest, res) => {
     try {
-      const { message, provider, regionLabel, image, appContext, language, allowActions } = req.body;
+      // Un corps absent ou non-JSON faisait planter la déstructuration et
+      // renvoyait un 500 là où la requête est simplement mal formée.
+      const { message, provider, regionLabel, image, appContext, language, allowActions } = req.body || {};
 
       // Dès que le cloud est configuré, l'accès au modèle exige une session valide.
       if (protectedRuntime && !req.auth) {
         return res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
+      }
+
+      // Le plafond passe avant la validation : sinon un flot de requêtes
+      // malformées coûterait du travail serveur sans jamais être freiné.
+      const rateKey = req.auth?.userId || req.ip || req.socket.remoteAddress || 'noip';
+      if (chatRateLimited(rateKey)) {
+        return res.status(429).json({
+          error: 'Trop de demandes à l’assistant. Réessayez dans une minute.',
+          code: 'RATE_LIMITED'
+        });
+      }
+
+      if (typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Un message est requis', code: 'MESSAGE_REQUIRED' });
+      }
+      if (message.length > MAX_CHAT_MESSAGE_LENGTH) {
+        return res.status(400).json({
+          error: `Message trop long (maximum ${MAX_CHAT_MESSAGE_LENGTH} caractères)`,
+          code: 'MESSAGE_TOO_LONG'
+        });
       }
 
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
