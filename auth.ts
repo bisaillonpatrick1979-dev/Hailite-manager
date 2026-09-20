@@ -271,6 +271,17 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
     .eq('company_id', companyId)
     .eq('is_active', true)
     .limit(MAX_COMPANY_USERS + 1);
+
+  // Une panne de la base n'est pas un mauvais NIP. Répondre « invalid » comptait
+  // l'incident comme un échec dans la limitation de tentatives — assez de
+  // rafraîchissements pendant une panne et l'employé se retrouvait bloqué — et
+  // lui affichait « NIP incorrect », donc l'envoyait refaire un code qui était
+  // pourtant le bon.
+  if (error) {
+    console.error(`[auth] Compagnie ${companyId} : lecture de app_users impossible.`, error);
+    return { ok: false, reason: 'unavailable' };
+  }
+
   const submittedHandle = Buffer.from(loginHandle);
   const user = (users || []).find(candidate => {
     const expectedHandle = Buffer.from(createLoginHandle(companyId, String(candidate.id)));
@@ -292,7 +303,7 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
 
   // Keep bcrypt cost even when the handle is unknown, so timing does not
   // distinguish "invalid handle" (fast) from "wrong PIN" (slow).
-  if (error || !user) {
+  if (!user) {
     await bcrypt.compare(nip, LOGIN_TIMING_DUMMY_HASH);
     return { ok: false, reason: 'invalid' };
   }
