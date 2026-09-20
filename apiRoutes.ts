@@ -1730,19 +1730,48 @@ export function registerApiRoutes(app: express.Express): void {
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
       }
-      // Le rattachement vient d'être vérifié; les colonnes que seul le serveur
-      // ou la gestion possède sont maintenant retirées. Sans cela, il suffisait
-      // de créer un pointage déjà approuvé, ou déclaré dans la zone.
+
+      const idColumn = TABLE_ID_COLUMN[table] || 'id';
+      const idValue = payload[idColumn];
+      if (!idValue) return res.status(400).json({ error: 'Identifiant manquant' });
+
+      // La ligne déjà en place est lue AVANT toute décision, et en entier.
+      // enforceOwnRow ci-dessus ne regarde que le corps de la requête : un
+      // employé qui réutilisait l'identifiant d'un collègue en réécrivant
+      // employee_id à son propre nom passait le contrôle et écrasait la ligne
+      // de l'autre. C'est le propriétaire ENREGISTRÉ qui fait foi.
+      let existingQuery: any = supabase.from(table).select('*').eq(idColumn, idValue);
+      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
+      const { data: existing, error: existingError } = await existingQuery.maybeSingle();
+      if (existingError) throw existingError;
+
       if (!isManager(auth.role)) {
-        const guard = guardWorkerWrite(table, payload, null);
+        if (existing && WRITE_OWN_ONLY.has(table)) {
+          const ownerCol = OWNER_COLUMN[table];
+          if (ownerCol && String((existing as any)[ownerCol] || '') !== auth.userId) {
+            return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
+          }
+        }
+        // Même raisonnement pour le chantier : celui de la ligne existante, pas
+        // celui que la requête prétend.
+        if (existing && (existing as any).project_id
+            && !(await hasProjectAccess(auth, (existing as any).project_id))) {
+          return res.status(404).json({ error: 'Chantier introuvable ou non assigné' });
+        }
+        // Les colonnes que seul le serveur ou la gestion possède sont retirées.
+        // Sans cela, il suffisait de créer un pointage déjà approuvé, ou déclaré
+        // dans la zone. La ligne existante sert de référence : certaines valeurs
+        // ne sont interdites que lorsqu'elles CHANGENT.
+        const guard = guardWorkerWrite(table, payload, (existing as Record<string, unknown>) || null);
         if (guard.rejected) {
-          logAudit(auth, 'write_rejected_value', table, null, guard.rejected);
+          logAudit(auth, 'write_rejected_value', table, String(idValue), guard.rejected);
           return res.status(403).json({ error: 'Cette valeur est réservée à la gestion' });
         }
         if (guard.attempted.length > 0) {
-          logAudit(auth, 'write_blocked_columns', table, null, { columns: guard.attempted });
+          logAudit(auth, 'write_blocked_columns', table, String(idValue), { columns: guard.attempted });
         }
       }
+
       if (!(await parentBelongsToCompany(table, payload, auth.companyId))) {
         return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
       }
@@ -1752,13 +1781,6 @@ export function registerApiRoutes(app: express.Express): void {
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
       }
-      const idColumn = TABLE_ID_COLUMN[table] || 'id';
-      const idValue = payload[idColumn];
-      if (!idValue) return res.status(400).json({ error: 'Identifiant manquant' });
-      let existingQuery: any = supabase.from(table).select(idColumn).eq(idColumn, idValue);
-      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
-      const { data: existing, error: existingError } = await existingQuery.maybeSingle();
-      if (existingError) throw existingError;
       let data: any;
       if (table === 'app_users') await prepareAppUserPin(payload, !existing);
       if (existing) {
