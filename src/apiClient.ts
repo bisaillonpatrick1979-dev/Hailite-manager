@@ -1236,6 +1236,8 @@ export interface CloudHydrateResult {
   companyId?: string;
   viewer?: { userId: string; role: string; name?: string };
   tables: Record<string, any[]>;
+  /** Tables dont le serveur a coupé la réponse au plafond. */
+  truncatedTables?: string[];
 }
 
 export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
@@ -1254,7 +1256,28 @@ export async function hydrateFromCloud(): Promise<CloudHydrateResult> {
     if (!cloudEnabled) return { enabled: false, tables: {} };
     setAuthenticatedSession(true);
     cachedCompanyId = data.companyId || null;
-    return { enabled: true, companyId: data.companyId, viewer: data.viewer, tables: data };
+
+    // Le serveur plafonne chaque table. Quand il a coupé, il faut le dire : une
+    // liste incomplète qui a l'air complète mène quelqu'un à facturer, à payer
+    // ou à fermer un chantier d'après des chiffres qui ne sont pas les bons.
+    const truncatedTables: string[] = Array.isArray(data.truncatedTables) ? data.truncatedTables : [];
+    if (truncatedTables.length > 0) {
+      console.warn('[cloud-sync] Tables tronquées par le serveur :', truncatedTables.join(', '));
+      notifySync({
+        status: 'error',
+        label: 'Données incomplètes',
+        message: `Le serveur n'a pas pu envoyer toutes les lignes de : ${truncatedTables.join(', ')}. `
+          + 'Les plus récentes sont affichées; les totaux et les rapports peuvent être incomplets.'
+      });
+    }
+
+    return {
+      enabled: true,
+      companyId: data.companyId,
+      viewer: data.viewer,
+      tables: data,
+      truncatedTables
+    };
   } catch (err: any) {
     console.warn('[cloud-sync] hydrateFromCloud a échoué; les données en mémoire sont conservées :', err.message);
     cloudEnabled = false;

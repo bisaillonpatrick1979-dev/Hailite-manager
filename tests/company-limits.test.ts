@@ -36,8 +36,25 @@ test('un plafond atteint ne se déguise pas en NIP incorrect', () => {
 
   // Et il doit être vérifié AVANT le rejet générique, sinon il ne sert à rien.
   const guardAt = auth.search(guard);
-  const genericRejectAt = auth.indexOf("if (error || !user) return { ok: false, reason: 'invalid' };");
-  assert.ok(guardAt > 0 && genericRejectAt > guardAt, 'le garde-fou doit passer avant le rejet générique');
+  const genericRejectAt = auth.indexOf('if (!user) {');
+  assert.ok(guardAt > 0, 'le garde-fou de troncature doit exister');
+  assert.ok(genericRejectAt > guardAt, 'le garde-fou doit passer avant le rejet générique');
+});
+
+test('une panne de la base ne se déguise pas non plus en NIP incorrect', () => {
+  // Même raisonnement que le plafond : une lecture impossible est un problème
+  // de service. La compter comme un échec de NIP alimentait la limitation de
+  // tentatives et finissait par bloquer quelqu'un qui n'avait rien fait de mal.
+  const auth = read('auth.ts');
+  const guard = /if \(error\) \{[\s\S]*?return \{ ok: false, reason: 'unavailable' \};[\s\S]*?\}/;
+  assert.match(auth, guard, 'une erreur de lecture doit renvoyer « unavailable »');
+  assert.match(auth, /if \(error\) \{\s*\n\s*console\.error\(/, 'et laisser une trace');
+
+  // Le rejet générique ne doit plus absorber le cas d'erreur.
+  assert.ok(
+    !auth.includes('if (error || !user)'),
+    'l’erreur de lecture et le compte introuvable sont deux cas distincts'
+  );
 });
 
 test('l’annuaire et la connexion s’arrêtent au même endroit', () => {

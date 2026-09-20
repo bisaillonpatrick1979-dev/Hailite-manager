@@ -120,7 +120,7 @@ export function buildEmployeeDossier(
 
     const totalHours = slices.reduce((sum, slice) => sum + slice.hours, 0);
     const revenue = Number.isFinite(Number(session.revenue)) ? Number(session.revenue) : 0;
-    const open = session.endTime === null;
+    const open = !session.endTime;
     if (open && (!activeSession || new Date(session.startTime) > new Date(activeSession.startTime))) {
       activeSession = session;
     }

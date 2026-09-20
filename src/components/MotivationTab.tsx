@@ -129,7 +129,7 @@ export default function MotivationTab() {
 
   // Calculate live team overview metrics
   const getTeamStats = (team: MotivationTeam) => {
-    const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
+    const activePunches = punchSessions.filter(p => !p.endTime && team.memberIds.includes(p.employeeId));
     
     // Cumul depuis le début, conformément aux tuiles « Heures Totales » et
     // « Revenu » affichées plus bas. (Une variable « todayStr » traînait ici

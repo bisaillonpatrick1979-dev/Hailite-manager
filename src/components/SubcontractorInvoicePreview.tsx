@@ -72,7 +72,7 @@ export default function SubcontractorInvoicePreview({ invoice, issuer, companyIn
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
                 <p className="text-[10px] uppercase font-black tracking-wider text-slate-500">{t('Période et travail', 'Period and work')}</p>
                 <p className="font-black text-lg mt-1">{invoice.totalHours.toFixed(2)} h</p>
-                <p className="text-sm text-slate-600 mt-1">{invoice.sessionIds.length} {t('session(s) de chantier', 'job session(s)')}</p>
+                <p className="text-sm text-slate-600 mt-1">{(invoice.sessionIds || []).length} {t('session(s) de chantier', 'job session(s)')}</p>
                 {invoice.notes && <p className="text-xs text-slate-500 mt-2">{invoice.notes}</p>}
               </div>
             </div>

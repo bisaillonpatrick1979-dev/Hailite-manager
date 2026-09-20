@@ -23,7 +23,10 @@ function corpsDe(nom: string): string {
 
 test('l’arrêt d’un pointage sort avant tout effet si la session est déjà fermée', () => {
   const corps = corpsDe('stopPunchSession');
-  const garde = corps.indexOf('target.endTime !== null) return;');
+  // L'assertion porte sur l'existence du garde, pas sur son écriture : elle
+  // figeait « target.endTime !== null », ce qui refusait au contraire de
+  // fermer un pointage dont la clé « endTime » manque.
+  const garde = corps.indexOf('if (!target || target.endTime) return;');
   assert.notEqual(garde, -1, 'le garde d’idempotence doit exister');
 
   // Le garde doit précéder l'écriture de l'état, la sauvegarde locale,
@@ -37,6 +40,11 @@ test('l’arrêt d’un pointage sort avant tout effet si la session est déjà 
 
 test('le démarrage d’un pointage refuse déjà une seconde session ouverte', () => {
   const corps = corpsDe('startPunchSession');
-  assert.match(corps, /p\.endTime === null\);?\s*\n\s*if \(active\) return;/,
+  // L'assertion porte sur l'intention — « chercher une session ouverte, puis
+  // refuser » — et non sur l'écriture exacte du test d'ouverture. Elle figeait
+  // « p.endTime === null », ce qui a empêché d'harmoniser ce test avec les cinq
+  // autres endroits du code qui traitent une fin absente comme une session
+  // ouverte.
+  assert.match(corps, /const active = punchSessions\.find\([\s\S]{0,120}!p\.endTime\);?\s*\n\s*if \(active\) return;/,
     'un employé ne peut pas avoir deux pointages ouverts');
 });

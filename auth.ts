@@ -137,14 +137,102 @@ export function verifySession(token: string): AuthContext | null {
 }
 
 // ---------------------------------------------------------------------------
-// Limitation des tentatives de connexion (anti force brute sur les NIP)
+// Limitation progressive des tentatives de connexion
 // ---------------------------------------------------------------------------
 // La table auth_login_attempts est partagée entre toutes les instances Vercel.
 // Le Map local reste uniquement un filet de sécurité lorsque Supabase est
 // indisponible; il n'est jamais considéré comme la protection principale.
-const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const loginAttempts = new Map<string, { count: number; firstAt: number }>();
+//
+// Pourquoi une échelle plutôt qu'un blocage fixe
+// ----------------------------------------------
+// L'ancienne règle était : cinq échecs, puis quinze minutes de blocage, et on
+// recommence. Un NIP à quatre chiffres n'a que dix mille combinaisons; à cinq
+// essais par quart d'heure, cela fait 480 essais par jour, soit tout l'espace
+// parcouru en trois semaines. Le blocage plat ne coûtait donc presque rien à
+// quelqu'un de patient.
+//
+// Et il coûtait cher à l'employé honnête : se tromper cinq fois, c'est
+// ordinaire quand on a deux NIP en tête, et la sanction tombait d'un coup à
+// quinze minutes — au moment de pointer, sur un chantier, sans recours.
+//
+// L'échelle inverse les deux : les premiers essais sont gratuits, puis la
+// durée monte vite. Le même attaquant ne fait plus qu'une trentaine d'essais
+// par jour une fois le plafond atteint, soit près d'un an pour l'espace
+// complet, tandis que celui qui se trompe deux fois ne subit rien.
+//
+// Une connexion réussie efface tout : l'échelle ne punit jamais quelqu'un qui
+// a fini par entrer.
+
+export interface ThrottleProfile {
+  /** Essais sans aucune sanction. */
+  freeAttempts: number;
+  /** Durée du blocage, en secondes, pour chaque échec au-delà des gratuits. */
+  ladderSeconds: number[];
+  /**
+   * Silence au bout duquel le compteur retombe à zéro.
+   *
+   * Elle doit dépasser le plus long blocage, sinon le compteur retomberait
+   * PENDANT la sanction et l'échelle ne monterait jamais — c'était le défaut
+   * de l'ancienne fenêtre de quinze minutes associée à un blocage de quinze
+   * minutes.
+   *
+   * Elle ne protège personne d'une attaque en cours : tant que les échecs
+   * s'enchaînent, le silence n'arrive jamais et le compteur continue de
+   * monter. Elle ne sert qu'à pardonner à ceux qui ont arrêté.
+   */
+  windowSeconds: number;
+}
+
+// Clé « adresse IP + compte » : le chemin normal d'une attaque par force brute.
+// Mémoire longue, pour que l'échelle s'accumule contre quelqu'un de patient.
+const ACCOUNT_THROTTLE: ThrottleProfile = {
+  freeAttempts: 3,
+  ladderSeconds: [30, 120, 600, 1800, 3600],
+  windowSeconds: 6 * 60 * 60
+};
+
+// Clé « adresse IP seule », tous comptes confondus. Sur un chantier, toute
+// l'équipe partage le même Wi-Fi : punir l'adresse aussi vite que le compte
+// bloquerait six personnes parce qu'une seule s'est trompée. Le seuil est donc
+// nettement plus haut, mais l'échelle finit au même endroit — une machine qui
+// essaie des comptes en rafale se fait quand même freiner.
+//
+// Sa mémoire est courte, et c'est délibéré : une connexion réussie n'efface
+// PAS cette clé — sinon il suffirait d'un seul compte valide pour remettre
+// l'échelle à zéro — donc les erreurs d'une équipe s'accumuleraient sans rien
+// pour les effacer. Une heure de calme suffit à tout pardonner, et ça ne coûte
+// rien face à une attaque, qui par définition ne laisse jamais une heure de
+// calme.
+// Son plafond s'arrête à trente minutes, pas une heure : la mémoire doit
+// rester PLUS LONGUE que le plus long blocage, sinon le compteur retomberait
+// pendant la sanction. Ça ne coûte rien — contre une attaque en rafale, c'est
+// l'échelle par compte qui fait le vrai travail.
+const IP_THROTTLE: ThrottleProfile = {
+  freeAttempts: 10,
+  ladderSeconds: [60, 300, 900, 1800],
+  windowSeconds: 60 * 60
+};
+
+/** La clé « ip|* » vise l'adresse entière; « ip|compte » vise un seul compte. */
+export function throttleProfileFor(key: string): ThrottleProfile {
+  return key.endsWith('|*') ? IP_THROTTLE : ACCOUNT_THROTTLE;
+}
+
+/**
+ * Durée du blocage après `failureCount` échecs consécutifs. Zéro = pas de
+ * blocage. Le dernier échelon sert de plafond : on ne bloque jamais plus
+ * longtemps que lui, pour qu'un employé mis dehors par erreur — ou visé
+ * exprès par quelqu'un qui veut lui nuire — finisse toujours par rentrer.
+ */
+export function loginBlockSeconds(failureCount: number, profile: ThrottleProfile): number {
+  if (profile.ladderSeconds.length === 0) return 0;
+  const beyondFree = Math.floor(failureCount) - profile.freeAttempts;
+  if (beyondFree <= 0) return 0;
+  const index = Math.min(beyondFree, profile.ladderSeconds.length) - 1;
+  return profile.ladderSeconds[index];
+}
+
+const loginAttempts = new Map<string, { count: number; lastAt: number; blockedUntil: number }>();
 
 const throttleHash = (key: string) =>
   crypto.createHash('sha256').update(`${SESSION_SECRET}|${key}`).digest('hex');
@@ -152,20 +240,26 @@ const throttleHash = (key: string) =>
 function isMemoryLoginThrottled(key: string): boolean {
   const entry = loginAttempts.get(key);
   if (!entry) return false;
-  if (Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
+  // La mémoire se vide seulement après un silence complet : un compteur qui
+  // retombe pendant la sanction laisserait l'échelle à son premier barreau.
+  if (Date.now() - entry.lastAt > throttleProfileFor(key).windowSeconds * 1000) {
     loginAttempts.delete(key);
     return false;
   }
-  return entry.count >= LOGIN_MAX_ATTEMPTS;
+  return entry.blockedUntil > Date.now();
 }
 
 function recordMemoryLoginFailure(key: string): void {
-  const entry = loginAttempts.get(key);
-  if (!entry || Date.now() - entry.firstAt > LOGIN_WINDOW_MS) {
-    loginAttempts.set(key, { count: 1, firstAt: Date.now() });
-  } else {
-    entry.count += 1;
-  }
+  const now = Date.now();
+  const profile = throttleProfileFor(key);
+  const previous = loginAttempts.get(key);
+  const count = previous && now - previous.lastAt <= profile.windowSeconds * 1000 ? previous.count + 1 : 1;
+  const blockSeconds = loginBlockSeconds(count, profile);
+  loginAttempts.set(key, {
+    count,
+    lastAt: now,
+    blockedUntil: blockSeconds > 0 ? now + blockSeconds * 1000 : 0
+  });
 }
 
 function clearMemoryLoginFailures(key: string): void {
@@ -182,10 +276,12 @@ export async function isLoginThrottled(key: string): Promise<boolean> {
       .maybeSingle();
     if (error) throw error;
     if (!data) return false;
+    // « blocked_until » est désormais la seule autorité : c'est la fonction SQL
+    // qui applique l'échelle, atomiquement, au moment d'incrémenter. Relire le
+    // compteur ici pour en déduire un second verdict ne ferait que risquer de
+    // le contredire.
     const blockedUntil = data.blocked_until ? new Date(data.blocked_until).getTime() : 0;
-    if (blockedUntil > Date.now()) return true;
-    const firstAt = data.first_failed_at ? new Date(data.first_failed_at).getTime() : 0;
-    return firstAt > Date.now() - LOGIN_WINDOW_MS && Number(data.failure_count || 0) >= LOGIN_MAX_ATTEMPTS;
+    return blockedUntil > Date.now();
   } catch (error: any) {
     console.error('[auth] throttle partagé indisponible :', error?.message || error);
     return isMemoryLoginThrottled(key);
@@ -198,10 +294,12 @@ export async function recordLoginFailure(key: string): Promise<void> {
   try {
     // La fonction SQL verrouille la ligne et incrémente atomiquement : deux
     // instances Vercel concurrentes ne peuvent pas perdre une tentative.
+    const profile = throttleProfileFor(key);
     const { error } = await supabase.rpc('record_auth_login_failure', {
       p_key_hash: throttleHash(key),
-      p_window_seconds: Math.floor(LOGIN_WINDOW_MS / 1000),
-      p_max_attempts: LOGIN_MAX_ATTEMPTS
+      p_window_seconds: profile.windowSeconds,
+      p_free_attempts: profile.freeAttempts,
+      p_ladder_seconds: profile.ladderSeconds
     });
     if (error) throw error;
   } catch (error: any) {
@@ -271,6 +369,17 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
     .eq('company_id', companyId)
     .eq('is_active', true)
     .limit(MAX_COMPANY_USERS + 1);
+
+  // Une panne de la base n'est pas un mauvais NIP. Répondre « invalid » comptait
+  // l'incident comme un échec dans la limitation de tentatives — assez de
+  // rafraîchissements pendant une panne et l'employé se retrouvait bloqué — et
+  // lui affichait « NIP incorrect », donc l'envoyait refaire un code qui était
+  // pourtant le bon.
+  if (error) {
+    console.error(`[auth] Compagnie ${companyId} : lecture de app_users impossible.`, error);
+    return { ok: false, reason: 'unavailable' };
+  }
+
   const submittedHandle = Buffer.from(loginHandle);
   const user = (users || []).find(candidate => {
     const expectedHandle = Buffer.from(createLoginHandle(companyId, String(candidate.id)));
@@ -292,7 +401,7 @@ export async function verifyCredentials(loginHandle: string, nip: string): Promi
 
   // Keep bcrypt cost even when the handle is unknown, so timing does not
   // distinguish "invalid handle" (fast) from "wrong PIN" (slow).
-  if (error || !user) {
+  if (!user) {
     await bcrypt.compare(nip, LOGIN_TIMING_DUMMY_HASH);
     return { ok: false, reason: 'invalid' };
   }

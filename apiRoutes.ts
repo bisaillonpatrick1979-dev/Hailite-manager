@@ -21,6 +21,7 @@ import {
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
 import { MAX_COMPANY_USERS } from './companyLimits.js';
+import { openTasksRefusal } from './src/invoiceCompliance.js';
 import { guardWorkerWrite } from './writeGuards.js';
 import { registerAiContentReportRoutes } from './aiContentReports.js';
 import {
@@ -194,6 +195,27 @@ function applyReadScope(query: any, table: string, auth: AuthContext, projectIds
 }
 
 // ---------------------------------------------------------------------------
+// Tri avant plafond
+// ---------------------------------------------------------------------------
+// Une lecture plafonnée sans ORDER BY laisse Postgres choisir les lignes qu'il
+// rend. Une entreprise qui dépassait le plafond pouvait donc voir disparaître
+// ses pointages les plus récents — exactement ceux dont elle a besoin — sans
+// aucun signe à l'écran. On demande explicitement les plus récents d'abord.
+//
+// Ces tables n'ont pas de colonne created_at : les trier sur elle ferait
+// échouer la requête en entier. Elles restent non triées, et c'est sans
+// conséquence (ce sont des lignes de détail rattachées à un parent, ou une
+// ligne par employé).
+const TABLES_WITHOUT_CREATED_AT = new Set([
+  'audit_logs', 'auth_login_attempts', 'document_items', 'supplier_order_items', 'weekly_goals'
+]);
+
+function orderNewestFirst(query: any, table: string): any {
+  if (TABLES_WITHOUT_CREATED_AT.has(table)) return query;
+  return query.order('created_at', { ascending: false });
+}
+
+// ---------------------------------------------------------------------------
 // Géorepérage vérifié par le serveur
 // ---------------------------------------------------------------------------
 // La règle de géorepérage vivait uniquement dans le navigateur : le serveur
@@ -284,6 +306,101 @@ export async function enforcePunchGeofence(
 
   payload.within_geofence = true;
   return { ok: true, distanceMeters, radiusMeters };
+}
+
+// ---------------------------------------------------------------------------
+// Conformité avant facturation, vérifiée par le serveur
+// ---------------------------------------------------------------------------
+// La règle « une facture ne part pas tant qu'une tâche du chantier reste
+// ouverte » n'existait que dans le navigateur (src/invoiceCompliance.ts). Le
+// serveur, lui, acceptait tout : writeGuards autorise explicitement un
+// travailleur à poser « pending » sur sa propre facture, et rien ne regardait
+// les tâches. La porte était donc décorative pour qui appelait l'API
+// directement — c'est-à-dire exactement pour qui aurait intérêt à la
+// contourner.
+//
+// La vérification reprend les trois choix du calcul côté client, pour que les
+// deux ne se contredisent jamais :
+//
+//   • une facture sans pointage ne couvre aucun chantier et ne bloque rien;
+//   • un chantier supprimé ne bloque pas — ses tâches sont parties avec lui, et
+//     le travailleur n'y peut rien;
+//   • la gestion garde la main. Une tâche peut devenir impossible (matériau
+//     discontinué, client qui change d'idée) et quelqu'un doit pouvoir
+//     trancher.
+//
+// Une tâche est terminée quand son statut vaut « done » — c'est la conversion
+// qu'applique le client (voir rowToProject dans apiClient.ts). Tout autre
+// statut compte comme ouvert.
+
+// Les identifiants envoyés par le client sont filtrés avant de partir en
+// requête : un « session_ids » bricolé ne doit pas produire une requête
+// invalide ni une erreur de base.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface InvoiceBlockCheck {
+  blocked: boolean;
+  openTaskCount: number;
+  projectIds: string[];
+}
+
+async function invoiceBlockedByOpenTasks(
+  auth: AuthContext,
+  sessionIds: unknown
+): Promise<InvoiceBlockCheck> {
+  const ids = Array.isArray(sessionIds)
+    ? sessionIds.map(value => String(value)).filter(value => UUID_RE.test(value))
+    : [];
+  if (ids.length === 0 || !supabase) return { blocked: false, openTaskCount: 0, projectIds: [] };
+
+  // Les pointages couverts par la facture, restreints au tenant du jeton : un
+  // identifiant emprunté à une autre compagnie ne doit rien révéler.
+  const { data: punches, error: punchError } = await supabase
+    .from('punches')
+    .select('project_id')
+    .in('id', ids)
+    .eq('company_id', auth.companyId);
+  if (punchError) throw punchError;
+
+  const projectIds = Array.from(new Set(
+    (punches || []).map((row: any) => row.project_id).filter((id: unknown) => UUID_RE.test(String(id)))
+  )) as string[];
+  if (projectIds.length === 0) return { blocked: false, openTaskCount: 0, projectIds: [] };
+
+  const { count, error: taskError } = await supabase
+    .from('project_tasks')
+    .select('id', { count: 'exact', head: true })
+    .in('project_id', projectIds)
+    .eq('company_id', auth.companyId)
+    .neq('status', 'done');
+  if (taskError) throw taskError;
+
+  const openTaskCount = Number(count || 0);
+  return { blocked: openTaskCount > 0, openTaskCount, projectIds };
+}
+
+/**
+ * Refuse l'envoi d'une facture de paie dont un chantier a encore des tâches
+ * ouvertes. Renvoie le message à retourner, ou null si l'écriture peut passer.
+ *
+ * `existingSessionIds` sert au PATCH, où le corps ne contient souvent que le
+ * statut : ce sont alors les pointages déjà enregistrés qui font foi.
+ */
+async function invoiceComplianceRefusal(
+  table: string,
+  auth: AuthContext,
+  payload: Record<string, any>,
+  existingSessionIds?: unknown
+): Promise<string | null> {
+  if (table !== 'payroll_entries') return null;
+  if (isManager(auth.role)) return null;
+  if (String(payload.status || '') !== 'pending') return null;
+
+  const sessionIds = payload.session_ids !== undefined ? payload.session_ids : existingSessionIds;
+  const verdict = await invoiceBlockedByOpenTasks(auth, sessionIds);
+  if (!verdict.blocked) return null;
+
+  return openTasksRefusal(verdict.openTaskCount);
 }
 
 async function hasProjectAccess(auth: AuthContext, projectId: unknown): Promise<boolean> {
@@ -386,13 +503,80 @@ function applyTenantWriteScope(query: any, table: string, auth: AuthContext): an
 // ---------------------------------------------------------------------------
 // Instruction système de l'assistant IA
 // ---------------------------------------------------------------------------
-function buildSystemInstruction(regionLabel?: string, language?: string): string {
+// ---------------------------------------------------------------------------
+// Limite de débit de l'assistant
+// ---------------------------------------------------------------------------
+// Chaque appel coûte de l'argent au propriétaire de la clé. Sans plafond, un
+// script — ou une boucle de rafraîchissement mal réglée — pouvait vider son
+// crédit en quelques minutes.
+//
+// Ce compteur vit en mémoire. Sur Vercel, chaque instance a le sien : le
+// plafond réel est donc « 20 par minute PAR INSTANCE », pas 20 en absolu.
+// C'est un garde-fou contre l'emballement, pas une limite contractuelle; un
+// vrai plafond exigerait un compteur partagé (base ou Redis), comme celui de
+// la connexion qui vit dans auth_login_attempts.
+const CHAT_RATE_LIMIT = 20;
+const CHAT_RATE_WINDOW_MS = 60_000;
+const CHAT_RATE_MAX_KEYS = 5000;
+const MAX_CHAT_MESSAGE_LENGTH = 8000;
+
+const chatRateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function chatRateLimited(key: string, now: number = Date.now()): boolean {
+  // La carte ne doit pas enfler sans fin. On jette d'abord les fenêtres
+  // expirées; si ça ne suffit pas, on repart à zéro — perdre un décompte est
+  // moins grave que de laisser la mémoire filer.
+  if (chatRateBuckets.size > CHAT_RATE_MAX_KEYS) {
+    for (const [existing, bucket] of chatRateBuckets) {
+      if (bucket.resetAt <= now) chatRateBuckets.delete(existing);
+    }
+    if (chatRateBuckets.size > CHAT_RATE_MAX_KEYS) chatRateBuckets.clear();
+  }
+
+  const bucket = chatRateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    chatRateBuckets.set(key, { count: 1, resetAt: now + CHAT_RATE_WINDOW_MS });
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > CHAT_RATE_LIMIT;
+}
+
+// Nom réel de la compagnie, pour ne pas coder en dur celui d'un seul client.
+// Mis en cache une minute : sans ça, chaque message de l'assistant déclencherait
+// une lecture de plus, alors que ce nom ne change presque jamais.
+const companyNameCache = new Map<string, { name: string; expiresAt: number }>();
+const COMPANY_NAME_TTL_MS = 60_000;
+
+async function resolveCompanyName(companyId: string | undefined): Promise<string> {
+  if (!companyId || !supabaseEnabled || !supabase) return '';
+  const cached = companyNameCache.get(companyId);
+  if (cached && cached.expiresAt > Date.now()) return cached.name;
+  try {
+    const { data, error } = await supabase
+      .from('companies').select('name').eq('id', companyId).maybeSingle();
+    if (error) throw error;
+    const name = String(data?.name || '').trim();
+    companyNameCache.set(companyId, { name, expiresAt: Date.now() + COMPANY_NAME_TTL_MS });
+    return name;
+  } catch (error) {
+    // Le nom est un confort, pas une condition : l'assistant répond quand même.
+    console.warn('[chat] Nom de compagnie illisible :', error);
+    return '';
+  }
+}
+
+function buildSystemInstruction(regionLabel?: string, language?: string, companyName?: string): string {
   const location = regionLabel && regionLabel.trim() ? regionLabel.trim() : 'Amérique du Nord';
+  // Le nom de l'entreprise vient de sa propre fiche. Il était codé en dur :
+  // chaque client de l'application s'entendait appeler « Hailite Xteriors ».
+  const business = companyName && companyName.trim() ? `« ${companyName.trim()} »` : 'qui utilise cette application';
   // Langue de réponse : suit la langue choisie dans l'application (FR par défaut)
   const replyLanguage = language === 'EN' ? 'Always reply in English.' : 'Réponds toujours en français.';
   return `
-    Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${location}.
-    L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
+    Tu es l'assistant d'IA intelligent d'une entreprise de construction ${business}, basée en ${location}.
+    Elle peut faire de la toiture, du revêtement extérieur, un autre corps de métier, ou gérer un entrepôt : déduis son activité des données qu'on te fournit plutôt que de la supposer.
+    L'application de gestion de chantier s'appelle "Hailite Manager".
     Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
     Base tes réponses de conformité, de sécurité et de charges sociales sur les règles applicables en ${location} — ne présume jamais que l'entreprise est au Québec à moins que ce soit précisé.
     Donne des conseils professionnels et clairs.
@@ -1203,11 +1387,33 @@ export function registerApiRoutes(app: express.Express): void {
   // -------------------------------------------------------------------------
   app.post('/api/chat', attachAuthOptional, async (req: AuthedRequest, res) => {
     try {
-      const { message, provider, regionLabel, image, appContext, language, allowActions } = req.body;
+      // Un corps absent ou non-JSON faisait planter la déstructuration et
+      // renvoyait un 500 là où la requête est simplement mal formée.
+      const { message, provider, regionLabel, image, appContext, language, allowActions } = req.body || {};
 
       // Dès que le cloud est configuré, l'accès au modèle exige une session valide.
       if (protectedRuntime && !req.auth) {
         return res.status(401).json({ error: 'authentification requise', code: 'AUTH_REQUIRED' });
+      }
+
+      // Le plafond passe avant la validation : sinon un flot de requêtes
+      // malformées coûterait du travail serveur sans jamais être freiné.
+      const rateKey = req.auth?.userId || req.ip || req.socket.remoteAddress || 'noip';
+      if (chatRateLimited(rateKey)) {
+        return res.status(429).json({
+          error: 'Trop de demandes à l’assistant. Réessayez dans une minute.',
+          code: 'RATE_LIMITED'
+        });
+      }
+
+      if (typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Un message est requis', code: 'MESSAGE_REQUIRED' });
+      }
+      if (message.length > MAX_CHAT_MESSAGE_LENGTH) {
+        return res.status(400).json({
+          error: `Message trop long (maximum ${MAX_CHAT_MESSAGE_LENGTH} caractères)`,
+          code: 'MESSAGE_TOO_LONG'
+        });
       }
 
       const selectedProvider: string = provider && PROVIDER_ENV_KEYS[provider] ? provider : 'gemini';
@@ -1221,7 +1427,8 @@ export function registerApiRoutes(app: express.Express): void {
       // appContext : données en direct fournies par le client pour les rôles
       // privilégiés — voir buildAiAppContext dans App.tsx (déjà exempt de NIP,
       // NAS, clés et coordonnées bancaires).
-      const systemInstruction = buildSystemInstruction(regionLabel, language)
+      const companyName = await resolveCompanyName(req.auth?.companyId);
+      const systemInstruction = buildSystemInstruction(regionLabel, language, companyName)
         + (typeof appContext === 'string' && appContext.trim() ? `\n\n${appContext.slice(0, 40000)}` : '');
       const chatImage: ChatImage | undefined =
         image && typeof image.data === 'string' && typeof image.mimeType === 'string'
@@ -1284,6 +1491,10 @@ export function registerApiRoutes(app: express.Express): void {
     try {
       const companyId = auth.companyId;
       const projectIds = await employeeProjectIds(auth);
+      // Tables dont la réponse a été coupée au plafond. Le client doit pouvoir
+      // le dire à l'écran : afficher une liste incomplète sans le signaler,
+      // c'est laisser quelqu'un facturer d'après des chiffres tronqués.
+      const truncatedTables: string[] = [];
       const results: Record<string, any> = {
         enabled: true,
         companyId,
@@ -1305,11 +1516,23 @@ export function registerApiRoutes(app: express.Express): void {
           query = query.eq('id', companyId);
         }
         query = applyReadScope(query, table, auth, projectIds);
-        query = query.limit(table === 'project_photos' ? 250 : 1000);
+        // Une ligne de plus que le plafond : c'est la seule façon de distinguer
+        // « exactement le plafond » de « il en manque ».
+        const tableLimit = table === 'project_photos' ? 250 : 1000;
+        query = orderNewestFirst(query, table).limit(tableLimit + 1);
         const { data, error } = await query;
         if (error) throw error;
-        results[table] = sanitizeRows(table, data || [], auth.role);
+        const rows = data || [];
+        if (rows.length > tableLimit) {
+          truncatedTables.push(table);
+          console.warn(
+            `[hydrate] Compagnie ${companyId} : ${table} dépasse ${tableLimit} lignes. ` +
+            'Seules les plus récentes sont envoyées; il faut paginer cette table.'
+          );
+        }
+        results[table] = sanitizeRows(table, rows.slice(0, tableLimit), auth.role);
       }
+      results.truncatedTables = truncatedTables;
       return res.json(results);
     } catch (error: any) {
       console.error('Error on /api/hydrate:', error);
@@ -1339,7 +1562,11 @@ export function registerApiRoutes(app: express.Express): void {
       } else if (table === 'companies') {
         query = query.eq('id', auth.companyId);
       }
-      query = applyReadScope(query, table, auth, projectIds).range(offset, offset + limit - 1);
+      // Le tri passe avant la fenêtre : sans lui, deux pages successives
+      // peuvent se chevaucher ou sauter des lignes, Postgres n'ayant aucune
+      // obligation de rendre le même ordre d'un appel à l'autre.
+      query = applyReadScope(query, table, auth, projectIds);
+      query = orderNewestFirst(query, table).range(offset, offset + limit - 1);
       const { data, error } = await query;
       if (error) throw error;
       return res.json(sanitizeRows(table, data || [], auth.role));
@@ -1500,6 +1727,13 @@ export function registerApiRoutes(app: express.Express): void {
       }
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
+      }
+      {
+        const refus = await invoiceComplianceRefusal(table, auth, payload);
+        if (refus) {
+          logAudit(auth, 'invoice_blocked_open_tasks', table, null, { reason: refus });
+          return res.status(409).json({ error: refus, code: 'OPEN_TASKS' });
+        }
       }
       if (table === 'punches') {
         const verdict = await enforcePunchGeofence(payload, auth);
@@ -1730,19 +1964,48 @@ export function registerApiRoutes(app: express.Express): void {
       if (!enforceOwnRow(table, auth, payload)) {
         return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
       }
-      // Le rattachement vient d'être vérifié; les colonnes que seul le serveur
-      // ou la gestion possède sont maintenant retirées. Sans cela, il suffisait
-      // de créer un pointage déjà approuvé, ou déclaré dans la zone.
+
+      const idColumn = TABLE_ID_COLUMN[table] || 'id';
+      const idValue = payload[idColumn];
+      if (!idValue) return res.status(400).json({ error: 'Identifiant manquant' });
+
+      // La ligne déjà en place est lue AVANT toute décision, et en entier.
+      // enforceOwnRow ci-dessus ne regarde que le corps de la requête : un
+      // employé qui réutilisait l'identifiant d'un collègue en réécrivant
+      // employee_id à son propre nom passait le contrôle et écrasait la ligne
+      // de l'autre. C'est le propriétaire ENREGISTRÉ qui fait foi.
+      let existingQuery: any = supabase.from(table).select('*').eq(idColumn, idValue);
+      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
+      const { data: existing, error: existingError } = await existingQuery.maybeSingle();
+      if (existingError) throw existingError;
+
       if (!isManager(auth.role)) {
-        const guard = guardWorkerWrite(table, payload, null);
+        if (existing && WRITE_OWN_ONLY.has(table)) {
+          const ownerCol = OWNER_COLUMN[table];
+          if (ownerCol && String((existing as any)[ownerCol] || '') !== auth.userId) {
+            return res.status(403).json({ error: 'Écriture limitée à vos propres enregistrements' });
+          }
+        }
+        // Même raisonnement pour le chantier : celui de la ligne existante, pas
+        // celui que la requête prétend.
+        if (existing && (existing as any).project_id
+            && !(await hasProjectAccess(auth, (existing as any).project_id))) {
+          return res.status(404).json({ error: 'Chantier introuvable ou non assigné' });
+        }
+        // Les colonnes que seul le serveur ou la gestion possède sont retirées.
+        // Sans cela, il suffisait de créer un pointage déjà approuvé, ou déclaré
+        // dans la zone. La ligne existante sert de référence : certaines valeurs
+        // ne sont interdites que lorsqu'elles CHANGENT.
+        const guard = guardWorkerWrite(table, payload, (existing as Record<string, unknown>) || null);
         if (guard.rejected) {
-          logAudit(auth, 'write_rejected_value', table, null, guard.rejected);
+          logAudit(auth, 'write_rejected_value', table, String(idValue), guard.rejected);
           return res.status(403).json({ error: 'Cette valeur est réservée à la gestion' });
         }
         if (guard.attempted.length > 0) {
-          logAudit(auth, 'write_blocked_columns', table, null, { columns: guard.attempted });
+          logAudit(auth, 'write_blocked_columns', table, String(idValue), { columns: guard.attempted });
         }
       }
+
       if (!(await parentBelongsToCompany(table, payload, auth.companyId))) {
         return res.status(400).json({ error: 'Enregistrement parent inconnu pour cette compagnie' });
       }
@@ -1752,13 +2015,17 @@ export function registerApiRoutes(app: express.Express): void {
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
       }
-      const idColumn = TABLE_ID_COLUMN[table] || 'id';
-      const idValue = payload[idColumn];
-      if (!idValue) return res.status(400).json({ error: 'Identifiant manquant' });
-      let existingQuery: any = supabase.from(table).select(idColumn).eq(idColumn, idValue);
-      existingQuery = applyTenantWriteScope(existingQuery, table, auth);
-      const { data: existing, error: existingError } = await existingQuery.maybeSingle();
-      if (existingError) throw existingError;
+      {
+        // Les pointages de la ligne déjà enregistrée servent de référence quand
+        // la requête n'en fournit pas.
+        const refus = await invoiceComplianceRefusal(
+          table, auth, payload, (existing as any)?.session_ids
+        );
+        if (refus) {
+          logAudit(auth, 'invoice_blocked_open_tasks', table, String(idValue), { reason: refus });
+          return res.status(409).json({ error: refus, code: 'OPEN_TASKS' });
+        }
+      }
       let data: any;
       if (table === 'app_users') await prepareAppUserPin(payload, !existing);
       if (existing) {
@@ -1805,7 +2072,11 @@ export function registerApiRoutes(app: express.Express): void {
         ...(EMPLOYEE_PROJECT_TABLES.has(table) ? ['project_id'] : []),
         ...(PARENT_SCOPE[table] ? [PARENT_SCOPE[table].foreignKey] : []),
         ...(USER_REFERENCE_COLUMN[table] ? [USER_REFERENCE_COLUMN[table]] : []),
-        ...(table === 'project_photos' ? ['image_url'] : [])
+        ...(table === 'project_photos' ? ['image_url'] : []),
+        // Sans les pointages de la facture, la conformité plus bas n'aurait
+        // rien à vérifier et laisserait tout passer — en silence, ce qui est
+        // pire que de ne pas l'avoir écrite.
+        ...(table === 'payroll_entries' ? ['session_ids', 'status'] : [])
       ])).join(',');
       let existingQuery: any = supabase.from(table).select(existingColumns).eq(idColumn, id);
       existingQuery = applyTenantWriteScope(existingQuery, table, auth);
@@ -1851,6 +2122,18 @@ export function registerApiRoutes(app: express.Express): void {
       }
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
+      }
+      {
+        // Le chemin normal d'envoi d'une facture : le corps ne contient
+        // souvent que « status ». Ce sont alors les pointages déjà enregistrés
+        // qui déterminent les chantiers couverts.
+        const refus = await invoiceComplianceRefusal(
+          table, auth, payload, (existing as any)?.session_ids
+        );
+        if (refus) {
+          logAudit(auth, 'invoice_blocked_open_tasks', table, id, { reason: refus });
+          return res.status(409).json({ error: refus, code: 'OPEN_TASKS' });
+        }
       }
       if (table === 'project_photos' && payload.image_url) {
         payload.image_url = await uploadProjectPhoto(

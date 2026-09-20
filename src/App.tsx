@@ -555,7 +555,7 @@ export default function App() {
       return;
     }
 
-    const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && p.endTime === null) || null;
+    const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && !p.endTime) || null;
     setActivePunchSession(liveSession);
 
     if (!liveSession) {
@@ -1279,7 +1279,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   const getAdminStats = () => {
     const totalWages = punchSessions.reduce((sum, p) => sum + p.revenue, 0);
     const totalHrs = punchSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
-    const activeWorkersCount = punchSessions.filter(p => p.endTime === null).length;
+    const activeWorkersCount = punchSessions.filter(p => !p.endTime).length;
     return {
       totalWages,
       totalHrs,
@@ -1308,7 +1308,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         .reduce((inner, payment) => inner + (payment.amount || 0), 0), 0);
 
     const labourCost = punchSessions
-      .filter(p => p.endTime !== null)
+      .filter(p => !!p.endTime)
       .reduce((sum, p) => sum + punchRevenueInPeriod(p, periodPrefix), 0);
     const expenseCost = expenses
       .filter(e => (e.date || '').startsWith(periodPrefix))
@@ -1341,7 +1341,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // les règles de la compagnie et les éventuelles surcharges de sa fiche.
   const getEmployeeHours = (emp: Employee, periodPrefix: string): HoursBreakdown => {
     const rules = resolveOvertimeRules(companyInfo, emp);
-    const punches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
+    const punches = punchSessions.filter(p => p.employeeId === emp.id && !!p.endTime);
     return computeHoursBreakdown(punches, rules, periodPrefix);
   };
 
@@ -1877,7 +1877,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </div>
 
                 {activeEmployee.role === 'admin' && (() => {
-                  const activePunchCount = punchSessions.filter(punch => punch.endTime === null).length;
+                  const activePunchCount = punchSessions.filter(punch => !punch.endTime).length;
                   const overdueInvoiceCount = documents.filter(document =>
                     document.type === 'invoice' && document.status === 'overdue'
                   ).length;
@@ -2407,7 +2407,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5 font-sans">
                           {motivationTeams.map(team => {
                             // Calculate dynamic properties
-                            const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
+                            const activePunches = punchSessions.filter(p => !p.endTime && team.memberIds.includes(p.employeeId));
                             const activeCount = activePunches.length;
                             
                             const todayStr = todayKey();
@@ -2473,10 +2473,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         </div>
 
                         <div className="divide-y divide-gray-850 space-y-3">
-                          {punchSessions.filter(p => p.endTime === null).length === 0 ? (
+                          {punchSessions.filter(p => !p.endTime).length === 0 ? (
                             <p className="text-sm text-gray-400 text-center py-6 font-semibold">{t.noActiveWorkers}</p>
                           ) : (
-                            punchSessions.filter(p => p.endTime === null).map(p => (
+                            punchSessions.filter(p => !p.endTime).map(p => (
                               /* Toucher la ligne ouvre le dossier complet de la
                                  personne : sa journée, son mois, ses années. */
                               <div
@@ -3570,7 +3570,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 // Une session est retenue dès qu'elle touche le mois local, même si
                 // elle a commencé le dernier soir du mois précédent. Heures et
                 // montants ne comptent que pour la part réellement dans le mois.
-                const ymSessions = punchSessions.filter(p => p.endTime !== null && punchHoursInMonth(p, ym) > 0);
+                const ymSessions = punchSessions.filter(p => !!p.endTime && punchHoursInMonth(p, ym) > 0);
                 const revenue = ymSessions.reduce((sum, p) => sum + punchRevenueInMonth(p, ym), 0);
                 const hours = ymSessions.reduce((sum, p) => sum + punchHoursInMonth(p, ym), 0);
                 const sessionsCount = ymSessions.length;
@@ -4344,7 +4344,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">{t.compiledFieldHours}</span>
                                 <p className="text-2xl font-black text-orange-500 font-mono">{empHours.totalHours.toFixed(1)} h</p>
-                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
+                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && !!p.endTime && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
                                 {/* Détail régulier / supplémentaire : un employé
                                     doit pouvoir vérifier d'où vient son montant. */}
                                 {empHours.overtimeHours > 0 && (
