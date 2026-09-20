@@ -555,7 +555,7 @@ export default function App() {
       return;
     }
 
-    const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && p.endTime === null) || null;
+    const liveSession = punchSessions.find(p => p.employeeId === activeEmployee.id && !p.endTime) || null;
     setActivePunchSession(liveSession);
 
     if (!liveSession) {
@@ -1279,7 +1279,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   const getAdminStats = () => {
     const totalWages = punchSessions.reduce((sum, p) => sum + p.revenue, 0);
     const totalHrs = punchSessions.reduce((sum, p) => sum + (p.totalWorkedHours || 0), 0);
-    const activeWorkersCount = punchSessions.filter(p => p.endTime === null).length;
+    const activeWorkersCount = punchSessions.filter(p => !p.endTime).length;
     return {
       totalWages,
       totalHrs,
@@ -1877,7 +1877,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 </div>
 
                 {activeEmployee.role === 'admin' && (() => {
-                  const activePunchCount = punchSessions.filter(punch => punch.endTime === null).length;
+                  const activePunchCount = punchSessions.filter(punch => !punch.endTime).length;
                   const overdueInvoiceCount = documents.filter(document =>
                     document.type === 'invoice' && document.status === 'overdue'
                   ).length;
@@ -2407,7 +2407,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5 font-sans">
                           {motivationTeams.map(team => {
                             // Calculate dynamic properties
-                            const activePunches = punchSessions.filter(p => p.endTime === null && team.memberIds.includes(p.employeeId));
+                            const activePunches = punchSessions.filter(p => !p.endTime && team.memberIds.includes(p.employeeId));
                             const activeCount = activePunches.length;
                             
                             const todayStr = todayKey();
@@ -2473,10 +2473,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                         </div>
 
                         <div className="divide-y divide-gray-850 space-y-3">
-                          {punchSessions.filter(p => p.endTime === null).length === 0 ? (
+                          {punchSessions.filter(p => !p.endTime).length === 0 ? (
                             <p className="text-sm text-gray-400 text-center py-6 font-semibold">{t.noActiveWorkers}</p>
                           ) : (
-                            punchSessions.filter(p => p.endTime === null).map(p => (
+                            punchSessions.filter(p => !p.endTime).map(p => (
                               /* Toucher la ligne ouvre le dossier complet de la
                                  personne : sa journée, son mois, ses années. */
                               <div

@@ -2,7 +2,7 @@ import type {
   CatalogueMaterial, Client, Employee, ExpenseRecord, GCPDocument, InventoryItem,
   PayrollPayment, Project, PunchSession, Supplier, ToolAsset
 } from './types';
-import { todayKey } from './localTime';
+import { localDayKey, todayKey } from './localTime';
 
 export type MigrationDataType =
   | 'clients'
@@ -264,7 +264,13 @@ const date = (value: unknown) => {
   const raw = text(value);
   if (!raw) return '';
   const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  // La journée doit être lue dans le fuseau de l'entreprise, pas en UTC. Un
+  // format sans fuseau — « 15/03/2026 » — est interprété à minuit LOCAL; le
+  // convertir en UTC reculait la date d'un jour pour tout client situé à l'est
+  // de Greenwich. Une facture importée changeait donc de date, et pouvait
+  // basculer d'un exercice fiscal à l'autre.
+  return localDayKey(parsed);
 };
 const iso = (value: unknown) => {
   const raw = text(value);

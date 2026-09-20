@@ -37,6 +37,11 @@ test('l’arrêt d’un pointage sort avant tout effet si la session est déjà 
 
 test('le démarrage d’un pointage refuse déjà une seconde session ouverte', () => {
   const corps = corpsDe('startPunchSession');
-  assert.match(corps, /p\.endTime === null\);?\s*\n\s*if \(active\) return;/,
+  // L'assertion porte sur l'intention — « chercher une session ouverte, puis
+  // refuser » — et non sur l'écriture exacte du test d'ouverture. Elle figeait
+  // « p.endTime === null », ce qui a empêché d'harmoniser ce test avec les cinq
+  // autres endroits du code qui traitent une fin absente comme une session
+  // ouverte.
+  assert.match(corps, /const active = punchSessions\.find\([\s\S]{0,120}!p\.endTime\);?\s*\n\s*if \(active\) return;/,
     'un employé ne peut pas avoir deux pointages ouverts');
 });

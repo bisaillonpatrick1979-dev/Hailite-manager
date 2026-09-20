@@ -128,8 +128,10 @@ export function checkProjectClosure(
   invoices: Invoice[]
 ): ProjectClosureCheck {
   const openTasks = openTasksOf(project);
+  // Absent vaut ouvert, comme partout ailleurs : un pointage sans fin de quart
+  // ne doit pas laisser fermer le chantier sous les pieds de quelqu'un.
   const openPunches = punchSessions.filter(
-    session => session.projectId === project.id && session.endTime === null
+    session => session.projectId === project.id && !session.endTime
   );
 
   const sessionIdsOfProject = new Set(

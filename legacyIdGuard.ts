@@ -1,21 +1,36 @@
 import crypto from 'crypto';
 import type express from 'express';
+import { TABLES_WITH_COMPANY_ID, TABLE_ID_COLUMN } from './db.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (value: unknown): value is string =>
   typeof value === 'string' && UUID_RE.test(value);
 
-const TABLES_WITH_UUID_ID = new Set([
-  'companies', 'app_users', 'projects', 'project_tools', 'project_assignments', 'project_tasks',
-  'punches', 'catalog_items', 'suppliers', 'inventory_items', 'supplier_orders',
-  'supplier_order_items', 'clients', 'documents', 'document_items', 'document_payments',
-  'payroll_entries', 'payroll_payments', 'production_entries', 'motivation_teams',
-  'motivation_goals', 'hr_alerts', 'expenses'
-]);
+// La liste était recopiée à la main, et neuf tables ajoutées depuis n'y
+// figuraient plus : outils, vols d'outils, photos de chantier, avenants,
+// réclamations, prospects, horaires et fiches de sécurité. Pour elles, le garde
+// ne faisait rien — un ancien identifiant local partait tel quel vers une
+// colonne uuid et l'écriture échouait par une erreur de base, sans explication.
+//
+// Elle est maintenant DÉDUITE des tables réellement exposées par l'API. Une
+// table ajoutée demain est couverte le jour même, sans que personne y pense.
+// Les tables dont la clé primaire n'est pas « id » — weekly_goals, dont la clé
+// est employee_id — s'excluent d'elles-mêmes.
+const TABLES_WITH_UUID_ID = new Set(
+  ['companies', ...TABLES_WITH_COMPANY_ID].filter(
+    table => (TABLE_ID_COLUMN[table] || 'id') === 'id'
+  )
+);
 
+// Même histoire : ces colonnes de référence sont toutes de type uuid en base.
+// Les dix dernières ont été ajoutées avec les tables ci-dessus et n'étaient pas
+// nettoyées.
 const UUID_REFERENCE_FIELDS = [
   'company_id', 'employee_id', 'user_id', 'project_id', 'supplier_id', 'order_id',
-  'client_id', 'document_id', 'team_id', 'leader_id'
+  'client_id', 'document_id', 'team_id', 'leader_id',
+  'assigned_user_id', 'assigned_employee_id', 'catalog_item_id', 'payroll_entry_id',
+  'approved_by', 'created_by', 'taken_by', 'submitted_by',
+  'converted_client_id', 'converted_project_id'
 ] as const;
 
 const REQUIRED_REFERENCES: Record<string, string[]> = {

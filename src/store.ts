@@ -1912,7 +1912,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!emp || !proj) return;
 
     // Check if employee already has active punch
-    const active = punchSessions.find(p => p.employeeId === employeeId && p.endTime === null);
+    // « endTime » absent vaut « pointage ouvert » au même titre que null. La
+    // comparaison stricte manquait un pointage restauré depuis une sauvegarde
+    // où la clé n'existe pas — et l'employé pouvait alors en ouvrir un second
+    // par-dessus, doublant ses heures.
+    const active = punchSessions.find(p => p.employeeId === employeeId && !p.endTime);
     if (active) return; // Prevent multiple active punches
 
     const newPunch: PunchSession = {
