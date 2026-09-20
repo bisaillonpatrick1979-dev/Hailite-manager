@@ -194,6 +194,27 @@ function applyReadScope(query: any, table: string, auth: AuthContext, projectIds
 }
 
 // ---------------------------------------------------------------------------
+// Tri avant plafond
+// ---------------------------------------------------------------------------
+// Une lecture plafonnée sans ORDER BY laisse Postgres choisir les lignes qu'il
+// rend. Une entreprise qui dépassait le plafond pouvait donc voir disparaître
+// ses pointages les plus récents — exactement ceux dont elle a besoin — sans
+// aucun signe à l'écran. On demande explicitement les plus récents d'abord.
+//
+// Ces tables n'ont pas de colonne created_at : les trier sur elle ferait
+// échouer la requête en entier. Elles restent non triées, et c'est sans
+// conséquence (ce sont des lignes de détail rattachées à un parent, ou une
+// ligne par employé).
+const TABLES_WITHOUT_CREATED_AT = new Set([
+  'audit_logs', 'auth_login_attempts', 'document_items', 'supplier_order_items', 'weekly_goals'
+]);
+
+function orderNewestFirst(query: any, table: string): any {
+  if (TABLES_WITHOUT_CREATED_AT.has(table)) return query;
+  return query.order('created_at', { ascending: false });
+}
+
+// ---------------------------------------------------------------------------
 // Géorepérage vérifié par le serveur
 // ---------------------------------------------------------------------------
 // La règle de géorepérage vivait uniquement dans le navigateur : le serveur
@@ -1284,6 +1305,10 @@ export function registerApiRoutes(app: express.Express): void {
     try {
       const companyId = auth.companyId;
       const projectIds = await employeeProjectIds(auth);
+      // Tables dont la réponse a été coupée au plafond. Le client doit pouvoir
+      // le dire à l'écran : afficher une liste incomplète sans le signaler,
+      // c'est laisser quelqu'un facturer d'après des chiffres tronqués.
+      const truncatedTables: string[] = [];
       const results: Record<string, any> = {
         enabled: true,
         companyId,
@@ -1305,11 +1330,23 @@ export function registerApiRoutes(app: express.Express): void {
           query = query.eq('id', companyId);
         }
         query = applyReadScope(query, table, auth, projectIds);
-        query = query.limit(table === 'project_photos' ? 250 : 1000);
+        // Une ligne de plus que le plafond : c'est la seule façon de distinguer
+        // « exactement le plafond » de « il en manque ».
+        const tableLimit = table === 'project_photos' ? 250 : 1000;
+        query = orderNewestFirst(query, table).limit(tableLimit + 1);
         const { data, error } = await query;
         if (error) throw error;
-        results[table] = sanitizeRows(table, data || [], auth.role);
+        const rows = data || [];
+        if (rows.length > tableLimit) {
+          truncatedTables.push(table);
+          console.warn(
+            `[hydrate] Compagnie ${companyId} : ${table} dépasse ${tableLimit} lignes. ` +
+            'Seules les plus récentes sont envoyées; il faut paginer cette table.'
+          );
+        }
+        results[table] = sanitizeRows(table, rows.slice(0, tableLimit), auth.role);
       }
+      results.truncatedTables = truncatedTables;
       return res.json(results);
     } catch (error: any) {
       console.error('Error on /api/hydrate:', error);
@@ -1339,7 +1376,11 @@ export function registerApiRoutes(app: express.Express): void {
       } else if (table === 'companies') {
         query = query.eq('id', auth.companyId);
       }
-      query = applyReadScope(query, table, auth, projectIds).range(offset, offset + limit - 1);
+      // Le tri passe avant la fenêtre : sans lui, deux pages successives
+      // peuvent se chevaucher ou sauter des lignes, Postgres n'ayant aucune
+      // obligation de rendre le même ordre d'un appel à l'autre.
+      query = applyReadScope(query, table, auth, projectIds);
+      query = orderNewestFirst(query, table).range(offset, offset + limit - 1);
       const { data, error } = await query;
       if (error) throw error;
       return res.json(sanitizeRows(table, data || [], auth.role));
