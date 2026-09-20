@@ -175,3 +175,26 @@ export function complianceSummary(compliance: InvoiceCompliance, language: 'FR' 
     ? `${tasks} task${tasks > 1 ? 's' : ''} left on “${compliance.groups[0].projectName}”.`
     : `${tasks} tasks left across ${sites} sites.`;
 }
+
+/**
+ * Refus d'envoi d'une facture, formulé une seule fois pour les deux côtés.
+ *
+ * Le serveur applique la même règle que l'écran (voir invoiceComplianceRefusal
+ * dans apiRoutes.ts) : sans ce partage, le navigateur et l'API finiraient par
+ * dire deux choses différentes à la même personne, et c'est l'API qui gagne —
+ * donc l'explication affichée serait la fausse.
+ *
+ * Renvoie null quand rien ne bloque.
+ */
+export function openTasksRefusal(openTaskCount: number, language: 'FR' | 'EN' = 'FR'): string | null {
+  const count = Math.max(0, Math.floor(Number(openTaskCount) || 0));
+  if (count === 0) return null;
+  if (language === 'FR') {
+    return count === 1
+      ? 'Une tâche reste à terminer sur le chantier. Cochez-la avant d’envoyer la facture.'
+      : `${count} tâches restent à terminer sur le chantier. Cochez-les avant d’envoyer la facture.`;
+  }
+  return count === 1
+    ? 'One task is still open on the site. Check it off before sending the invoice.'
+    : `${count} tasks are still open on the site. Check them off before sending the invoice.`;
+}

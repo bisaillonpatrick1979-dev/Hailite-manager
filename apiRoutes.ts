@@ -21,6 +21,7 @@ import {
 } from './auth.js';
 import { USER_PRIVACY_NOTICE_VERSION } from './privacyVersions.js';
 import { MAX_COMPANY_USERS } from './companyLimits.js';
+import { openTasksRefusal } from './src/invoiceCompliance.js';
 import { guardWorkerWrite } from './writeGuards.js';
 import { registerAiContentReportRoutes } from './aiContentReports.js';
 import {
@@ -305,6 +306,101 @@ export async function enforcePunchGeofence(
 
   payload.within_geofence = true;
   return { ok: true, distanceMeters, radiusMeters };
+}
+
+// ---------------------------------------------------------------------------
+// Conformité avant facturation, vérifiée par le serveur
+// ---------------------------------------------------------------------------
+// La règle « une facture ne part pas tant qu'une tâche du chantier reste
+// ouverte » n'existait que dans le navigateur (src/invoiceCompliance.ts). Le
+// serveur, lui, acceptait tout : writeGuards autorise explicitement un
+// travailleur à poser « pending » sur sa propre facture, et rien ne regardait
+// les tâches. La porte était donc décorative pour qui appelait l'API
+// directement — c'est-à-dire exactement pour qui aurait intérêt à la
+// contourner.
+//
+// La vérification reprend les trois choix du calcul côté client, pour que les
+// deux ne se contredisent jamais :
+//
+//   • une facture sans pointage ne couvre aucun chantier et ne bloque rien;
+//   • un chantier supprimé ne bloque pas — ses tâches sont parties avec lui, et
+//     le travailleur n'y peut rien;
+//   • la gestion garde la main. Une tâche peut devenir impossible (matériau
+//     discontinué, client qui change d'idée) et quelqu'un doit pouvoir
+//     trancher.
+//
+// Une tâche est terminée quand son statut vaut « done » — c'est la conversion
+// qu'applique le client (voir rowToProject dans apiClient.ts). Tout autre
+// statut compte comme ouvert.
+
+// Les identifiants envoyés par le client sont filtrés avant de partir en
+// requête : un « session_ids » bricolé ne doit pas produire une requête
+// invalide ni une erreur de base.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface InvoiceBlockCheck {
+  blocked: boolean;
+  openTaskCount: number;
+  projectIds: string[];
+}
+
+async function invoiceBlockedByOpenTasks(
+  auth: AuthContext,
+  sessionIds: unknown
+): Promise<InvoiceBlockCheck> {
+  const ids = Array.isArray(sessionIds)
+    ? sessionIds.map(value => String(value)).filter(value => UUID_RE.test(value))
+    : [];
+  if (ids.length === 0 || !supabase) return { blocked: false, openTaskCount: 0, projectIds: [] };
+
+  // Les pointages couverts par la facture, restreints au tenant du jeton : un
+  // identifiant emprunté à une autre compagnie ne doit rien révéler.
+  const { data: punches, error: punchError } = await supabase
+    .from('punches')
+    .select('project_id')
+    .in('id', ids)
+    .eq('company_id', auth.companyId);
+  if (punchError) throw punchError;
+
+  const projectIds = Array.from(new Set(
+    (punches || []).map((row: any) => row.project_id).filter((id: unknown) => UUID_RE.test(String(id)))
+  )) as string[];
+  if (projectIds.length === 0) return { blocked: false, openTaskCount: 0, projectIds: [] };
+
+  const { count, error: taskError } = await supabase
+    .from('project_tasks')
+    .select('id', { count: 'exact', head: true })
+    .in('project_id', projectIds)
+    .eq('company_id', auth.companyId)
+    .neq('status', 'done');
+  if (taskError) throw taskError;
+
+  const openTaskCount = Number(count || 0);
+  return { blocked: openTaskCount > 0, openTaskCount, projectIds };
+}
+
+/**
+ * Refuse l'envoi d'une facture de paie dont un chantier a encore des tâches
+ * ouvertes. Renvoie le message à retourner, ou null si l'écriture peut passer.
+ *
+ * `existingSessionIds` sert au PATCH, où le corps ne contient souvent que le
+ * statut : ce sont alors les pointages déjà enregistrés qui font foi.
+ */
+async function invoiceComplianceRefusal(
+  table: string,
+  auth: AuthContext,
+  payload: Record<string, any>,
+  existingSessionIds?: unknown
+): Promise<string | null> {
+  if (table !== 'payroll_entries') return null;
+  if (isManager(auth.role)) return null;
+  if (String(payload.status || '') !== 'pending') return null;
+
+  const sessionIds = payload.session_ids !== undefined ? payload.session_ids : existingSessionIds;
+  const verdict = await invoiceBlockedByOpenTasks(auth, sessionIds);
+  if (!verdict.blocked) return null;
+
+  return openTasksRefusal(verdict.openTaskCount);
 }
 
 async function hasProjectAccess(auth: AuthContext, projectId: unknown): Promise<boolean> {
@@ -1632,6 +1728,13 @@ export function registerApiRoutes(app: express.Express): void {
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
       }
+      {
+        const refus = await invoiceComplianceRefusal(table, auth, payload);
+        if (refus) {
+          logAudit(auth, 'invoice_blocked_open_tasks', table, null, { reason: refus });
+          return res.status(409).json({ error: refus, code: 'OPEN_TASKS' });
+        }
+      }
       if (table === 'punches') {
         const verdict = await enforcePunchGeofence(payload, auth);
         if (!verdict.ok) {
@@ -1912,6 +2015,17 @@ export function registerApiRoutes(app: express.Express): void {
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
       }
+      {
+        // Les pointages de la ligne déjà enregistrée servent de référence quand
+        // la requête n'en fournit pas.
+        const refus = await invoiceComplianceRefusal(
+          table, auth, payload, (existing as any)?.session_ids
+        );
+        if (refus) {
+          logAudit(auth, 'invoice_blocked_open_tasks', table, String(idValue), { reason: refus });
+          return res.status(409).json({ error: refus, code: 'OPEN_TASKS' });
+        }
+      }
       let data: any;
       if (table === 'app_users') await prepareAppUserPin(payload, !existing);
       if (existing) {
@@ -1958,7 +2072,11 @@ export function registerApiRoutes(app: express.Express): void {
         ...(EMPLOYEE_PROJECT_TABLES.has(table) ? ['project_id'] : []),
         ...(PARENT_SCOPE[table] ? [PARENT_SCOPE[table].foreignKey] : []),
         ...(USER_REFERENCE_COLUMN[table] ? [USER_REFERENCE_COLUMN[table]] : []),
-        ...(table === 'project_photos' ? ['image_url'] : [])
+        ...(table === 'project_photos' ? ['image_url'] : []),
+        // Sans les pointages de la facture, la conformité plus bas n'aurait
+        // rien à vérifier et laisserait tout passer — en silence, ce qui est
+        // pire que de ne pas l'avoir écrite.
+        ...(table === 'payroll_entries' ? ['session_ids', 'status'] : [])
       ])).join(',');
       let existingQuery: any = supabase.from(table).select(existingColumns).eq(idColumn, id);
       existingQuery = applyTenantWriteScope(existingQuery, table, auth);
@@ -2004,6 +2122,18 @@ export function registerApiRoutes(app: express.Express): void {
       }
       if (payload.project_id && !(await hasProjectAccess(auth, payload.project_id))) {
         return res.status(404).json({ error: 'Chantier inconnu ou non assigné' });
+      }
+      {
+        // Le chemin normal d'envoi d'une facture : le corps ne contient
+        // souvent que « status ». Ce sont alors les pointages déjà enregistrés
+        // qui déterminent les chantiers couverts.
+        const refus = await invoiceComplianceRefusal(
+          table, auth, payload, (existing as any)?.session_ids
+        );
+        if (refus) {
+          logAudit(auth, 'invoice_blocked_open_tasks', table, id, { reason: refus });
+          return res.status(409).json({ error: refus, code: 'OPEN_TASKS' });
+        }
       }
       if (table === 'project_photos' && payload.image_url) {
         payload.image_url = await uploadProjectPhoto(
