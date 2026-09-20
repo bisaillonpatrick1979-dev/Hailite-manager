@@ -23,7 +23,7 @@ choix se présente au premier démarrage de l'application.
 
 |                                        | Votre propre serveur | Votre nuage personnel |
 |----------------------------------------|----------------------|-----------------------|
-| Comptes à créer                        | Deux (gratuits)      | Aucun                 |
+| Comptes à créer                        | Deux (payants)       | Aucun                 |
 | Vos employés se connectent de leur téléphone | Oui             | Non — voir plus bas   |
 | Vos données transitent par un tiers    | Non, c'est votre compte | Non               |
 | Temps d'installation                   | 30 à 45 min          | 2 min                 |
@@ -95,13 +95,41 @@ une sauvegarde à jour et notez votre NIP ailleurs.
 
 # Partie 2 — Votre propre serveur (Supabase + Vercel)
 
-Vous allez créer deux comptes gratuits :
+Vous allez créer deux comptes :
 
 - **Supabase**, qui garde vos données. → https://supabase.com
 - **Vercel**, qui fait tourner l'application. → https://vercel.com
 
 Ils sont à vous. Personne d'autre n'y a accès, pas même le vendeur de
 l'application.
+
+## Ce que ça coûte, dit franchement
+
+Les deux services ont un forfait gratuit, et vous pouvez vous en servir pour
+**essayer**. Mais pour faire rouler votre entreprise dessus, il faut prévoir un
+forfait payant des deux côtés. Deux raisons, et aucune n'est un détail.
+
+**Vercel.** Le forfait Hobby est réservé à un usage personnel et non
+commercial : s'en servir pour son entreprise contredit les conditions
+d'utilisation, et Vercel peut couper le service. Il faut le forfait Pro.
+
+**Supabase.** Le forfait gratuit met le projet **en pause après une période
+d'inactivité** — typiquement une semaine sans requête. Pour un entrepreneur qui
+ne facture qu'une fois par mois, ça veut dire retrouver l'application morte au
+moment d'en avoir besoin, et devoir la réveiller à la main. Le forfait gratuit
+n'offre pas non plus de **sauvegardes quotidiennes automatiques** : si quelque
+chose efface vos données, il n'y a rien à restaurer. Le forfait Pro règle les
+deux.
+
+**Vérifiez les prix vous-même avant de vous engager** : ils changent, et ce
+guide n'est pas une source à jour.
+
+- https://vercel.com/pricing
+- https://supabase.com/pricing
+
+Si ces frais mensuels ne vous conviennent pas, la Partie 1 — votre nuage
+personnel — ne coûte rien et ne demande aucun compte. Elle ne permet
+simplement pas à plusieurs personnes de se connecter chacune de son téléphone.
 
 ---
 
