@@ -446,13 +446,41 @@ function chatRateLimited(key: string, now: number = Date.now()): boolean {
   return bucket.count > CHAT_RATE_LIMIT;
 }
 
-function buildSystemInstruction(regionLabel?: string, language?: string): string {
+// Nom réel de la compagnie, pour ne pas coder en dur celui d'un seul client.
+// Mis en cache une minute : sans ça, chaque message de l'assistant déclencherait
+// une lecture de plus, alors que ce nom ne change presque jamais.
+const companyNameCache = new Map<string, { name: string; expiresAt: number }>();
+const COMPANY_NAME_TTL_MS = 60_000;
+
+async function resolveCompanyName(companyId: string | undefined): Promise<string> {
+  if (!companyId || !supabaseEnabled || !supabase) return '';
+  const cached = companyNameCache.get(companyId);
+  if (cached && cached.expiresAt > Date.now()) return cached.name;
+  try {
+    const { data, error } = await supabase
+      .from('companies').select('name').eq('id', companyId).maybeSingle();
+    if (error) throw error;
+    const name = String(data?.name || '').trim();
+    companyNameCache.set(companyId, { name, expiresAt: Date.now() + COMPANY_NAME_TTL_MS });
+    return name;
+  } catch (error) {
+    // Le nom est un confort, pas une condition : l'assistant répond quand même.
+    console.warn('[chat] Nom de compagnie illisible :', error);
+    return '';
+  }
+}
+
+function buildSystemInstruction(regionLabel?: string, language?: string, companyName?: string): string {
   const location = regionLabel && regionLabel.trim() ? regionLabel.trim() : 'Amérique du Nord';
+  // Le nom de l'entreprise vient de sa propre fiche. Il était codé en dur :
+  // chaque client de l'application s'entendait appeler « Hailite Xteriors ».
+  const business = companyName && companyName.trim() ? `« ${companyName.trim()} »` : 'qui utilise cette application';
   // Langue de réponse : suit la langue choisie dans l'application (FR par défaut)
   const replyLanguage = language === 'EN' ? 'Always reply in English.' : 'Réponds toujours en français.';
   return `
-    Tu es l'assistant d'IA intelligent d'une entreprise de pose de toiture et parement extérieur appelée "Hailite Xteriors", basée en ${location}.
-    L'application de gestion de chantier s'appelle "Gestion Chantier Pro".
+    Tu es l'assistant d'IA intelligent d'une entreprise de construction ${business}, basée en ${location}.
+    Elle peut faire de la toiture, du revêtement extérieur, un autre corps de métier, ou gérer un entrepôt : déduis son activité des données qu'on te fournit plutôt que de la supposer.
+    L'application de gestion de chantier s'appelle "Hailite Manager".
     Ton but est d'aider les administrateurs et les ouvriers sur les chantiers de construction.
     Base tes réponses de conformité, de sécurité et de charges sociales sur les règles applicables en ${location} — ne présume jamais que l'entreprise est au Québec à moins que ce soit précisé.
     Donne des conseils professionnels et clairs.
@@ -1303,7 +1331,8 @@ export function registerApiRoutes(app: express.Express): void {
       // appContext : données en direct fournies par le client pour les rôles
       // privilégiés — voir buildAiAppContext dans App.tsx (déjà exempt de NIP,
       // NAS, clés et coordonnées bancaires).
-      const systemInstruction = buildSystemInstruction(regionLabel, language)
+      const companyName = await resolveCompanyName(req.auth?.companyId);
+      const systemInstruction = buildSystemInstruction(regionLabel, language, companyName)
         + (typeof appContext === 'string' && appContext.trim() ? `\n\n${appContext.slice(0, 40000)}` : '');
       const chatImage: ChatImage | undefined =
         image && typeof image.data === 'string' && typeof image.mimeType === 'string'
