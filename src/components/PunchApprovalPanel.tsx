@@ -85,7 +85,7 @@ export default function PunchApprovalPanel({
   const [retour, setRetour] = useState<{ id: string; ok: boolean; message: string } | null>(null);
 
   const visibles = useMemo(() => {
-    const fermes = punches.filter(p => p.endTime !== null);
+    const fermes = punches.filter(p => !!p.endTime);
     const trie = [...fermes].sort((a, b) =>
       new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
     if (filtre === 'approved') return trie.filter(p => p.approvalStatus === 'approved');

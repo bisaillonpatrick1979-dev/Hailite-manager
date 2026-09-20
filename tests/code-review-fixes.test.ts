@@ -111,3 +111,62 @@ test('une date importée est lue dans le fuseau de l’entreprise', () => {
   assert.ok(!source.includes("parsed.toISOString().slice(0, 10)"),
     'plus de conversion UTC pour une journée civile');
 });
+
+// ---------------------------------------------------------------------------
+// Le cycle de vie du pointage
+// ---------------------------------------------------------------------------
+
+function corpsDe(nom: string): string {
+  const source = read('src/store.ts');
+  const debut = source.lastIndexOf(`  ${nom}: (`);
+  assert.notEqual(debut, -1, `${nom} introuvable`);
+  const fin = source.indexOf('\n  },', debut);
+  return source.slice(debut, fin);
+}
+
+test('une seconde mise en pause n’efface plus le temps déjà écoulé', () => {
+  // pausePunchSession n'avait AUCUN garde : un second appel écrasait
+  // « pausedAt » avec l'heure courante. Les minutes déjà passées en pause
+  // n'étaient jamais comptées, et l'employé se retrouvait payé pour son arrêt.
+  // Un double clic suffisait.
+  const corps = corpsDe('pausePunchSession');
+  assert.match(corps, /if \(!target \|\| target\.endTime \|\| target\.pausedAt\) return;/);
+
+  const gardeAt = corps.indexOf('return;');
+  for (const effet of ['set({ punchSessions', 'saveState(', 'syncUpdate(']) {
+    const position = corps.indexOf(effet);
+    if (position === -1) continue;
+    assert.ok(gardeAt < position, `le garde doit précéder « ${effet} »`);
+  }
+});
+
+test('on ne reprend pas un quart déjà fermé', () => {
+  // Cela ajouterait des minutes de pause à des heures déjà facturées.
+  assert.match(corpsDe('resumePunchSession'),
+    /if \(!target \|\| target\.endTime \|\| !target\.pausedAt\) return;/);
+});
+
+test('un pointage sans clé « endTime » peut quand même être fermé', () => {
+  // Le garde d'idempotence comparait strictement à null : pour une session
+  // dont la clé manque, il refusait la fermeture. Le quart restait ouvert
+  // pour toujours, et l'employé ne pouvait plus en démarrer un autre.
+  assert.match(corpsDe('stopPunchSession'), /if \(!target \|\| target\.endTime\) return;/);
+});
+
+test('plus aucune comparaison stricte à null, dans un sens comme dans l’autre', () => {
+  for (const fichier of ['src/store.ts', 'src/App.tsx', 'src/invoiceCompliance.ts',
+                         'src/employeeDossier.ts', 'src/components/MotivationTab.tsx',
+                         'src/components/PunchApprovalPanel.tsx']) {
+    const source = read(fichier);
+    assert.ok(!source.includes('endTime === null'), `${fichier} : === null`);
+    assert.ok(!source.includes('endTime !== null'), `${fichier} : !== null`);
+  }
+});
+
+test('une facture sans pointage ne fait plus planter la correction d’heures', () => {
+  // « session_ids » est nullable en base. Trois accès ne se protégeaient pas,
+  // et une seule facture ainsi faite aurait planté toute la propagation.
+  const source = read('src/store.ts');
+  assert.ok(!/[^(]invoice\.sessionIds\.includes/.test(source),
+    'tous les accès doivent passer par (sessionIds || [])');
+});

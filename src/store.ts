@@ -830,7 +830,10 @@ function recalculateInvoicesForPunch(get: StoreGet, set: StoreSet, punchId: stri
   lockedInvoiceNumbers: string[];
 } {
   const { invoices, punchSessions, companyInfo } = get();
-  const concerned = invoices.filter(invoice => invoice.sessionIds.includes(punchId));
+  // Une facture sans pointage a « session_ids » nul en base. Le reste du code
+  // se protège déjà; ces trois accès étaient les derniers à ne pas le faire, et
+  // une seule facture ainsi faite aurait planté toute la correction d'heures.
+  const concerned = invoices.filter(invoice => (invoice.sessionIds || []).includes(punchId));
   if (concerned.length === 0) return { updatedInvoiceNumbers: [], lockedInvoiceNumbers: [] };
 
   const gstRate = companyInfo.taxRate1 !== undefined ? companyInfo.taxRate1 : 0;
@@ -841,12 +844,12 @@ function recalculateInvoicesForPunch(get: StoreGet, set: StoreSet, punchId: stri
   const lockedInvoiceNumbers: string[] = [];
 
   const nextInvoices = invoices.map(invoice => {
-    if (!invoice.sessionIds.includes(punchId)) return invoice;
+    if (!(invoice.sessionIds || []).includes(punchId)) return invoice;
     if (invoice.status !== 'draft') {
       lockedInvoiceNumbers.push(invoice.invoiceNumber);
       return invoice;
     }
-    const sessions = punchSessions.filter(punch => invoice.sessionIds.includes(punch.id));
+    const sessions = punchSessions.filter(punch => (invoice.sessionIds || []).includes(punch.id));
     const totalHours = sessions.reduce((sum, punch) => sum + (punch.totalWorkedHours || 0), 0);
     const amount = Number(sessions.reduce((sum, punch) => sum + (punch.revenue || 0), 0).toFixed(2));
     const gstAmount = Number((amount * gstRate).toFixed(2));
@@ -1492,7 +1495,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       wg.level = emp.level;
       
       // Streak logic
-      const empPunches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
+      const empPunches = punchSessions.filter(p => p.employeeId === emp.id && !!p.endTime);
       if (empPunches.length > 0) {
         const sortedPunches = [...empPunches].sort((a,b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
         // Les journées viennent du fuseau local et incluent les deux journées
@@ -1529,7 +1532,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 2. Update Motivation Goals
     const updatedMotivationGoals = motivationGoals.map(goal => {
       let computedVal = goal.current;
-      let relevantPunches = punchSessions.filter(p => p.endTime !== null);
+      let relevantPunches = punchSessions.filter(p => !!p.endTime);
       
       if (goal.scope === 'individual' && goal.employeeId) {
         relevantPunches = relevantPunches.filter(p => p.employeeId === goal.employeeId);
@@ -1961,6 +1964,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   pausePunchSession: (id) => {
     const { punchSessions } = get();
+    // Une session déjà en pause, ou déjà terminée, ne se met pas en pause.
+    // Sans ce garde, un second appel écrasait « pausedAt » avec l'heure
+    // courante : les minutes déjà écoulées en pause n'étaient jamais
+    // comptées, et l'employé se retrouvait payé pour son arrêt. Un double clic
+    // suffisait.
+    const target = punchSessions.find(p => p.id === id);
+    if (!target || target.endTime || target.pausedAt) return;
+
     const updated = punchSessions.map(p => {
       if (p.id === id) {
         return {
@@ -1978,6 +1989,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   resumePunchSession: (id) => {
     const { punchSessions } = get();
+    // Reprendre un quart déjà fermé ajouterait des minutes de pause à des
+    // heures déjà facturées.
+    const target = punchSessions.find(p => p.id === id);
+    if (!target || target.endTime || !target.pausedAt) return;
+
     const updated = punchSessions.map(p => {
       if (p.id === id && p.pausedAt) {
         const pauseStart = new Date(p.pausedAt).getTime();
@@ -2003,7 +2019,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     // ligne) ne doit ni rallonger les heures, ni redonner l'XP, ni retirer une
     // deuxième fois les matériaux de l'inventaire. On sort avant tout effet.
     const target = punchSessions.find(p => p.id === id);
-    if (!target || target.endTime !== null) return;
+    // « endTime » absent vaut session ouverte, comme partout ailleurs. La
+    // comparaison stricte refusait au contraire de fermer un pointage dont la
+    // clé manquait — il restait ouvert pour toujours.
+    if (!target || target.endTime) return;
 
     const updated = punchSessions.map(p => {
       if (p.id === id) {
@@ -2210,7 +2229,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const invoicedSessionIds = new Set(invoices.flatMap(inv => inv.sessionIds));
     const unInvoicedPunches = punchSessions.filter(p => 
       p.employeeId === employeeId && 
-      p.endTime !== null && 
+      !!p.endTime && 
       !invoicedSessionIds.has(p.id)
     );
 

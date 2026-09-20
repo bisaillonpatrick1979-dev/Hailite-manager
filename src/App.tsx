@@ -1308,7 +1308,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
         .reduce((inner, payment) => inner + (payment.amount || 0), 0), 0);
 
     const labourCost = punchSessions
-      .filter(p => p.endTime !== null)
+      .filter(p => !!p.endTime)
       .reduce((sum, p) => sum + punchRevenueInPeriod(p, periodPrefix), 0);
     const expenseCost = expenses
       .filter(e => (e.date || '').startsWith(periodPrefix))
@@ -1341,7 +1341,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // les règles de la compagnie et les éventuelles surcharges de sa fiche.
   const getEmployeeHours = (emp: Employee, periodPrefix: string): HoursBreakdown => {
     const rules = resolveOvertimeRules(companyInfo, emp);
-    const punches = punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null);
+    const punches = punchSessions.filter(p => p.employeeId === emp.id && !!p.endTime);
     return computeHoursBreakdown(punches, rules, periodPrefix);
   };
 
@@ -3570,7 +3570,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                 // Une session est retenue dès qu'elle touche le mois local, même si
                 // elle a commencé le dernier soir du mois précédent. Heures et
                 // montants ne comptent que pour la part réellement dans le mois.
-                const ymSessions = punchSessions.filter(p => p.endTime !== null && punchHoursInMonth(p, ym) > 0);
+                const ymSessions = punchSessions.filter(p => !!p.endTime && punchHoursInMonth(p, ym) > 0);
                 const revenue = ymSessions.reduce((sum, p) => sum + punchRevenueInMonth(p, ym), 0);
                 const hours = ymSessions.reduce((sum, p) => sum + punchHoursInMonth(p, ym), 0);
                 const sessionsCount = ymSessions.length;
@@ -4344,7 +4344,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               <div className="p-4 bg-gray-900 border border-gray-850 rounded-xl space-y-1 text-center">
                                 <span className="text-[10px] text-gray-500 uppercase block font-mono">{t.compiledFieldHours}</span>
                                 <p className="text-2xl font-black text-orange-500 font-mono">{empHours.totalHours.toFixed(1)} h</p>
-                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && p.endTime !== null && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
+                                <span className="text-[9px] text-gray-400 block mt-0.5 font-sans">{fmt(t.basedOnPunches, { n: punchSessions.filter(p => p.employeeId === emp.id && !!p.endTime && punchHoursInMonth(p, statsMonth) > 0).length })}</span>
                                 {/* Détail régulier / supplémentaire : un employé
                                     doit pouvoir vérifier d'où vient son montant. */}
                                 {empHours.overtimeHours > 0 && (
