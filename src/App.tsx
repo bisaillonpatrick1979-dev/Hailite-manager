@@ -21,7 +21,7 @@ import { checkInvoiceCompliance, complianceSummary } from './invoiceCompliance';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
 import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
-import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
+import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, GCPDocument, Invoice } from './types';
 import { canUseGeofenceBypass, useGeofencing } from './hooks/useGeofencing';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { apiFetch } from './runtimeConfig';
@@ -123,6 +123,17 @@ function getCompanyRegion(companyInfo: CompanyInfo): { country: MarketCode; regi
   const country: MarketCode = companyInfo.country === 'US' || companyInfo.country === 'EU' ? companyInfo.country : 'CA';
   return { country, region: getDefaultRegion(country, companyInfo.region) };
 }
+
+// Une facture est « facturée » dès qu'elle quitte le brouillon.
+//
+// Les deux écrans qui calculent le revenu énuméraient les statuts à la main —
+// « paid », « sent », « accepted » — ce qui laissait dehors « completed » et
+// surtout « overdue ». Marquer une facture en retard, c'est-à-dire constater
+// qu'un client tarde à payer, la faisait donc disparaître du revenu du mois :
+// le revenu baissait au moment précis où le recouvrement commençait, et la
+// marge du mois avec lui. Ce qui est dû reste facturé; l'encaissement est
+// suivi séparément (`collected`).
+const isBilledInvoice = (doc: GCPDocument): boolean => doc.type === 'invoice' && doc.status !== 'draft';
 
 export default function App() {
   const {
@@ -251,6 +262,12 @@ export default function App() {
   // Période du bandeau financier du tableau de bord : mois courant, année
   // courante, ou tout l'historique depuis l'ouverture.
   const [dashboardPeriod, setDashboardPeriod] = useState<'month' | 'year' | 'all'>('month');
+  // Montant brut testé par le simulateur de déductions. On garde le TEXTE
+  // saisi, pas le nombre : un champ contrôlé sur un nombre réécrit la valeur à
+  // chaque frappe, ce qui efface le séparateur décimal au moment où on le tape.
+  // « 1000. » redevenait « 1000 », et le chiffre suivant donnait 10005 au lieu
+  // de 1000.5 — sur un simulateur de paie, une erreur d'un facteur dix.
+  const [simulatorGrossInput, setSimulatorGrossInput] = useState<string>('1000');
   useEffect(() => {
     if (!demoSandboxActive || !demoSandboxSummary) return;
     setStatsMonth(demoSandboxSummary.latestStatsMonth);
@@ -1295,8 +1312,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // ne doivent jamais afficher deux marges différentes.
   const getCompanyFinances = (periodPrefix: string) => {
     const billedInvoices = documents.filter(d =>
-      d.type === 'invoice' &&
-      (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
+      isBilledInvoice(d) &&
       (d.date || '').startsWith(periodPrefix)
     );
     const revenue = billedInvoices.reduce((sum, d) => sum + (d.total || 0), 0);
@@ -1372,6 +1388,18 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       net: Math.max(0, net)
     };
   };
+
+  // Le simulateur écrivait ses résultats directement dans le DOM, par
+  // getElementById — et l'identifiant du « gain net » contenait une espace,
+  // donc introuvable : la ligne restait figée sur 623,30 $ quel que soit le
+  // brut saisi, pendant que les déductions au-dessus, elles, bougeaient. Les
+  // valeurs affichées d'entrée de jeu étaient de surcroît écrites en dur, aux
+  // taux du Québec, sous le nom de la province réellement configurée.
+  // Le texte n'est converti que pour le calcul. Une saisie intermédiaire
+  // invalide (« 1000. », « », « - ») vaut zéro le temps qu'elle se complète,
+  // sans jamais modifier ce que la personne est en train de taper.
+  const simulatorGross = Math.max(0, Number(simulatorGrossInput) || 0);
+  const simulatedDeductions = calculateSimulatedDeductions(simulatorGross);
 
   // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
   // avant un useEffect provoque « Rendered more hooks than during the previous
@@ -1881,9 +1909,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   const overdueInvoiceCount = documents.filter(document =>
                     document.type === 'invoice' && document.status === 'overdue'
                   ).length;
+                  // « À encaisser » : tout ce qui est facturé et pas encore
+                  // rentré. La liste écrite à la main — overdue, sent —
+                  // oubliait « accepted » et « completed » : une facture
+                  // acceptée par le client et jamais payée ne figurait nulle
+                  // part dans ce que l'entreprise attend. Un solde négatif
+                  // (trop-perçu) ne vient pas non plus effacer ce qui est dû
+                  // ailleurs.
                   const outstandingAmount = documents
-                    .filter(document => document.type === 'invoice' && ['overdue', 'sent'].includes(document.status))
-                    .reduce((sum, document) => sum + Number(document.balanceDue ?? document.total ?? 0), 0);
+                    .filter(document => isBilledInvoice(document) && document.status !== 'paid')
+                    .reduce((sum, document) => sum + Math.max(0, Number(document.balanceDue ?? document.total ?? 0)), 0);
                   const unresolvedHrAlertCount = totalOpenAlerts;
                   const todayLabel = new Date().toLocaleDateString(
                     currentLanguage === 'FR' ? 'fr-CA' : 'en-CA',
@@ -4081,9 +4116,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               const laborCost = projSessions.reduce((sum, p) => sum + p.revenue, 0);
 
                               // Billed Client from documents
-                              const billedDocMatches = documents.filter(d => 
-                                d.type === 'invoice' && 
-                                (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
+                              const billedDocMatches = documents.filter(d =>
+                                isBilledInvoice(d) &&
                                 (d.clientName === proj.clientName || d.clientId === proj.id || d.siteAddress?.includes(proj.name.slice(0, 10)))
                               );
                               const clientBilled = billedDocMatches.reduce((sum, d) => sum + d.total, 0);
@@ -4226,27 +4260,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="space-y-3">
                         <div>
                           <label className="text-[10px] font-mono text-gray-400 uppercase">{t.grossToTest}</label>
-                          <input 
-                            type="number" 
-                            defaultValue="1000"
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="0.01"
+                            value={simulatorGrossInput}
                             id="gross_simulator_input"
-                            onChange={(e) => {
-                              const val = Number(e.target.value) || 0;
-                              const decs = calculateSimulatedDeductions(val);
-                              
-                              // Dynamically update calculations text elements
-                              const elNet = document.getElementById("net_sim_output");
-                              const elFed = document.getElementById("fed_sim_output");
-                              const elProv = document.getElementById("prov_sim_output");
-                              const elRrq = document.getElementById("rrq_sim_output");
-                              const elAe = document.getElementById("ae_sim_output");
-                              
-                              if (elNet) elNet.innerText = decs.net.toFixed(2) + "$";
-                              if (elFed) elFed.innerText = decs.fedTax.toFixed(2) + "$";
-                              if (elProv) elProv.innerText = decs.provTax.toFixed(2) + "$";
-                              if (elRrq) elRrq.innerText = decs.rrq.toFixed(2) + "$";
-                              if (elAe) elAe.innerText = decs.ae.toFixed(2) + "$";
-                            }}
+                            onChange={(e) => setSimulatorGrossInput(e.target.value)}
                             className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left text-semibold font-mono"
                           />
                         </div>
@@ -4258,28 +4279,28 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="p-4 bg-gray-900 rounded-xl space-y-2 border border-gray-800">
                         <div className="flex justify-between items-center text-xs text-gray-400">
                           <span>{t.grossEarnings}</span>
-                          <span className="font-bold text-white">1000.00$</span>
+                          <span className="font-bold text-white">{simulatorGross.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-red-400">
                           <span>{t.federalTax}</span>
-                          <span className="font-mono animate-none" id="fed_sim_output">150.00$</span>
+                          <span className="font-mono animate-none" id="fed_sim_output">{simulatedDeductions.fedTax.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-red-400">
                           <span>{currentLanguage === 'FR' ? `Impôt Provincial (${regionName}) estimé` : `Estimated Provincial Tax (${regionName})`}</span>
-                          <span className="font-mono animate-none" id="prov_sim_output">150.00$</span>
+                          <span className="font-mono animate-none" id="prov_sim_output">{simulatedDeductions.provTax.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
                           <span>{pensionName} {t.estimatedWord} ({(payrollMeta.pensionRate * 100).toFixed(2)}%)</span>
-                          <span className="font-mono animate-none" id="rrq_sim_output">64.00$</span>
+                          <span className="font-mono animate-none" id="rrq_sim_output">{simulatedDeductions.rrq.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
                           <span>{secondaryDeductionName} ({(payrollMeta.secondaryDeductionRate * 100).toFixed(2)}%)</span>
-                          <span className="font-mono animate-none" id="ae_sim_output">12.70$</span>
+                          <span className="font-mono animate-none" id="ae_sim_output">{simulatedDeductions.ae.toFixed(2)}$</span>
                         </div>
-                        
+
                         <div className="pt-2 border-t border-gray-800 flex justify-between items-center">
                           <span className="text-xs font-bold text-white uppercase">{t.netEarnings}</span>
-                          <span className="text-base font-black text-green-400 font-mono animate-none" id="net_sim_output font-mono">623.30$</span>
+                          <span className="text-base font-black text-green-400 font-mono animate-none" id="net_sim_output">{simulatedDeductions.net.toFixed(2)}$</span>
                         </div>
                       </div>
                     </div>
