@@ -1891,9 +1891,16 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                   const overdueInvoiceCount = documents.filter(document =>
                     document.type === 'invoice' && document.status === 'overdue'
                   ).length;
+                  // « À encaisser » : tout ce qui est facturé et pas encore
+                  // rentré. La liste écrite à la main — overdue, sent —
+                  // oubliait « accepted » et « completed » : une facture
+                  // acceptée par le client et jamais payée ne figurait nulle
+                  // part dans ce que l'entreprise attend. Un solde négatif
+                  // (trop-perçu) ne vient pas non plus effacer ce qui est dû
+                  // ailleurs.
                   const outstandingAmount = documents
-                    .filter(document => document.type === 'invoice' && ['overdue', 'sent'].includes(document.status))
-                    .reduce((sum, document) => sum + Number(document.balanceDue ?? document.total ?? 0), 0);
+                    .filter(document => isBilledInvoice(document) && document.status !== 'paid')
+                    .reduce((sum, document) => sum + Math.max(0, Number(document.balanceDue ?? document.total ?? 0)), 0);
                   const unresolvedHrAlertCount = totalOpenAlerts;
                   const todayLabel = new Date().toLocaleDateString(
                     currentLanguage === 'FR' ? 'fr-CA' : 'en-CA',

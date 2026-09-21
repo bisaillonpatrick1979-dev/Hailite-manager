@@ -28,6 +28,16 @@ test('plus aucune énumération de statuts à la main', () => {
   assert.doesNotMatch(app, /d\.status === 'paid' \|\| d\.status === 'sent' \|\| d\.status === 'accepted'/);
 });
 
+test('« à encaisser » n’oublie pas les factures acceptées et jamais payées', () => {
+  // La tuile du tableau de bord listait « overdue » et « sent » à la main :
+  // une facture acceptée par le client et impayée ne figurait nulle part dans
+  // le montant que l'entreprise attend.
+  assert.match(app, /isBilledInvoice\(document\) && document\.status !== 'paid'/);
+  assert.doesNotMatch(app, /\['overdue', 'sent'\]\.includes\(document\.status\)/);
+  assert.match(app, /sum \+ Math\.max\(0, Number\(document\.balanceDue \?\? document\.total \?\? 0\)\)/,
+    'un trop-perçu ne doit pas effacer ce qui est dû ailleurs');
+});
+
 test('les deux écrans emploient la même définition', () => {
   // L'intention était déjà écrite en commentaire : « deux écrans de
   // l'application ne doivent jamais afficher deux marges différentes ». Elle
