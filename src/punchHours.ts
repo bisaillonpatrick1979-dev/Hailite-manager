@@ -211,3 +211,25 @@ export function punchDayKeys(
 ): string[] {
   return splitPunchByLocalDay(punch, timeZone, now).map(slice => slice.dayKey);
 }
+
+/**
+ * Le pointage touche-t-il la période « du `from` au `to` » (journées locales
+ * incluses) ? Les deux bornes sont facultatives : sans elles la période est
+ * ouverte de ce côté-là.
+ *
+ * Un quart de nuit occupe deux journées; il suffit qu'une seule tombe dans la
+ * période pour que le pointage compte. Compter trop plutôt que rien : un quart
+ * à cheval sur le premier jour d'un objectif appartient bel et bien à cet
+ * objectif du point de vue de celui qui l'a travaillé.
+ */
+export function punchTouchesRange(
+  punch: PunchSession,
+  from?: string | null,
+  to?: string | null,
+  timeZone: string = appTimeZone(),
+  now: Date = new Date()
+): boolean {
+  const days = punchDayKeys(punch, timeZone, now);
+  if (days.length === 0) return false;
+  return days.some(day => (!from || day >= from) && (!to || day <= to));
+}

@@ -33,7 +33,7 @@ import { applyReview, buildSubmittedCredential, type SubmissionInput } from '../
 import { resolveOnboardingState } from './onboardingState';
 import { resolveViewerProfile } from './viewerProfile';
 import { todayKey, localDayKey, setAppTimeZone } from './localTime';
-import { punchDayKeys, recomputePunchTotals } from './punchHours';
+import { punchDayKeys, punchTouchesRange, recomputePunchTotals } from './punchHours';
 
 interface AppState {
   // Data State
@@ -759,6 +759,17 @@ const nextSequentialNumber = (existingNumbers: string[], prefix: string): string
 const getNextDocNumber = (documents: GCPDocument[], type: GCPDocument['type'], prefix: string): string =>
   nextSequentialNumber(documents.filter(d => d.type === type).map(d => d.number), prefix);
 
+// Un objectif ne compte que ce qui a été fait PENDANT sa période. Sans cette
+// borne, un objectif créé aujourd'hui héritait de tout l'historique de
+// l'entreprise : « 50 000 $ de revenus » naissait déjà atteint, la récompense
+// s'affichait et l'XP tombait pour du travail accompli avant que l'objectif
+// existe.
+//
+// Un objectif sans date de début (ligne ancienne ou importée) reste ouvert :
+// mieux vaut compter trop que de vider d'un coup un objectif déjà en cours.
+const punchWithinGoalWindow = (session: PunchSession, goal: MotivationGoal): boolean =>
+  punchTouchesRange(session, goal.startDate, goal.endDate);
+
 const getSavedState = <T>(key: string, defaultValue: T): T => {
   try {
     const saved = localStorage.getItem(key);
@@ -1463,7 +1474,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           weekStart: currentMonday,
           xpPoints: emp.xp,
           level: emp.level,
-          streak: 1,
+          // Personne n'a de série avant son premier pointage.
+          streak: 0,
           lastPunchDate: null
         });
         wgIdx = updatedWeeklyGoals.length - 1;
@@ -1524,16 +1536,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         } else {
           streak = 0;
         }
-        wg.streak = Math.max(1, streak);
+        // Pas de plancher à 1 : Math.max(1, streak) annulait la branche
+        // ci-dessus et affichait « 1 jour d'affilée » à quelqu'un qui n'avait
+        // pas pointé depuis trois semaines. Une série brisée vaut zéro — c'est
+        // ce qui donne du prix à celle qui tient.
+        wg.streak = streak;
         wg.lastPunchDate = uniqueDates[0] || null;
+      } else {
+        // Aucun quart terminé : la série d'une ancienne fiche ne doit pas
+        // survivre à l'effacement de ses pointages.
+        wg.streak = 0;
+        wg.lastPunchDate = null;
       }
     });
     
     // 2. Update Motivation Goals
     const updatedMotivationGoals = motivationGoals.map(goal => {
       let computedVal = goal.current;
-      let relevantPunches = punchSessions.filter(p => !!p.endTime);
-      
+      let relevantPunches = punchSessions.filter(p => !!p.endTime && punchWithinGoalWindow(p, goal));
+
       if (goal.scope === 'individual' && goal.employeeId) {
         relevantPunches = relevantPunches.filter(p => p.employeeId === goal.employeeId);
       } else if (goal.scope === 'team' && goal.teamId) {
