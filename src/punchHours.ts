@@ -213,14 +213,26 @@ export function punchDayKeys(
 }
 
 /**
- * Le pointage touche-t-il la période « du `from` au `to` » (journées locales
- * incluses) ? Les deux bornes sont facultatives : sans elles la période est
- * ouverte de ce côté-là.
+ * La journée locale « AAAA-MM-JJ » tombe-t-elle dans la période « du `from` au
+ * `to` », bornes incluses ? Les deux bornes sont facultatives : sans elles la
+ * période est ouverte de ce côté-là.
+ */
+export function dayWithinRange(day: string, from?: string | null, to?: string | null): boolean {
+  return (!from || day >= from) && (!to || day <= to);
+}
+
+/**
+ * Le pointage touche-t-il la période ?
  *
  * Un quart de nuit occupe deux journées; il suffit qu'une seule tombe dans la
  * période pour que le pointage compte. Compter trop plutôt que rien : un quart
  * à cheval sur le premier jour d'un objectif appartient bel et bien à cet
  * objectif du point de vue de celui qui l'a travaillé.
+ *
+ * Attention : cette réponse porte sur le pointage ENTIER. Une mesure qui
+ * compte des journées plutôt que des pointages doit en plus filtrer chaque
+ * journée avec `dayWithinRange`, sinon la journée hors période d'un quart de
+ * nuit entre dans le compte.
  */
 export function punchTouchesRange(
   punch: PunchSession,
@@ -231,5 +243,5 @@ export function punchTouchesRange(
 ): boolean {
   const days = punchDayKeys(punch, timeZone, now);
   if (days.length === 0) return false;
-  return days.some(day => (!from || day >= from) && (!to || day <= to));
+  return days.some(day => dayWithinRange(day, from, to));
 }

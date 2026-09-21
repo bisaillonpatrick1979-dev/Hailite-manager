@@ -33,7 +33,7 @@ import { applyReview, buildSubmittedCredential, type SubmissionInput } from '../
 import { resolveOnboardingState } from './onboardingState';
 import { resolveViewerProfile } from './viewerProfile';
 import { todayKey, localDayKey, setAppTimeZone } from './localTime';
-import { punchDayKeys, punchTouchesRange, recomputePunchTotals } from './punchHours';
+import { dayWithinRange, punchDayKeys, punchTouchesRange, recomputePunchTotals } from './punchHours';
 
 interface AppState {
   // Data State
@@ -1575,8 +1575,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else if (goal.metric === 'checklist_done') {
         computedVal = relevantPunches.reduce((sum, p) => sum + (p.surfaceMaterials?.reduce((s, m) => s + m.quantity, 0) || 0), 0);
       } else if (goal.metric === 'safety_days') {
+        // Cette mesure compte des JOURNÉES, pas des pointages. Un quart de
+        // nuit à cheval sur la première journée de l'objectif apporte ses deux
+        // journées, dont une qui précède l'objectif : elle gonflerait le
+        // compte et pourrait déclencher la récompense un jour trop tôt. Les
+        // autres mesures additionnent le pointage entier — c'est le bon choix
+        // pour elles — mais celle-ci doit filtrer journée par journée.
         const safePunches = relevantPunches.filter(p => !p.attemptedOutsideGeofence);
-        const uniqueSafeDates = new Set(safePunches.flatMap(p => punchDayKeys(p)));
+        const uniqueSafeDates = new Set(safePunches.flatMap(p =>
+          punchDayKeys(p).filter(day => dayWithinRange(day, goal.startDate, goal.endDate))
+        ));
         computedVal = uniqueSafeDates.size;
       } else {
         computedVal = goal.current;

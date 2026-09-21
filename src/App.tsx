@@ -262,8 +262,12 @@ export default function App() {
   // Période du bandeau financier du tableau de bord : mois courant, année
   // courante, ou tout l'historique depuis l'ouverture.
   const [dashboardPeriod, setDashboardPeriod] = useState<'month' | 'year' | 'all'>('month');
-  // Montant brut testé par le simulateur de déductions.
-  const [simulatorGross, setSimulatorGross] = useState<number>(1000);
+  // Montant brut testé par le simulateur de déductions. On garde le TEXTE
+  // saisi, pas le nombre : un champ contrôlé sur un nombre réécrit la valeur à
+  // chaque frappe, ce qui efface le séparateur décimal au moment où on le tape.
+  // « 1000. » redevenait « 1000 », et le chiffre suivant donnait 10005 au lieu
+  // de 1000.5 — sur un simulateur de paie, une erreur d'un facteur dix.
+  const [simulatorGrossInput, setSimulatorGrossInput] = useState<string>('1000');
   useEffect(() => {
     if (!demoSandboxActive || !demoSandboxSummary) return;
     setStatsMonth(demoSandboxSummary.latestStatsMonth);
@@ -1391,6 +1395,10 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // brut saisi, pendant que les déductions au-dessus, elles, bougeaient. Les
   // valeurs affichées d'entrée de jeu étaient de surcroît écrites en dur, aux
   // taux du Québec, sous le nom de la province réellement configurée.
+  // Le texte n'est converti que pour le calcul. Une saisie intermédiaire
+  // invalide (« 1000. », « », « - ») vaut zéro le temps qu'elle se complète,
+  // sans jamais modifier ce que la personne est en train de taper.
+  const simulatorGross = Math.max(0, Number(simulatorGrossInput) || 0);
   const simulatedDeductions = calculateSimulatedDeductions(simulatorGross);
 
   // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
@@ -4254,9 +4262,12 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                           <label className="text-[10px] font-mono text-gray-400 uppercase">{t.grossToTest}</label>
                           <input
                             type="number"
-                            value={simulatorGross}
+                            inputMode="decimal"
+                            min="0"
+                            step="0.01"
+                            value={simulatorGrossInput}
                             id="gross_simulator_input"
-                            onChange={(e) => setSimulatorGross(Math.max(0, Number(e.target.value) || 0))}
+                            onChange={(e) => setSimulatorGrossInput(e.target.value)}
                             className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left text-semibold font-mono"
                           />
                         </div>

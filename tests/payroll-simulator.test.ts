@@ -24,10 +24,21 @@ test('aucun identifiant ne contient d’espace', () => {
 });
 
 test('le simulateur passe par l’état React, plus par le DOM', () => {
-  assert.match(app, /const \[simulatorGross, setSimulatorGross\] = useState<number>\(1000\);/);
+  assert.match(app, /const \[simulatorGrossInput, setSimulatorGrossInput\] = useState<string>\('1000'\);/);
   assert.match(app, /const simulatedDeductions = calculateSimulatedDeductions\(simulatorGross\);/);
   assert.doesNotMatch(app, /document\.getElementById\("net_sim_output"\)/);
   assert.doesNotMatch(app, /elNet\.innerText/);
+});
+
+test('le champ garde le texte saisi, pas un nombre déjà converti', () => {
+  // Un champ contrôlé sur un NOMBRE réécrit la valeur à chaque frappe et
+  // efface le séparateur décimal au moment où on le tape : « 1000. »
+  // redevenait « 1000 » et le chiffre suivant donnait 10005 au lieu de
+  // 1000.5. Sur un simulateur de paie, une erreur d'un facteur dix.
+  assert.match(app, /value=\{simulatorGrossInput\}/);
+  assert.match(app, /onChange=\{\(e\) => setSimulatorGrossInput\(e\.target\.value\)\}/,
+    'la frappe ne doit pas être transformée avant d’être réaffichée');
+  assert.doesNotMatch(app, /value=\{simulatorGross\}/, 'le nombre converti ne pilote pas le champ');
 });
 
 test('chaque ligne affiche une valeur calculée, pas un exemple écrit en dur', () => {
@@ -44,6 +55,9 @@ test('chaque ligne affiche une valeur calculée, pas un exemple écrit en dur', 
   }
 });
 
-test('un brut négatif ne se saisit pas', () => {
-  assert.match(app, /setSimulatorGross\(Math\.max\(0, Number\(e\.target\.value\) \|\| 0\)\)/);
+test('une saisie absurde ou incomplète ne produit pas un calcul absurde', () => {
+  // « 1000. », « », « - » : le temps que la frappe se complète, le calcul
+  // vaut zéro plutôt que NaN ou un montant négatif — sans jamais toucher à ce
+  // que la personne est en train de taper.
+  assert.match(app, /const simulatorGross = Math\.max\(0, Number\(simulatorGrossInput\) \|\| 0\);/);
 });

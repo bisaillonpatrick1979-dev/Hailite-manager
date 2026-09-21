@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { PunchSession } from '../src/types';
-import { punchTouchesRange } from '../src/punchHours';
+import { dayWithinRange, punchDayKeys, punchTouchesRange } from '../src/punchHours';
 
 const EDMONTON = 'America/Edmonton';
 const source = readFileSync(new URL('../src/store.ts', import.meta.url), 'utf8');
@@ -92,6 +92,46 @@ test('un objectif sans date de début n’est pas vidé', () => {
   // pourquoi.
   assert.equal(punchTouchesRange(punch(), null, null, EDMONTON), true);
   assert.equal(punchTouchesRange(punch(), '', '', EDMONTON), true);
+});
+
+// ---------------------------------------------------------------------------
+// Les journées de sécurité comptent des JOURNÉES, pas des pointages
+// ---------------------------------------------------------------------------
+// « Le pointage touche la période » est la bonne question pour un revenu ou
+// des heures : on additionne le pointage entier. Elle ne suffit pas pour
+// `safety_days`, qui compte des journées distinctes : un quart de nuit à
+// cheval sur la première journée passe le filtre, puis apporte ses DEUX
+// journées au compte — dont une qui précède l'objectif. La récompense pouvait
+// tomber un jour trop tôt.
+
+test('la journée hors période d’un quart de nuit ne compte pas', () => {
+  const nuit = punch({
+    startTime: '2026-06-30T22:00:00-06:00',
+    endTime: '2026-07-01T02:00:00-06:00'
+  });
+  const journees = punchDayKeys(nuit, EDMONTON);
+  assert.deepEqual(journees, ['2026-06-30', '2026-07-01'], 'le quart occupe bien deux journées');
+
+  // Le pointage entier compte pour l'objectif…
+  assert.equal(punchTouchesRange(nuit, '2026-07-01', '2026-07-31', EDMONTON), true);
+  // …mais une seule de ses journées entre dans le décompte.
+  const retenues = journees.filter(jour => dayWithinRange(jour, '2026-07-01', '2026-07-31'));
+  assert.deepEqual(retenues, ['2026-07-01']);
+});
+
+test('dayWithinRange inclut les bornes et tolère l’absence de bornes', () => {
+  assert.equal(dayWithinRange('2026-07-01', '2026-07-01', '2026-07-31'), true);
+  assert.equal(dayWithinRange('2026-07-31', '2026-07-01', '2026-07-31'), true);
+  assert.equal(dayWithinRange('2026-06-30', '2026-07-01', '2026-07-31'), false);
+  assert.equal(dayWithinRange('2026-08-01', '2026-07-01', '2026-07-31'), false);
+  assert.equal(dayWithinRange('2026-01-01'), true, 'sans bornes, tout compte');
+  assert.equal(dayWithinRange('2026-01-01', null, null), true);
+});
+
+test('le décompte des journées de sécurité filtre journée par journée', () => {
+  const corps = corpsDe('recomputeGoalsAndStreaks');
+  assert.match(corps, /punchDayKeys\(p\)\.filter\(day => dayWithinRange\(day, goal\.startDate, goal\.endDate\)\)/,
+    'sinon la journée hors période d’un quart de nuit gonfle le compte');
 });
 
 test('le calcul des objectifs applique bien cette période', () => {
