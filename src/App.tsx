@@ -21,7 +21,7 @@ import { checkInvoiceCompliance, complianceSummary } from './invoiceCompliance';
 import { getCredentialAlerts, getCredentialStatus } from './credentialUtils';
 import { LOCAL_TEST_MODE } from './testProfiles';
 import { TEST_DATASET_SUMMARY } from './testDataset';
-import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, Invoice } from './types';
+import { Employee, CompanyInfo, EmployeeCredential, EmployeeRole, GCPDocument, Invoice } from './types';
 import { canUseGeofenceBypass, useGeofencing } from './hooks/useGeofencing';
 import { useAutoResizeTextarea } from './hooks/useAutoResizeTextarea';
 import { apiFetch } from './runtimeConfig';
@@ -123,6 +123,17 @@ function getCompanyRegion(companyInfo: CompanyInfo): { country: MarketCode; regi
   const country: MarketCode = companyInfo.country === 'US' || companyInfo.country === 'EU' ? companyInfo.country : 'CA';
   return { country, region: getDefaultRegion(country, companyInfo.region) };
 }
+
+// Une facture est « facturée » dès qu'elle quitte le brouillon.
+//
+// Les deux écrans qui calculent le revenu énuméraient les statuts à la main —
+// « paid », « sent », « accepted » — ce qui laissait dehors « completed » et
+// surtout « overdue ». Marquer une facture en retard, c'est-à-dire constater
+// qu'un client tarde à payer, la faisait donc disparaître du revenu du mois :
+// le revenu baissait au moment précis où le recouvrement commençait, et la
+// marge du mois avec lui. Ce qui est dû reste facturé; l'encaissement est
+// suivi séparément (`collected`).
+const isBilledInvoice = (doc: GCPDocument): boolean => doc.type === 'invoice' && doc.status !== 'draft';
 
 export default function App() {
   const {
@@ -1295,8 +1306,7 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
   // ne doivent jamais afficher deux marges différentes.
   const getCompanyFinances = (periodPrefix: string) => {
     const billedInvoices = documents.filter(d =>
-      d.type === 'invoice' &&
-      (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
+      isBilledInvoice(d) &&
       (d.date || '').startsWith(periodPrefix)
     );
     const revenue = billedInvoices.reduce((sum, d) => sum + (d.total || 0), 0);
@@ -4081,9 +4091,8 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                               const laborCost = projSessions.reduce((sum, p) => sum + p.revenue, 0);
 
                               // Billed Client from documents
-                              const billedDocMatches = documents.filter(d => 
-                                d.type === 'invoice' && 
-                                (d.status === 'paid' || d.status === 'sent' || d.status === 'accepted') &&
+                              const billedDocMatches = documents.filter(d =>
+                                isBilledInvoice(d) &&
                                 (d.clientName === proj.clientName || d.clientId === proj.id || d.siteAddress?.includes(proj.name.slice(0, 10)))
                               );
                               const clientBilled = billedDocMatches.reduce((sum, d) => sum + d.total, 0);
