@@ -2438,7 +2438,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       materialLines: quote.materialLines.map(l => ({ ...l, id: genId() })),
       labourLines: quote.labourLines.map(l => ({ ...l, id: genId() })),
       otherLines: quote.otherLines.map(l => ({ ...l, id: genId() })),
-      subcontractLines: quote.subcontractLines.map(l => ({ ...l, id: genId() }))
+      subcontractLines: quote.subcontractLines.map(l => ({ ...l, id: genId() })),
+      // Une facture naît impayée. Les versements déjà reçus appartiennent au
+      // devis : la copie gardait leurs identifiants ET ne les écrivait jamais
+      // au nuage — syncDocumentInsert ne synchronise que le document et ses
+      // lignes, pas document_payments. Après une resynchronisation,
+      // l'historique disparaissait de la facture pendant que le solde, lui,
+      // restait amputé d'autant : de l'argent dû en moins, sans rien à l'écran
+      // pour l'expliquer. Le dépôt encaissé reste inscrit sur le devis.
+      paymentsHistory: [],
+      balanceDue: Number((quote.total - quote.holdbackAmount).toFixed(2))
     };
 
     const updated = [invoice, ...documents];
