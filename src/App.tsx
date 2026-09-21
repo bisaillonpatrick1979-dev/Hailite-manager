@@ -262,6 +262,8 @@ export default function App() {
   // Période du bandeau financier du tableau de bord : mois courant, année
   // courante, ou tout l'historique depuis l'ouverture.
   const [dashboardPeriod, setDashboardPeriod] = useState<'month' | 'year' | 'all'>('month');
+  // Montant brut testé par le simulateur de déductions.
+  const [simulatorGross, setSimulatorGross] = useState<number>(1000);
   useEffect(() => {
     if (!demoSandboxActive || !demoSandboxSummary) return;
     setStatsMonth(demoSandboxSummary.latestStatsMonth);
@@ -1382,6 +1384,14 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
       net: Math.max(0, net)
     };
   };
+
+  // Le simulateur écrivait ses résultats directement dans le DOM, par
+  // getElementById — et l'identifiant du « gain net » contenait une espace,
+  // donc introuvable : la ligne restait figée sur 623,30 $ quel que soit le
+  // brut saisi, pendant que les déductions au-dessus, elles, bougeaient. Les
+  // valeurs affichées d'entrée de jeu étaient de surcroît écrites en dur, aux
+  // taux du Québec, sous le nom de la province réellement configurée.
+  const simulatedDeductions = calculateSimulatedDeductions(simulatorGross);
 
   // Le garde onboarding doit rester APRÈS tous les hooks React. Le déplacer
   // avant un useEffect provoque « Rendered more hooks than during the previous
@@ -4242,27 +4252,11 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="space-y-3">
                         <div>
                           <label className="text-[10px] font-mono text-gray-400 uppercase">{t.grossToTest}</label>
-                          <input 
-                            type="number" 
-                            defaultValue="1000"
+                          <input
+                            type="number"
+                            value={simulatorGross}
                             id="gross_simulator_input"
-                            onChange={(e) => {
-                              const val = Number(e.target.value) || 0;
-                              const decs = calculateSimulatedDeductions(val);
-                              
-                              // Dynamically update calculations text elements
-                              const elNet = document.getElementById("net_sim_output");
-                              const elFed = document.getElementById("fed_sim_output");
-                              const elProv = document.getElementById("prov_sim_output");
-                              const elRrq = document.getElementById("rrq_sim_output");
-                              const elAe = document.getElementById("ae_sim_output");
-                              
-                              if (elNet) elNet.innerText = decs.net.toFixed(2) + "$";
-                              if (elFed) elFed.innerText = decs.fedTax.toFixed(2) + "$";
-                              if (elProv) elProv.innerText = decs.provTax.toFixed(2) + "$";
-                              if (elRrq) elRrq.innerText = decs.rrq.toFixed(2) + "$";
-                              if (elAe) elAe.innerText = decs.ae.toFixed(2) + "$";
-                            }}
+                            onChange={(e) => setSimulatorGross(Math.max(0, Number(e.target.value) || 0))}
                             className="w-full mt-1.5 p-2 bg-gray-900 rounded border border-gray-850 text-white text-xs text-left text-semibold font-mono"
                           />
                         </div>
@@ -4274,28 +4268,28 @@ Des outils (fonctions) te sont fournis pour créer ou modifier des données. N'a
                       <div className="p-4 bg-gray-900 rounded-xl space-y-2 border border-gray-800">
                         <div className="flex justify-between items-center text-xs text-gray-400">
                           <span>{t.grossEarnings}</span>
-                          <span className="font-bold text-white">1000.00$</span>
+                          <span className="font-bold text-white">{simulatorGross.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-red-400">
                           <span>{t.federalTax}</span>
-                          <span className="font-mono animate-none" id="fed_sim_output">150.00$</span>
+                          <span className="font-mono animate-none" id="fed_sim_output">{simulatedDeductions.fedTax.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-red-400">
                           <span>{currentLanguage === 'FR' ? `Impôt Provincial (${regionName}) estimé` : `Estimated Provincial Tax (${regionName})`}</span>
-                          <span className="font-mono animate-none" id="prov_sim_output">150.00$</span>
+                          <span className="font-mono animate-none" id="prov_sim_output">{simulatedDeductions.provTax.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
                           <span>{pensionName} {t.estimatedWord} ({(payrollMeta.pensionRate * 100).toFixed(2)}%)</span>
-                          <span className="font-mono animate-none" id="rrq_sim_output">64.00$</span>
+                          <span className="font-mono animate-none" id="rrq_sim_output">{simulatedDeductions.rrq.toFixed(2)}$</span>
                         </div>
                         <div className="flex justify-between items-center text-xs text-amber-400">
                           <span>{secondaryDeductionName} ({(payrollMeta.secondaryDeductionRate * 100).toFixed(2)}%)</span>
-                          <span className="font-mono animate-none" id="ae_sim_output">12.70$</span>
+                          <span className="font-mono animate-none" id="ae_sim_output">{simulatedDeductions.ae.toFixed(2)}$</span>
                         </div>
-                        
+
                         <div className="pt-2 border-t border-gray-800 flex justify-between items-center">
                           <span className="text-xs font-bold text-white uppercase">{t.netEarnings}</span>
-                          <span className="text-base font-black text-green-400 font-mono animate-none" id="net_sim_output font-mono">623.30$</span>
+                          <span className="text-base font-black text-green-400 font-mono animate-none" id="net_sim_output">{simulatedDeductions.net.toFixed(2)}$</span>
                         </div>
                       </div>
                     </div>
